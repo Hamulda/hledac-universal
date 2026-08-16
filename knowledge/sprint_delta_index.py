@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 _ENABLE_DELTA_INDEX: bool = (
     os.environ.get("HLEDAC_ENABLE_CROSS_SPRINT_GATE", "1").lower()
     in ("1", "true", "yes", "on")
-)
+    )
 
 # Maximum entries in KnownGoodCache (M1 8GB bounded: ~200 KB peak)
 _KNOWN_GOOD_CACHE_MAX_SIZE: int = 4096
@@ -177,7 +177,7 @@ class KnownGoodCache:
         logger.info(
             "[KnownGoodCache] Loaded %d (total=%d, evicted=%d)",
             loaded, len(self._data), self._evictions,
-        )
+    )
         return loaded
 
     def clear(self) -> None:
@@ -281,7 +281,7 @@ class DeltaSyncEngine:
                 logger.info(
                     "[DeltaSyncEngine] %d obs → %d unique entities",
                     len(observations), len(aggregated),
-                )
+    )
 
                 # 3. Enrich with content hashes
                 enriched = self._enrich_with_hashes(aggregated)
@@ -320,7 +320,7 @@ class DeltaSyncEngine:
             loop = asyncio.get_running_loop()
             entities = await loop.run_in_executor(
                 None, store._sync_get_cross_sprint_entities, prior,
-            )
+    )
             if not entities:
                 return 0
             loaded = self._cache.bulk_load(entities)
@@ -386,7 +386,7 @@ class DeltaSyncEngine:
             # [META-002]: Use indexed sprint_id column directly — O(log n) via idx_entity_observations_sprint
             return await store.async_get_entity_observations_by_sprint(
                 sprint_id=sprint_id, limit=100_000,
-            )
+    )
         except Exception:
             return []
 
@@ -453,7 +453,7 @@ class DeltaSyncEngine:
                         entity["entity_value"], entity["ioc_type"],
                         sprint_id, entity["last_confirmed_ts"],
                         entity["avg_confidence"], entity["sha256_content_hash"],
-                    )
+    )
                     s += 1
                 except Exception:
                     e += 1
@@ -550,7 +550,7 @@ class SprintDeltaIndex:
                 None,
                 self._duckdb_store._sync_check_cross_sprint_batch,
                 entity_values,
-            )
+    )
 
             found: set[str] = set()
             for row in rows:
@@ -582,7 +582,7 @@ class SprintDeltaIndex:
         """Single-entity check."""
         results = await self.is_known_good_batch(
             [(entity_value, ioc_type)], current_sprint_id,
-        )
+    )
         return results.get(f"{ioc_type}:{entity_value}", (False, None))
 
     async def mmap_load_entity(self, ref: EntityRef) -> bytes | None:
@@ -641,7 +641,7 @@ class BoundedLruCache:
             logger.warning(
                 "[BoundedLruCache] Entry %s too large: %d bytes > %d max",
                 key[:64], value_size, self._max_bytes,
-            )
+    )
             return False
         
         # Remove existing entry if updating
@@ -898,7 +898,7 @@ class MmapDeltaIndex:
                 loaded,
                 len(self._index),
                 self._mmap_cache.size_bytes,
-            )
+    )
             return loaded
 
         except Exception as e:
@@ -1206,7 +1206,7 @@ class MmapDeltaIndex:
                 value=entity_value,
                 confidence=confidence,
                 observed_at=observed_at,
-            )
+    )
             return True
 
         except Exception as e:

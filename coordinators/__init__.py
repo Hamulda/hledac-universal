@@ -31,7 +31,7 @@ See LEGACY_MIGRATION.md for details.
 # Privacy enhanced research
 from hledac.universal.project_types import (
     PrivacyLevel,
-)
+    )
 
 # Coordinator catalog for domain-grouped lazy access
 from ._catalog import catalog
@@ -49,7 +49,7 @@ from .agent_coordination_engine import (
     TaskRequest,
     TaskResult,
     coordinated_search,
-)
+    )
 from .base import (
     CoordinatorCapabilities,
     DecisionResponse,
@@ -57,7 +57,7 @@ from .base import (
     OperationResult,
     OperationType,
     UniversalCoordinator,
-)
+    )
 
 # Registry
 from .execution_coordinator import UniversalExecutionCoordinator
@@ -66,7 +66,7 @@ from .memory_coordinator import (
     MemoryStatistics,
     MemoryZone,
     UniversalMemoryCoordinator,
-)
+    )
 from .meta_reasoning_coordinator import (
     ReasoningChain,
     ReasoningStep,
@@ -74,10 +74,10 @@ from .meta_reasoning_coordinator import (
     SprintClock,  # BLITZ-04
     ThoughtNode,
     UniversalMetaReasoningCoordinator,
-)
+    )
 from .tot_checkpointer import (  # UNIFIED-005
     TransactionalToTCheckpointer,
-)
+    )
 from .monitoring_coordinator import UniversalMonitoringCoordinator
 from .opsec_coordinator import OpsECCoordinator
 
@@ -90,7 +90,7 @@ from .performance_coordinator import (
     IntelligentLoadBalancer,
     LoadBalancingConfig,
     OptimizationReport,
-)
+    )
 from .privacy_enhanced_research import (
     AnonymizedRequest,
     AuditRecord,
@@ -99,7 +99,7 @@ from .privacy_enhanced_research import (
     PrivacyEnhancedResearch,
     SanitizedResult,
     private_research,
-)
+    )
 
 # Research coordinator exports (ACTIVE)
 from .research_coordinator import (
@@ -112,7 +112,7 @@ from .research_coordinator import (
     ResearchTheory,
     ResearchThread,
     UniversalResearchCoordinator,
-)
+    )
 
 # Core coordinators
 # Research optimizer
@@ -125,7 +125,7 @@ from .research_optimizer import (
     ResearchOptimizer,
     create_optimized_pipeline,
     optimized_research,
-)
+    )
 
 # Resource allocator
 from .resource_allocator import (
@@ -134,14 +134,14 @@ from .resource_allocator import (
     ResourceAllocation,
     ResourceRequest,
     ResourceType,
-)
+    )
 from .security_coordinator import (
     SecurityContext,
     SecurityCoordinator,
     SecurityLevel,
     SecurityResult,
     UniversalSecurityCoordinator,
-)
+    )
 
 # swarm_coordinator: deprecated - use lazy import via __getattr__
 # Validation coordinator
@@ -151,7 +151,7 @@ from .validation_coordinator import (
     UniversalValidationCoordinator,
     ValidationResult,
     ValidationSeverity,
-)
+    )
 from _core import aclose
 
 # NOTE: Quantum, NAS, and FederatedLearning coordinators were moved to

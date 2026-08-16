@@ -90,7 +90,7 @@ class WakeFdNotifier:
             self._reader_handle = self._loop.add_reader(
                 wake_fd,
                 self._on_wake,
-            )
+    )
             self._running = True
             logger.info(f"[WakeFdNotifier] Registered wake_fd={wake_fd}")
 

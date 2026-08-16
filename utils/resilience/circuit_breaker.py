@@ -67,7 +67,7 @@ class CircuitBreakerOpen(Exception):
             f"Circuit '{circuit_name}' is OPEN. "
             f"{failure_count} failures, last: {last_failure}. "
             f"Retry after {recovery_timeout:.0f}s."
-        )
+    )
 
 
 @dataclass
@@ -204,7 +204,7 @@ class CircuitBreaker:
                 "Circuit '%s' OPENED after %d consecutive failures",
                 self.name,
                 self._metrics.consecutive_failures,
-            )
+    )
             for cb in self._on_open_callbacks:
                 try:
                     cb(self)
@@ -225,7 +225,7 @@ class CircuitBreaker:
             logger.info(
                 "Circuit '%s' HALF_OPEN for recovery testing",
                 self.name,
-            )
+    )
 
     async def _check_open(self) -> None:
         """Check if we should open based on failure history."""
@@ -238,7 +238,7 @@ class CircuitBreaker:
                 failure_count=failures_in_window,
                 last_failure="multiple failures in window",
                 recovery_timeout=self.config.recovery_timeout,
-            )
+    )
 
     async def _check_half_open_close(self) -> None:
         """Check if we should close from half-open."""
@@ -338,7 +338,7 @@ class CircuitBreaker:
                         context={"circuit": self.name, "state": self._state.value},
                     ),
                     name=f"circuit_breaker:failure:{self.name}",
-                )
+    )
             except Exception:
                 pass
 
@@ -394,7 +394,7 @@ class CircuitBreakers:
                 recovery_timeout=30.0,
                 success_threshold=2,
             ),
-        )
+    )
 
     @staticmethod
     def graph_operations() -> CircuitBreaker:
@@ -406,7 +406,7 @@ class CircuitBreakers:
                 recovery_timeout=60.0,
                 success_threshold=3,
             ),
-        )
+    )
 
     @staticmethod
     def export() -> CircuitBreaker:
@@ -418,7 +418,7 @@ class CircuitBreakers:
                 recovery_timeout=15.0,
                 success_threshold=1,
             ),
-        )
+    )
 
     @staticmethod
     def sidecar(name: str) -> CircuitBreaker:
@@ -430,4 +430,4 @@ class CircuitBreakers:
                 recovery_timeout=30.0,
                 success_threshold=2,
             ),
-        )
+    )

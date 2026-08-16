@@ -35,7 +35,7 @@ class TestP11RC1EmptyWorkItemsIncrement:
                 now_monotonic=0.0,
                 query="",
                 duckdb_store=None,
-            )
+    )
             assert result0, "run_one_cycle should return True"
             assert result.consecutive_empty_cycles == initial_count + 1
 
@@ -58,7 +58,7 @@ class TestP11RC1EmptyWorkItemsIncrement:
                 now_monotonic=0.0,
                 query="",
                 duckdb_store=None,
-            )
+    )
             assert result0, "run_one_cycle should return True"
             assert result.consecutive_empty_cycles == 0
 
@@ -92,7 +92,7 @@ class TestP11RC2PreCycleEarlyExit:
                     now_monotonic=55.0,
                     query="test",
                     duckdb_store=None,
-                )
+    )
 
     def test_empty_cycle_limit_is_bounded(self):
         """_empty_cycle_limit = max(2, min(8, int(duration/30))) — never > 8."""

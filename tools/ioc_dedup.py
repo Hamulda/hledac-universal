@@ -224,7 +224,7 @@ def _make_global_manager(persist_path: str | None) -> IocDedupManager:
 _get_global_manager = module_singleton_getter(
     singleton_name="_global_manager",
     factory=lambda: _make_global_manager(None),
-)
+    )
 
 
 def get_global_manager(persist_path: str | None = None) -> IocDedupManager:

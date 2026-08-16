@@ -200,7 +200,7 @@ def test_nam_minimal_input_produces_tuple():
             acquisition_prelude_errors=None, acquisition_prelude_duration_s=None,
             acquisition_prelude_reason=None, windup_guard_observation=None,
             scheduler_deadline_enforced=False, scheduler_deadline_checks=0,
-        )
+    )
         check("nam_minimal_input_produces_tuple",
               isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], str),
               f"got: {result}")

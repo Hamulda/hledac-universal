@@ -35,9 +35,9 @@ from collections.abc import AsyncIterator
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Self
 import numpy as np
-from hledac.universal.core.psutil_shim import psutil, process
+from hledac.universal._core.psutil_shim import psutil, process
 from hledac.universal.utils.exceptions import MemoryPressureError
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ _ENV_ALLOW_LARGE_BATCH_VAR = 'HLEDAC_ALLOW_LARGE_MLX_BATCH'
 # SWARM-002: Multilingual embedding support
 _MULTILINGUAL_AVAILABLE = False
 try:
-    from hledac.universal.core.multilingual import (
+    from hledac.universal._core.multilingual import (
         detect_language,
         get_lang_detector,
         get_bge_m3_embedder,
@@ -264,7 +264,7 @@ class EmbeddingRouter:
             return mb
         except Exception as e:  # noqa: BLE001 — fail-soft
             logger.debug(f'[EMBED:ROUTER] ModernBERT sync load failed: {e}')
-        from hledac.universal.core.mlx_embeddings import get_mlx_embedder
+        from hledac.universal._core.mlx_embeddings import get_mlx_embedder
         return get_mlx_embedder()
 
     async def get_embedder(self):
@@ -285,7 +285,7 @@ class EmbeddingRouter:
             return mb
         except Exception as e:  # noqa: BLE001 — fail-soft
             logger.warning(f'[EMBED:ROUTER] ModernBERT load failed: {e}')
-        from hledac.universal.core.mlx_embeddings import get_mlx_embedder
+        from hledac.universal._core.mlx_embeddings import get_mlx_embedder
         return get_mlx_embedder()
 
     async def warmup(self):
@@ -330,7 +330,7 @@ def _get_lang_detector() -> LangDetector | None:
             use_fasttext=True,
             use_langdetect=True,
             confidence_threshold=0.7
-        )
+    )
     return _lang_detector_instance
 
 
@@ -452,7 +452,7 @@ def _get_uma_guard_threshold() -> int:
     if _UMA_GUARD_THRESHOLD_MB is not None:
         return _UMA_GUARD_THRESHOLD_MB
     try:
-        from hledac.universal.core.resource_governor import _THRESHOLD_CRITICAL_GIB
+        from hledac.universal._core.resource_governor import _THRESHOLD_CRITICAL_GIB
         _UMA_GUARD_THRESHOLD_MB = int(_THRESHOLD_CRITICAL_GIB * 1024)
     except Exception:  # noqa: BLE001 — fail-soft: resource_governor import failure should not prevent threshold calculation
         _UMA_GUARD_THRESHOLD_MB = 6656
@@ -590,7 +590,7 @@ def _embed_multilingual_batch(texts: list[str], batch_size: int, keep_loaded: bo
         from hledac.universal.utils.sync_bridge import run_sync_async
         embeddings = run_sync_async(
             bge_embedder.embed_batch(texts, truncate_to=_EMBEDDING_DIM)
-        )
+    )
 
         if embeddings.dtype != np.float32:
             embeddings = embeddings.astype(np.float32)
@@ -643,7 +643,7 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
     # inference. Return zero vectors so callers don't crash — downstream
     # GraphRAG and similarity search naturally degrade with zero embeddings.
     try:
-        from hledac.universal.core.resource_governor import get_current_degradation_level, QoSLevel
+        from hledac.universal._core.resource_governor import get_current_degradation_level, QoSLevel
         level = get_current_degradation_level()
         if level in (QoSLevel.EMERGENCY, QoSLevel.BATTERY):
             return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
@@ -680,7 +680,7 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
         logger.debug(
             f'[EMBED] Language split: {len(english_texts)} English, '
             f'{len(multilingual_texts)} multilingual'
-        )
+    )
 
     # Initialize result array
     result = np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
@@ -824,7 +824,7 @@ def _embed_english_batch(texts: list[str], batch_size: int, keep_loaded: bool) -
             normalize=True,
             truncate_dim=_EMBEDDING_DIM,
             memory_pressure_provider=_uma_pressure_provider
-        )
+    )
         _log_embedding_stats(embedder, embeddings, len(texts_to_embed))
         embeddings = _normalize_embeddings(embeddings)
         logger.debug(f'[EMBED] Generated English embeddings shape: {embeddings.shape}')
@@ -1521,7 +1521,7 @@ async def _batch_encode_with_guard(
         logger.warning(
             f"[EMBED:_batch] Skipped due to UMA pressure: "
             f"combined={telemetry.get('combined_memory_mb', 0)}MB"
-        )
+    )
         return None
     try:
         _, texts = zip(*batch)
@@ -1573,7 +1573,7 @@ async def embed_stream_chunks(
             chunk_ids = [str(i + j) for j in range(len(chunk))]
             result = await _batch_encode_with_guard(
                 list(zip(chunk_ids, chunk)), batch_size
-            )
+    )
             if result is not None:
                 batch_tuples, embs = result
                 ids = [str(item[0]) for item in batch_tuples]
@@ -1619,7 +1619,7 @@ async def generate_embeddings_adaptive_streaming(texts: list[str], initial_batch
     if not _check_memory_guard():
         logger.warning('[EMBED:adaptive] Skipped due to memory pressure')
         return
-    from hledac.universal.core.embeddings.manager import AdaptiveEmbeddingBatcher, get_mlx_embedder
+    from hledac.universal._core.embeddings.manager import AdaptiveEmbeddingBatcher, get_mlx_embedder
     embedder = get_mlx_embedder()
     await embedder.ensure_loaded()
     batcher = AdaptiveEmbeddingBatcher(initial_batch_size=initial_batch_size, min_batch_size=min_batch_size, max_batch_size=max_batch_size, pressure_high=pressure_high, pressure_low=pressure_low)
@@ -1852,7 +1852,7 @@ def batch_hamming_similarity(
                 candidates_list,
                 len(candidate_embeddings),
                 num_bytes
-            )
+    )
             return np.array(scores, dtype=np.float32)
         except Exception:
             pass  # Fall through to numpy

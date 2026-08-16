@@ -60,11 +60,7 @@ from hledac.universal.runtime.sprint_scheduler import (
     CTLossStage,
     SprintSchedulerResult,
 )
-
-
-
-
-
+from hledac.universal.runtime.acquisition_strategy import (
     FeedDominanceBudget,
     AcquisitionProfile,
     _NONFEED_PROFILE_FEED_CAP_THRESHOLDS,
@@ -73,8 +69,7 @@ from hledac.universal.runtime.sprint_scheduler import (
 
 _PROFILE = "nonfeed_diagnostic180"
 _QUERY = "mozilla.org certificate transparency subdomains april 2026"
-
-from _core import aclose_REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
+_REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
 
 # ---------------------------------------------------------------------------

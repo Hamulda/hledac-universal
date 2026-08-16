@@ -77,7 +77,7 @@ class BetaBinomial:
             weight=weight,
             source_id=source_id,
             timestamp=time.time(),
-        )
+    )
         self._evidence_log.append(record)
 
         # Update source index
@@ -110,7 +110,7 @@ class BetaBinomial:
             weight=-weight,  # Negative = contradicting
             source_id=source_id,
             timestamp=time.time(),
-        )
+    )
         self._evidence_log.append(record)
 
         # Update source index
@@ -299,7 +299,7 @@ class BetaBinomial:
                 weight=ev_data['weight'],
                 source_id=ev_data['source_id'],
                 timestamp=ev_data['timestamp'],
-            )
+    )
             bb._evidence_log.append(record)
             if record.source_id not in bb._source_index:
                 bb._source_index[record.source_id] = []

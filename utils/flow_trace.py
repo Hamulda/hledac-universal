@@ -276,7 +276,7 @@ def trace_span_end(
             status=status,
             duration_ms=duration_ms,
             metadata=metadata,
-        )
+    )
 
     return duration_ms
 

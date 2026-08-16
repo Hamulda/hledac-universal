@@ -80,7 +80,7 @@ class DedupStage:
             matched_pattern_labels=input_batch.matched_pattern_labels,
             entry_dedup_hits=entry_dedup_hits,
             errors=input_batch.errors,
-        )
+    )
 
         return batch, telemetry
 
@@ -91,4 +91,4 @@ class DedupStage:
             matched_pattern_labels=[],
             entry_dedup_hits=[],
             errors=[],
-        )
+    )

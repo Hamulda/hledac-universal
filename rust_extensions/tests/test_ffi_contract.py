@@ -158,7 +158,7 @@ class TestPyiGeneration:
         classes_with_slots = sum(
             1 for c in manifest.get("classes", {}).values()
             if c.get("slots")
-        )
+    )
         assert slot_count > 0, "No __slots__ found in .pyi"
         assert slot_count >= classes_with_slots, \
             f"Expected at least {classes_with_slots} __slots__, found {slot_count}"
@@ -293,7 +293,7 @@ class TestCLI:
             cwd=repo_root,
             capture_output=True,
             text=True
-        )
+    )
         # Should not crash (exit code 0 or 1 is acceptable)
         assert result.returncode in (0, 1), f"Validator crashed: {result.stderr}"
 
@@ -304,7 +304,7 @@ class TestCLI:
             cwd=repo_root,
             capture_output=True,
             text=True
-        )
+    )
         assert result.returncode in (0, 1), f"Validator crashed: {result.stderr}"
 
 

@@ -87,7 +87,7 @@ class TestMarkUsed:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             mark_used,
-        )
+    )
 
         # Clear state
         _last_used["tor"].clear()
@@ -112,7 +112,7 @@ class TestMarkUsed:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             mark_used,
-        )
+    )
 
         # Clear state
         _last_used["i2p"].clear()
@@ -138,7 +138,7 @@ class TestCloseIdle:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             close_idle,
-        )
+    )
 
         _last_used["tor"].clear()
         
@@ -152,7 +152,7 @@ class TestCloseIdle:
             _last_used,
             _TTL_SECONDS,
             close_idle,
-        )
+    )
 
         # Add old entry (expired)
         _last_used["tor"]["old.onion"] = time.monotonic() - _TTL_SECONDS - 10
@@ -172,7 +172,7 @@ class TestCloseIdle:
             _last_used,
             _TTL_SECONDS,
             close_idle,
-        )
+    )
 
         _last_used["i2p"]["valid.i2p"] = time.monotonic()
         
@@ -191,7 +191,7 @@ class TestCloseAll:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             close_all,
-        )
+    )
 
         # Add some entries
         _last_used["tor"]["example.onion"] = time.monotonic()
@@ -242,7 +242,7 @@ class TestThreadSafety:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             mark_used,
-        )
+    )
 
         _last_used["tor"].clear()
         
@@ -261,7 +261,7 @@ class TestThreadSafety:
             _last_used,
             close_idle,
             mark_used,
-        )
+    )
 
         _last_used["i2p"].clear()
         
@@ -275,7 +275,7 @@ class TestThreadSafety:
             close_idle(),
             mark_used("i2p", "newhost.i2p"),
             close_idle(),
-        )
+    )
         
         # Should have exactly one entry (newhost)
         assert "newhost.i2p" in _last_used["i2p"]
@@ -308,7 +308,7 @@ class TestInvariants:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             mark_used,
-        )
+    )
 
         _last_used["tor"].clear()
         
@@ -326,7 +326,7 @@ class TestInvariants:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             close_idle,
-        )
+    )
 
         _last_used["i2p"]["old.i2p"] = time.monotonic() - 400
         

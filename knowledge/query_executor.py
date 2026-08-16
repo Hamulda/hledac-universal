@@ -10,16 +10,11 @@ This module is NOT part of the public API - it exists solely to concentrate
 SQL string templates and transaction patterns that were previously copy-pasted
 across 38 _sync_* methods.
 
-MODERN-20: Uses core.canonical_schema as single source of truth for
-canonical_findings schema. This fixes the arity mismatch (7 vs 8 columns)
-that broke DuckDB COPY FROM Arrow.
-
 Design:
 - All SQL templates are class-level string constants
 - Transaction framing (_begin/_commit/_rollback) is shared
 - Connection routing (MODE A file conn vs MODE B persistent conn) is shared
 - Arrow->dict conversion helpers are shared
-- Schema constants imported from core.canonical_schema
 
 Usage:
     qe = DuckDBQueryExecutor(store)  # store is DuckDBShadowStore instance
@@ -36,18 +31,6 @@ if TYPE_CHECKING:
 
 import logging as _logging
 
-# MODERN-20: Import canonical schema as single source of truth
-
-
-
-
-
-    CANONICAL_FINDINGS_ARITY,
-    CANONICAL_FINDINGS_COLUMNS,
-    get_duckdb_temp_table_ddl,
-    pad_row_to_schema,
-)
-
 _logger = _logging.getLogger(__name__)
 
 
@@ -55,7 +38,6 @@ class DuckDBQueryExecutor:
     """
     Private SQL construction and execution engine for DuckDBShadowStore.
 
-from _core import aclose
     NOT part of the public API - exists solely to concentrate SQL string
     templates and transaction patterns that were previously copy-pasted
     across 38 _sync_* methods.
@@ -72,14 +54,7 @@ from _core import aclose
 
     # ── SQL Templates ─────────────────────────────────────────────────────────────
 
-    # ISSUE F5-FIX: Extended to 13 columns for WARC provenance
-    _SQL_INSERT_SHADOW_FINDING = (
-        "INSERT INTO canonical_findings "
-        "(id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json, "
-        "warc_record_id, warc_path, compressed_offset, compressed_size, warc_url) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT (id) DO NOTHING"
-    )
+    _SQL_INSERT_SHADOW_FINDING = "INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING"
     _SQL_INSERT_SHADOW_RUN = (
         "INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb) VALUES (?, ?, ?, ?, ?)"
     )
@@ -219,25 +194,12 @@ from _core import aclose
         confidence: float,
         ts: float | None,
         provenance_json: str | None,
-        # ISSUE F5-FIX: WARC provenance parameters (optional for backward compat)
-        payload_text: str | None = None,
-        claims_json: str | None = None,
-        warc_record_id: str | None = None,
-        warc_path: str | None = None,
-        compressed_offset: int = 0,
-        compressed_size: int = 0,
-        warc_url: str | None = None,
     ) -> bool:
         """Insert a single shadow finding. Returns True on success."""
         conn = self._conn()
         if conn is None:
             return False
-        # ISSUE F5-FIX: 13 parameters including WARC provenance
-        params = [
-            finding_id, query, source_type, confidence, ts, provenance_json,
-            payload_text, claims_json,
-            warc_record_id, warc_path, compressed_offset, compressed_size, warc_url
-        ]
+        params = [finding_id, query, source_type, confidence, ts, provenance_json, None]
         try:
             stmt = self._get_insert_stmt(conn)
 
@@ -310,9 +272,6 @@ from _core import aclose
         """
         R2: DuckDBAppender insert — bypasses SQL parser for direct columnar write.
 
-        MODERN-20 FIX: Uses canonical schema (8 columns) instead of hardcoded 7.
-        The schema is imported from core.canonical_schema as single source of truth.
-
         Strategy: append to a temporary table, then INSERT...SELECT with
         ON CONFLICT DO NOTHING into canonical_findings. This preserves
         conflict semantics that raw DuckDBAppender doesn't support.
@@ -323,22 +282,28 @@ from _core import aclose
         import uuid as _uuid
         _TEMP_TABLE = f"_appender_bulk_{_uuid.uuid4().hex[:8]}"
         try:
-            # MODERN-20: Use canonical schema DDL (single source of truth)
-            conn.execute(f"CREATE TEMP TABLE {_TEMP_TABLE} {get_duckdb_temp_table_ddl(_TEMP_TABLE)}")
+            # Create temp table with same schema as canonical_findings (subset of columns)
+            conn.execute(f"""
+                CREATE TEMP TABLE {_TEMP_TABLE} (
+                    id VARCHAR, query VARCHAR, source_type VARCHAR,
+                    confidence DOUBLE, ts DOUBLE, provenance_json VARCHAR,
+                    claims_json VARCHAR
+                )
+            """)
             # DuckDBAppender — zero-SQL-parser columnar write
             appender = conn.append(_TEMP_TABLE)
             try:
                 for row in rows:
-                    # MODERN-20: Pad to 8 columns using canonical schema
-                    padded = pad_row_to_schema(list(row))
-                    appender.append_row(padded)
+                    # Pad rows to 7 columns (appender expects exact column count)
+                    padded = list(row) + [None] * (7 - len(row))
+                    appender.append_row(padded[:7])
             finally:
                 appender.close()
-            # MODERN-20: Include all 8 columns in INSERT...SELECT
+            # Atomic move with conflict handling
             result = conn.execute(f"""
                 INSERT INTO canonical_findings
-                    (id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json)
-                SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json
+                    (id, query, source_type, confidence, ts, provenance_json, claims_json)
+                SELECT id, query, source_type, confidence, ts, provenance_json, claims_json
                 FROM {_TEMP_TABLE}
                 ON CONFLICT (id) DO NOTHING
             """)
@@ -582,8 +547,15 @@ from _core import aclose
         _TEMP_TABLE = f"_copy_arrow_batch_{_uuid.uuid4().hex[:8]}"
         try:
             with self._wal_delete_mode():
-                # Step 1: MODERN-20: Use canonical schema DDL (single source of truth)
-                conn.execute(f"CREATE TEMP TABLE {_TEMP_TABLE} {get_duckdb_temp_table_ddl(_TEMP_TABLE)}")
+                # Step 1: Create temp table with same schema as canonical_findings
+                conn.execute(f"""
+                    CREATE TEMP TABLE {_TEMP_TABLE} (
+                        id VARCHAR, query VARCHAR, source_type VARCHAR,
+                        confidence DOUBLE, ts DOUBLE,
+                        provenance_json VARCHAR, payload_text VARCHAR,
+                        claims_json VARCHAR
+                    )
+                """)
                 # Step 2: COPY FROM Arrow — zero-copy columnar ingestion
                 conn.execute(
                     f"COPY {_TEMP_TABLE} FROM ? (FORMAT 'arrow')",
@@ -776,8 +748,7 @@ from _core import aclose
         conn = self._conn()
         if conn is None:
             return []
-        # ISSUE F5-FIX: Extended to 13 columns including WARC provenance
-        sql = "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json, warc_record_id, warc_path, compressed_offset, compressed_size, warc_url FROM canonical_findings ORDER BY ts DESC LIMIT ?"
+        sql = "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json FROM canonical_findings ORDER BY ts DESC LIMIT ?"
         try:
             t0 = perf_counter_ns()
             raw_result = list(self._store.arrow_fetch_batch(conn, sql, [limit]))
@@ -793,14 +764,6 @@ from _core import aclose
                     "confidence": row[3],
                     "ts": row[4],
                     "provenance_json": row[5],
-                    "payload_text": row[6],
-                    "claims_json": row[7],
-                    # ISSUE F5-FIX: WARC provenance fields
-                    "warc_record_id": row[8],
-                    "warc_path": row[9],
-                    "compressed_offset": row[10],
-                    "compressed_size": row[11],
-                    "warc_url": row[12],
                 }
                 for row in raw_result
             ]

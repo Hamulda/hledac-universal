@@ -203,7 +203,7 @@ def _score_group(value: str, kind: str, group: list[dict]) -> CorroborationScore
             independent_source_count=len(unique_findings),
             supporting_finding_ids=_extract_ids(unique_findings),
             reasons=(noise_reason,),
-        )
+    )
 
     # Compute score
     score, reasons = _compute_score(value, kind, source_families, unique_findings)

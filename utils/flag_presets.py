@@ -137,7 +137,7 @@ def apply_preset(
     if name not in PRESETS:
         raise KeyError(
             f"Unknown preset {name!r}. Available: {sorted(PRESETS)}"
-        )
+    )
     preset = PRESETS[name]
     applied: dict[str, str] = {}
     for flag, value in preset.items():

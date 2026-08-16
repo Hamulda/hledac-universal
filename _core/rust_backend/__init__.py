@@ -184,7 +184,7 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
     "anti_analysis",
     # misc is used for _TlsDomain backward-compat and html property routing
     "misc",
-)
+    )
 
 _lazy_mod_cache: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
 
@@ -411,7 +411,7 @@ class AccelBackend:
             f"[AccelBackend] backend={self._probe_result.backend}, "
             f"available={self._probe_result.available}, "
             f"version={self._probe_result.version_str}"
-        )
+    )
         return self._probe_result
 
     @property
@@ -441,7 +441,7 @@ class AccelBackend:
             backend="rust" if p.available else "python",
             capability_score=p.capability_score,
             so_mtime=p.so_mtime,
-        )
+    )
 
     # -------------------------------------------------------------------------
     # Domain properties — lazy, cached after first access
@@ -670,7 +670,7 @@ class AccelBackend:
         """
         return _get_submodule("link_predictor").get_link_predictor_domain(
             self._ensure_probe().ext
-        )
+    )
 
     # -------------------------------------------------------------------------
     # Internal

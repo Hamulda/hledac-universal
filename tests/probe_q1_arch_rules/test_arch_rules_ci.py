@@ -166,10 +166,10 @@ class TestASYNC461RawGatherBan:
         assert len(safe) == 0, f"return_exceptions=True should be allowed: {safe}"
 
     def test_parallel_is_allowed(self, tmp_path: Path):
-        """parallel() from utils.async_helpers is allowed (not asyncio.gather)."""
+        """parallel() from utils.asyncx is allowed (not asyncio.gather)."""
         f = tmp_path / "parallel.py"
         f.write_text(dedent("""
-            from utils.async_helpers import parallel
+            from utils.asyncx import parallel
             async def f(): pass
             parallel(f(), f())
         """))

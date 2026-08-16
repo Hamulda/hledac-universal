@@ -172,13 +172,13 @@ def bench_constructor_msgspec() -> dict[str, float]:
         AdmissionResultShadow(
             status="admit", score=0.75, content_hint="html",
             source_family="web", reason="score=0.75,family=1,coverage=0.50",
-        )
+    )
         BacklogCandidateShadow(
             url="https://example.com/article",
             score=0.75, source_family="web", content_hint="html",
             title_snippet="Example Article About Things",
             contradiction_value=0.1, enqueued_at_cycle=5, lane_id="expansion",
-        )
+    )
     elapsed = time.perf_counter() - t0
     total = 2 * _N  # two objects per iteration
     return {"total_s": elapsed, "ns_op": elapsed / total * 1e9, "ops": total}
@@ -191,13 +191,13 @@ def bench_constructor_baseline() -> dict[str, float]:
         AdmissionResultBaseline(
             status="admit", score=0.75, content_hint="html",
             source_family="web", reason="score=0.75,family=1,coverage=0.50",
-        )
+    )
         BacklogCandidateBaseline(
             url="https://example.com/article",
             score=0.75, source_family="web", content_hint="html",
             title_snippet="Example Article About Things",
             contradiction_value=0.1, enqueued_at_cycle=5, lane_id="expansion",
-        )
+    )
     elapsed = time.perf_counter() - t0
     total = 2 * _N
     return {"total_s": elapsed, "ns_op": elapsed / total * 1e9, "ops": total}

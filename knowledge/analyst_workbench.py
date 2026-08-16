@@ -715,7 +715,7 @@ class AnalystWorkbench:
             return self._assemble_sprint_brief_result(
                 sprint_id, target_id, findings, graph_signal,
                 target_memory, graph_analytics, store_findings_count, ts
-            )
+    )
         except Exception:
             return AnalystBrief(sprint_id=sprint_id, target_id=target_id, headline=f'Sprint {sprint_id}: brief generation failed', key_findings=(f'Findings processed: {len(findings)}',), evidence_chain_ids=(), next_actions=('Review findings manually',), open_questions=('Why did brief generation fail?',), confidence=0.1, generated_ts=ts, corroboration_summary=('Corroboration unavailable due to brief generation failure',), source_family_summary=(), evidence_gaps=('Brief generation failed — evidence gaps unavailable',), risk_hypotheses=(), feed_cluster_summary=(), pivot_recommendations=())
 
@@ -740,7 +740,7 @@ class AnalystWorkbench:
         if target_memory:
             open_drift_q = self._enrich_key_findings_with_target_memory(
                 key_findings_list, target_memory
-            )
+    )
         self._enrich_key_findings_with_graph_analytics(key_findings_list, graph_analytics)
         runtime_finding_count = len(findings)
         graph_nodes = graph_signal.get('graph_nodes', 0) if graph_signal else 0
@@ -781,7 +781,7 @@ class AnalystWorkbench:
             tmf = self._derive_target_memory_feedback(target_memory, findings)
             evidence_gaps, pivot_recommendations = self._apply_target_memory_feedback(
                 tmf, evidence_gaps, pivot_recommendations
-            )
+    )
         return AnalystBrief(sprint_id=sprint_id, target_id=target_id, headline=headline, key_findings=key_findings, evidence_chain_ids=evidence_chain_ids, next_actions=next_actions_tuple, open_questions=tuple(open_questions[:5]), confidence=confidence, generated_ts=ts, corroboration_summary=corroboration_summary, source_family_summary=source_family_summary, evidence_gaps=evidence_gaps, risk_hypotheses=risk_hypotheses, feed_cluster_summary=feed_cluster_summary, pivot_recommendations=pivot_recommendations, target_memory_feedback=tmf)
 
     def _enrich_key_findings_with_target_memory(self, key_findings_list: list[str], target_memory: dict[str, Any]) -> str | None:

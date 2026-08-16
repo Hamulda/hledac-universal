@@ -70,7 +70,7 @@ def test_safe_gather_strict_iterates_subexceptions():
     NOT: except* NameError (catches only NameError, others propagate).
     """
     # --- Verify safe_gather_strict catches BaseExceptionGroup internally ---
-    from utils.async_helpers import safe_gather_strict
+    from utils.asyncx import safe_gather_strict
 
     src = inspect.getsource(safe_gather_strict)
     assert "BaseExceptionGroup" in src or "ExceptionGroup" in src, (
@@ -106,7 +106,7 @@ async def test_safe_gather_strict_preserves_results_on_failure():
     safe_gather_strict re-raises BaseExceptionGroup — the caller (sprint_scheduler)
     is responsible for iterating and collecting partial results.
     """
-    from utils.async_helpers import safe_gather_strict
+    from utils.asyncx import safe_gather_strict
 
     async def _failing():
         raise NameError("provider_init")

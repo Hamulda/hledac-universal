@@ -456,7 +456,7 @@ class UniversalMemoryCoordinator:
                         'pmset', '-g', 'batt',
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
-                    )
+    )
                     # ISSUE-3 fix: check returncode — nepoužívat stdout když pmset selhal
                     async with asyncio.timeout(1.0):
                         stdout, _ = await proc.communicate()
@@ -849,12 +849,12 @@ class UniversalMemoryCoordinator:
             [self.get_zone_usage(z) for z in MemoryZone],
             policy="collect",
             ctx="zone_usage",
-        )
+    )
         return {
             z.value: data if not isinstance(data, Exception) else ZoneStatistics(
                 zone=z.value, allocation_count=0, total_bytes=0, total_mb=0.0,
                 evictable_count=0, non_evictable_count=0,
-            )
+    )
             for z, data in zip(MemoryZone, result.ok, strict=True)
         }
 
@@ -866,7 +866,7 @@ class UniversalMemoryCoordinator:
             [self.get_zone_usage(z) for z in MemoryZone],
             policy="collect",
             ctx="zone_stats",
-        )
+    )
         zones = {
             z.value: msgspec.to_builtins(data) if not isinstance(data, Exception) else {
                 'zone': z.value, 'allocation_count': 0, 'total_bytes': 0,

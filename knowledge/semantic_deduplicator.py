@@ -223,7 +223,7 @@ class SemanticDeduplicator:
         self._minhash_lsh: MinHashLSH = MinHashLSH(
             threshold=MIN_MINHASH_SIMILARITY,
             num_perm=MINHASH_NUM_PERM,
-        )
+    )
         # Small cache to avoid repeated lookups within a sprint
         self._simhash_cache: dict[str, int] = {}
         self._lock = asyncio.Lock()
@@ -263,7 +263,7 @@ class SemanticDeduplicator:
                 confidence=0.0,
                 fingerprint=None,
                 minhash_bytes=None,
-            )
+    )
 
         try:
             sim_fp = _compute_simhash(combined_text)
@@ -285,7 +285,7 @@ class SemanticDeduplicator:
                     confidence=MIN_MINHASH_SIMILARITY,
                     fingerprint=sim_fp,
                     minhash_bytes=mh_bytes,
-                )
+    )
 
             # ── Tier 2: SimHash Hamming distance (O(n) scan, fallback) ─────
             # ISSUE 4.3 E-11 FIX: Only if MinHash LSH missed.
@@ -301,7 +301,7 @@ class SemanticDeduplicator:
                     confidence=1.0 - (dup_dist / SIMHASH_BITS),
                     fingerprint=sim_fp,
                     minhash_bytes=None,
-                )
+    )
 
             # ── Not a duplicate: store fingerprints ───────────────────────────
             await self._add_to_store(finding_id, sim_fp, mh_bytes)
@@ -312,7 +312,7 @@ class SemanticDeduplicator:
                 confidence=1.0,
                 fingerprint=sim_fp,
                 minhash_bytes=None,
-            )
+    )
 
         except Exception as exc:
             logger.debug("SemanticDeduplicator: check_duplicate error: %s", exc)
@@ -322,7 +322,7 @@ class SemanticDeduplicator:
                 confidence=0.0,
                 fingerprint=None,
                 minhash_bytes=None,
-            )
+    )
 
     async def _check_simhash(self, finding_id: str, fingerprint: int) -> int | None:
         """

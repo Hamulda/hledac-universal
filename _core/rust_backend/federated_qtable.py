@@ -201,11 +201,11 @@ class PythonFallbackQTableDomain:
         next_max = max(
             (v for k, v in self._table.items() if k.startswith(next_key_prefix)),
             default=0.0,
-        )
+    )
         old = self._table.get(key, 0.0)
         self._table[key] = old + self._alpha * (
             reward + self._gamma * next_max - old
-        )
+    )
         if len(self._table) > self._max_entries:
             # evict 10 lowest
             sorted_entries = sorted(self._table.items(), key=lambda x: x[1])

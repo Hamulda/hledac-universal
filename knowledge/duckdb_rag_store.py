@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any
 
 from operator import attrgetter, itemgetter
 from hledac.universal.utils.asyncx import parallel, _check_gathered
+from hledac.universal.knowledge.duckdb_parallel import vectorized_build_candidates
 from _core import aclose
 
 if TYPE_CHECKING:
@@ -158,7 +159,7 @@ class DuckDBRAGStore:
             try:
                 from hledac.universal.brain.mlx_embedder import (
                     MLXEmbedder,
-                )
+    )
                 self._embedder = MLXEmbedder()
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"[DUCKDB:RAG] Embedder unavailable: {e}")
@@ -321,7 +322,7 @@ class DuckDBRAGStore:
         # (fts_search_findings queries canonical_findings, NOT rag_embeddings)
         vec_results = await self._store.vector_search_rag(
             query_vector, k=k * 2, document_id=document_id
-        )
+    )
 
         if not vec_results:
             return []
@@ -338,7 +339,7 @@ class DuckDBRAGStore:
                 vector_score=1.0 / (distance + 0.001),
                 fts_score=0.0,
                 final_score=1.0 / (distance + 0.001),
-            )
+    )
 
         sorted_chunks = sorted(candidates.values(), key=attrgetter("final_score"), reverse=True)
 
@@ -363,7 +364,7 @@ class DuckDBRAGStore:
                 mmr_k = min(k, len(sorted_chunks))
                 mmr_indices = maximal_marginal_relevance(
                     q_vec, list(doc_matrix), top_k=mmr_k, lambda_param=0.5
-                )
+    )
                 sorted_chunks = [sorted_chunks[i] for i in mmr_indices]
             except Exception:  # noqa: BLE001 — fall back to score-sorted
                 pass
@@ -421,7 +422,7 @@ class DuckDBRAGStore:
         # Immediate upsert — track task so close() can await pending writes
         task = asyncio.create_task(
             self._upsert_text_async(finding_id, text, metadata)
-        )
+    )
         async with self._pending_lock:
             self._pending_tasks.append(task)
         task.add_done_callback(self._make_pending_done_callback())
@@ -599,7 +600,7 @@ class DuckDBEntityStore:
             try:
                 from hledac.universal.brain.mlx_embedder import (
                     MLXEmbedder,
-                )
+    )
                 self._embedder = MLXEmbedder()
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"[DUCKDB:ENTITY] Embedder unavailable: {e}")
@@ -700,38 +701,45 @@ class DuckDBEntityStore:
             policy="collect",
             concurrency=2,
             ctx="duckdb_rag_store:hybrid_search",
-        )
+    )
         fts_results = hybrid_results[0] if len(hybrid_results) > 0 else []
         vec_results = hybrid_results[1] if len(hybrid_results) > 1 else []
 
-        # Merge with RRF
-        candidates: dict[str, EntityCandidate] = {}
-
-        for r in fts_results:
-            eid = r.get("entity_value", "")
-            candidates[eid] = EntityCandidate(
-                entity_id=eid,
-                entity_value=r.get("entity_value", ""),
-                entity_type=r.get("entity_type", ""),
-                distance=1.0 - (1.0 / (r.get("rank", 0) + 1)),
-                metadata={"fts_rank": r.get("rank", 0)},
-            )
-
-        for r in vec_results:
-            eid = r.get("entity_id", "")
-            candidates[eid] = EntityCandidate(
-                entity_id=eid,
-                entity_value=r.get("entity_value", ""),
-                entity_type=r.get("entity_type", ""),
-                distance=r.get("distance", 1.0),
-                metadata=r.get("metadata", {}),
-            )
+        # ISSUE-006: Vectorized candidate building replaces sequential loops
+        # BEFORE: O(n*m) nested loops
+        # AFTER: O(n + m) dict comprehension + merge
+        candidates = vectorized_build_candidates(
+            fts_results,
+            vec_results,
+            fts_weight=0.5,
+            vec_weight=0.5,
+        )
 
         if not candidates:
             return []
 
-        # Sort by distance (lower is better for cosine distance)
-        sorted_candidates = sorted(candidates.values(), key=attrgetter("distance"))
+        # Convert to EntityCandidate with FTS/vector scoring
+        entity_candidates: list[EntityCandidate] = []
+        for cid, cand in candidates.items():
+            # FTS distance: lower rank = better (1.0 - normalized_score)
+            fts_dist = 1.0 - cand.get("fts_score", 0.0) if cand.get("fts_rank") is not None else 1.0
+            # Vector distance: lower = better
+            vec_dist = cand.get("distance", 1.0) if cand.get("distance") is not None else 1.0
+            # Combined: weighted average (FTS priority for entities)
+            combined_dist = 0.3 * fts_dist + 0.7 * vec_dist
+
+            entity_candidates.append(
+                EntityCandidate(
+                    entity_id=cand.get("entity_id", cid),
+                    entity_value=cand.get("entity_value", ""),
+                    entity_type=cand.get("entity_type", ""),
+                    distance=combined_dist,
+                    metadata=cand.get("metadata", {}),
+            )
+            )
+
+        # Sort by combined distance (lower is better)
+        sorted_candidates = sorted(entity_candidates, key=attrgetter("distance"))
         return sorted_candidates[:k]
 
     async def search_similar_adaptive(
@@ -799,7 +807,7 @@ class DuckDBEntityStore:
 
         vec_results = await self._store.vector_search_entities(
             query_vector, k=fetch_k, entity_type=entity_type
-        )
+    )
 
         if not vec_results:
             return []
@@ -812,7 +820,7 @@ class DuckDBEntityStore:
                     entity_type=r.get("entity_type", ""),
                     distance=r.get("distance", 1.0),
                     metadata=r.get("metadata", {}),
-                )
+    )
                 for r in vec_results
             ]
 
@@ -833,7 +841,7 @@ class DuckDBEntityStore:
                 query_vec = np.array(query_vector, dtype=np.float32)
                 mmr_indices = maximal_marginal_relevance(
                     query_vec, list(matrix), top_k=k, lambda_param=lambda_mult
-                )
+    )
 
                 return [
                     EntityCandidate(
@@ -842,7 +850,7 @@ class DuckDBEntityStore:
                         entity_type=vec_results[i].get("entity_type", ""),
                         distance=vec_results[i].get("distance", 1.0),
                         metadata=vec_results[i].get("metadata", {}),
-                    )
+    )
                     for i in mmr_indices
                     if i < len(vec_results)
                 ]
@@ -856,7 +864,7 @@ class DuckDBEntityStore:
                 entity_type=r.get("entity_type", ""),
                 distance=r.get("distance", 1.0),
                 metadata=r.get("metadata", {}),
-            )
+    )
             for r in vec_results[:k]
         ]
 

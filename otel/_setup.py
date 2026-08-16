@@ -136,7 +136,7 @@ def _build_duckdb_exporter(cfg: TelemetryConfig) -> Any:
             DuckDBSpanExporter,
             SamplingSpanProcessor,
             create_otel_spans_table,
-        )
+    )
         db_path = os.environ.get('HLEDAC_OTEL_DUCKDB_PATH', '').strip()
         if db_path:
             conn = _duckdb.connect(db_path, read_only=False)
@@ -158,7 +158,7 @@ def _build_duckdb_exporter(cfg: TelemetryConfig) -> Any:
             max_queue_size=cfg.max_queue_size,
             max_export_batch_size=cfg.max_export_batch,
             schedule_delay_millis=cfg.schedule_delay_ms,
-        )
+    )
         sample_rate = float(os.environ.get('HLEDAC_OTEL_SPAN_SAMPLE_RATE', '0.1'))
         sample_rate = max(0.01, min(1.0, sample_rate))
 
@@ -180,7 +180,7 @@ def _build_duckdb_exporter(cfg: TelemetryConfig) -> Any:
             sample_rate=sample_rate,
             slow_span_threshold_ms=slow_threshold,
             skip_prefixes=skip_prefixes,
-        )
+    )
     except Exception as e:
         sys.stderr.write(f'[telemetry] duckdb exporter init failed: {e}\n')
         return None

@@ -84,7 +84,7 @@ def _get_metal_cracker():
         logger.info(
             "MetalHashCracker initialized: device=%s, GPU opportunistic cracking enabled",
             cracker.device_name,
-        )
+    )
         return cracker
     else:
         logger.debug("MetalHashCracker: Metal GPU not available (non-macOS or no Metal device)")
@@ -542,7 +542,7 @@ class HashAnalyzer:
                         gpu_stats.get("gpu_attempts", 0),
                         gpu_stats.get("gpu_matches", 0),
                         gpu_stats.get("cpu_fallbacks", 0),
-                    )
+    )
                     return result
             except Exception as exc:
                 logger.debug("MetalHashCracker.crack_md5 failed, falling back to CPU: %s", exc)

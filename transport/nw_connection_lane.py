@@ -146,7 +146,7 @@ async def fetch_nw_connection(
         response = await nw_connection.fetch_async(
             url,
             timeout,
-        )
+    )
 
         if response is None:
             return None

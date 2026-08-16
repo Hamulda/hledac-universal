@@ -77,7 +77,7 @@ def run_cprofile(func, *args, profile_top: int=15) -> tuple:
         cumtime = stats_tuple[2]
         tottime = stats_tuple[1]
         entries.append({'file': f'{filename}:{line}', 'function': str(func), 'cumulative_s': round(cumtime, 4), 'total_s': round(tottime, 4)})
-    entries.sort(key=itemgetter("'"), reverse=True)
+    entries.sort(key=itemgetter("cumulative_s"), reverse=True)
     return (result, entries[:profile_top])
 
 def p95(values: list) -> float:
@@ -409,7 +409,7 @@ def format_json(results: list[WorkloadResult]) -> str:
     for r in results:
         if r.status == 'ok' and r.cprofile_top:
             all_bottlenecks.append({'workload': r.name, 'function': r.cprofile_top[0]['function'], 'cumulative_s': r.cprofile_top[0]['cumulative_s'], 'median_ms': r.median_ms})
-    all_bottlenecks.sort(key=itemgetter("'"), reverse=True)
+    all_bottlenecks.sort(key=itemgetter("cumulative_s"), reverse=True)
     output['summary']['top_bottlenecks'] = all_bottlenecks[:5]
     return _stdlib_json.dumps(output, indent=2)
 

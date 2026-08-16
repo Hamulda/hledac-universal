@@ -103,14 +103,14 @@ class BrainCoordinator:
             system_msg=system,
             user_msg=query,
             history=history,
-        )
+    )
 
         # Delegate to LLMEngine (inference responsibility)
         gen_result = await self._llm.generate(
             formatted,
             temperature=temperature,
             max_tokens=max_tokens,
-        )
+    )
 
         # Extract text from GenerateResult
         text = gen_result.text if hasattr(gen_result, 'text') else gen_result
@@ -148,7 +148,7 @@ class BrainCoordinator:
             system_msg=system,
             user_msg=query,
             history=None,
-        )
+    )
 
         async for token in self._llm.generate_stream(
             formatted,
@@ -184,14 +184,14 @@ class BrainCoordinator:
         formatted = template.format(
             query=query,
             evidence=evidence_text,
-        )
+    )
 
         # Use thinking mode for complex analysis
         gen_result = await self._llm.generate(
             formatted,
             temperature=template.temperature,
             max_tokens=template.max_tokens,
-        )
+    )
 
         return gen_result.text if hasattr(gen_result, 'text') else gen_result
 
@@ -218,7 +218,7 @@ class BrainCoordinator:
             blocks.append(
                 f"## Expert {i}: {output['expert'].upper()} "
                 f"(confidence: {output['score']:.2f})\n{output['output']}"
-            )
+    )
         blocks.append("\nSynthesize a comprehensive answer combining these perspectives.")
 
         synthesis_input = "\n".join(blocks)
@@ -228,7 +228,7 @@ class BrainCoordinator:
             synthesis_input,
             temperature=EVIDENCE_SYNTHESIS_PROMPT.temperature,
             max_tokens=EVIDENCE_SYNTHESIS_PROMPT.max_tokens,
-        )
+    )
 
         return gen_result.text if hasattr(gen_result, 'text') else gen_result
 
@@ -238,7 +238,7 @@ class BrainCoordinator:
             "You are a thorough OSINT research assistant. "
             "Analyze the provided information and extract actionable intelligence. "
             "Always cite your sources. When uncertain, explicitly state confidence levels."
-        )
+    )
 
     def _context_to_history(
         self,

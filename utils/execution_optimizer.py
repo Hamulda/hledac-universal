@@ -318,7 +318,7 @@ class ParallelExecutionOptimizer:
                 logging.getLogger(__name__).debug(
                     "Execution predictor unavailable: scikit-learn not installed. "
                     "Install with: pip install hledac-universal[ml]"
-                )
+    )
             return None
 
     def _init_execution_pools(self):
@@ -526,7 +526,7 @@ class ParallelExecutionOptimizer:
             logger.debug(
                 'InterpreterPoolExecutor not available — '
                 'HLEDAC_ENABLE_SUBINTERPRETERS=1 + CPython --with-experimental-isolated-subinterpreters required'
-            )
+    )
             return func(data)
 
         try:
@@ -566,7 +566,7 @@ class ParallelExecutionOptimizer:
                 optimizer.execute_batch_interpreter,
                 items,
                 normalize_text,
-            )
+    )
         """
         effective_workers = min(max_workers or 2, 2)
         try:

@@ -182,7 +182,7 @@ def run_scan_and_cache_sequential(root_dir: str, max_workers: int=4) -> dict[str
         result = _process_file(path, entry, root_dir, file_cache, errors, prefix_hash_bytes)
         if result:
             files_data.append(result)
-    sorted_files = sorted(files_data, key=itemgetter("'"))
+    sorted_files = sorted(files_data, key=itemgetter("size"), reverse=True)
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
     return {'total_files': len(files_data), 'candidates': len(candidates), 'elapsed_ms': elapsed_ms, 'sorted': sorted_files[:3]}
 
@@ -222,7 +222,7 @@ def run_scan_and_cache_baseline(root_dir: str, max_workers: int=4) -> dict[str, 
                 truncation_reason[0] = 'time_budget'
             except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fail-soft suppression: run_scan_and_cache_baseline
-    sorted_files = sorted(files_data, key=itemgetter("'"))
+    sorted_files = sorted(files_data, key=itemgetter("size"), reverse=True)
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
     return {'total_files': len(files_data), 'candidates': len(candidates), 'elapsed_ms': elapsed_ms, 'sorted': sorted_files[:3]}
 
@@ -265,7 +265,7 @@ def run_scan_and_cache_bounded_map(root_dir: str, max_workers: int=4, buffersize
                 truncation_reason[0] = 'time_budget'
             except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fail-soft suppression: run_scan_and_cache_bounded_map
-    sorted_files = sorted(files_data, key=itemgetter("'"))
+    sorted_files = sorted(files_data, key=itemgetter("size"), reverse=True)
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
     return {'total_files': len(files_data), 'candidates': len(candidates), 'elapsed_ms': elapsed_ms, 'sorted': sorted_files[:3]}
 if __name__ == '__main__':

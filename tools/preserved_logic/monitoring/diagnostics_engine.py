@@ -58,7 +58,7 @@ class DiagnosticsEngine:
         raise ImportError(
             "DiagnosticsEngine requires additional monitoring dependencies — "
             "this component was not migrated to the current codebase"
-        )
+    )
 
     async def run_manual_diagnostic(self, component: str) -> list[DiagnosticResult]:
         """Run diagnostics for a single component. Returns empty list for stub."""

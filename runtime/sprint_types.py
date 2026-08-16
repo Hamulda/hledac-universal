@@ -31,11 +31,7 @@ from typing import Any
 import msgspec
 
 # ── Re-export from scheduler/core/types.py for convenience ─────────────────────
-
-
-
-
-
+from hledac.universal.runtime.scheduler.core.types import (
     LaneBudgetAllocation,
     LaneBudgetPool,
     SourceTier,
@@ -45,7 +41,6 @@ import msgspec
 # ── SprintSeedState: Deterministic Cognitive Replay ──────────────────────────
 # ULTIMATE-001: Court-admissible reproducibility via seed capture
 
-from _core import aclose
 
 class SprintSeedState(msgspec.Struct, frozen=True, gc=False):
     """
@@ -218,7 +213,7 @@ def _import_exporters():
     """Lazy import of exporters to avoid circular imports."""
     global _export_module
     if _export_module is None:
-        from hledac.universal.hledac.universal import export
+        from hledac.universal import export
 
         _export_module = export
     return _export_module

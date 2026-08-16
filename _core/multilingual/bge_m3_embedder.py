@@ -137,7 +137,7 @@ class BGEM3Embedder:
             mrl_target_dim=mrl_target_dim,
             batch_size=batch_size,
             batch_size_low=batch_size_low
-        )
+    )
         self._model = None
         self._processor = None
         self._tokenizer = None
@@ -243,7 +243,7 @@ class BGEM3Embedder:
                 source_dim=NATIVE_DIM,
                 target_dim=self._config.mrl_target_dim,
                 normalize=self._config.normalize
-            )
+    )
             
             self._is_loaded = True
             logger.info('[BGE-M3] MLX load successful')
@@ -281,18 +281,18 @@ class BGEM3Embedder:
             self._tokenizer = AutoTokenizer.from_pretrained(
                 model_path,
                 cache_dir=str(MODEL_CACHE_DIR)
-            )
+    )
             self._hf_model = AutoModel.from_pretrained(
                 model_path,
                 cache_dir=str(MODEL_CACHE_DIR)
-            )
+    )
             
             # For MLX, we'd convert to MLX format here
             # This requires mlx-transformers or similar
             logger.warning(
                 '[BGE-M3] Using transformers backend. '
                 'For full MLX support, convert model with: mlx-transformers'
-            )
+    )
             
             return None  # Will fall back to transformers
             
@@ -311,7 +311,7 @@ class BGEM3Embedder:
                 self._config.model_id,
                 export=True,  # Export to ONNX if not cached
                 cache_dir=str(MODEL_CACHE_DIR)
-            )
+    )
             
             self._is_loaded = True
             logger.info('[BGE-M3] ONNX load successful')
@@ -335,11 +335,11 @@ class BGEM3Embedder:
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self._config.model_id,
                 cache_dir=str(MODEL_CACHE_DIR)
-            )
+    )
             self._model = AutoModel.from_pretrained(
                 self._config.model_id,
                 cache_dir=str(MODEL_CACHE_DIR)
-            )
+    )
             self._model.eval()
             
             # Initialize MRL truncator
@@ -348,7 +348,7 @@ class BGEM3Embedder:
                 source_dim=NATIVE_DIM,
                 target_dim=self._config.mrl_target_dim,
                 normalize=self._config.normalize
-            )
+    )
             
             self._is_loaded = True
             logger.info('[BGE-M3] Transformers load successful')
@@ -437,7 +437,7 @@ class BGEM3Embedder:
                 truncation=True,
                 max_length=self._config.max_seq_len,
                 return_tensors='mlx'
-            )
+    )
             
             # Forward pass
             outputs = self._model(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask)
@@ -459,7 +459,7 @@ class BGEM3Embedder:
             truncation=True,
             max_length=self._config.max_seq_len,
             return_tensors='np'
-        )
+    )
         
         outputs = self._model(**inputs)
         return outputs.last_hidden_state.mean(axis=1).astype(np.float32)
@@ -474,7 +474,7 @@ class BGEM3Embedder:
             truncation=True,
             max_length=self._config.max_seq_len,
             return_tensors='pt'
-        )
+    )
         
         with torch.no_grad():
             outputs = self._model(**inputs)
@@ -528,6 +528,6 @@ def get_bge_m3_embedder(
         _bge_m3_instance = BGEM3Embedder(
             mrl_target_dim=mrl_target_dim,
             lazy_load=lazy_load
-        )
+    )
     
     return _bge_m3_instance

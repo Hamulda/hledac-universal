@@ -12,7 +12,7 @@ warnings.warn(
     "compat.rust_backend_legacy is deprecated. Import from core.rust_backend instead.",
     DeprecationWarning,
     stacklevel=2,
-)
+    )
 
 from hledac.universal._core.rust_backend import rust as rust_backend
 from _core import aclose

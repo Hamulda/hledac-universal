@@ -228,7 +228,7 @@ class DomainFilter:
                 self._rust_matcher = _aho_rust.AhoCorasickMatcher(
                     self._patterns,
                     labels=self._patterns,
-                )
+    )
                 self._use_rust = True
             except Exception as e:
                 logger.debug(f"Rust Aho-Corasick init failed: {e}")
@@ -301,7 +301,7 @@ class CTSlicingEngine:
         engine = CTSlicingEngine(
             watch_domains=['example.com', 'target.org'],
             ioc_graph=ioc_graph_instance,
-        )
+    )
         
         # Historical slicing
         results = await engine.slice_domain('example.com')
@@ -367,7 +367,7 @@ class CTSlicingEngine:
         self._monitor_task: asyncio.Task | None = None
         self._live_entries: asyncio.Queue[CTEntry] = asyncio.Queue(
             maxsize=self._MAX_QUEUE_SIZE
-        )
+    )
         self._callbacks: list[Callable[[CTEntry], Coroutine[Any, Any, None]]] = []
         self._last_request_time: dict[str, float] = {}
         self._errors: list[str] = []
@@ -450,7 +450,7 @@ class CTSlicingEngine:
                 provider_used="none",
                 extraction_time_ms=int((time.time() - start_time) * 1000),
                 errors=errors,
-            )
+    )
         
         # Cache result
         self._cache[domain] = result
@@ -500,7 +500,7 @@ class CTSlicingEngine:
             self._CERTSPOTTER_RATE_LIMIT_S
             if "certspotter" in provider
             else self._RATE_LIMIT_S
-        )
+    )
         
         last_time = self._last_request_time.get(provider, 0)
         elapsed = time.time() - last_time
@@ -550,7 +550,7 @@ class CTSlicingEngine:
                         try:
                             dt = datetime.fromisoformat(
                                 ts_str.replace('Z', '+00:00').replace(' ', 'T')
-                            )
+    )
                             timestamps.append(dt.timestamp())
                         except Exception:
                             pass
@@ -560,7 +560,7 @@ class CTSlicingEngine:
                     f"{item.get('serial_number', '')}"
                     f"{item.get('subject', '')}"
                     f"{item.get('issuer_name', '')}"
-                )
+    )
                 fingerprint = hashlib.sha256(cert_data.encode()).hexdigest()
                 
                 entry = CTEntry(
@@ -574,7 +574,7 @@ class CTSlicingEngine:
                     cert_index=item.get('cert_index', 0),
                     provider=provider,
                     observed_at=time.time(),
-                )
+    )
                 
                 entries.append(entry)
                 
@@ -591,7 +591,7 @@ class CTSlicingEngine:
             timeline_end=max(timestamps) if timestamps else 0,
             provider_used=provider,
             extraction_time_ms=int((time.time() - start_time) * 1000),
-        )
+    )
     
     def _extract_cn(self, dn: str) -> str:
         """Extract Common Name from Distinguished Name."""
@@ -621,13 +621,13 @@ class CTSlicingEngine:
             self._certstream_client = CertstreamWebSocketClient(
                 watch_domains=self._watch_domains,
                 ioc_graph=self._ioc_graph,
-            )
+    )
             
             await self._certstream_client.start()
             self._monitor_task = asyncio.create_task(
                 self._monitor_loop(),
                 name="ct_slicing:monitor"
-            )
+    )
             
             logger.info(f"[CT] Started live monitoring for {len(self._watch_domains)} domains")
             

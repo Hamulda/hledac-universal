@@ -531,12 +531,12 @@ async def _try_harvest_metadata(keyword: str, crawl_results: list[dict]) -> None
         from hledac.universal.dht.torrent_harvester import harvest_from_dht_crawl_results
         harvester_findings = await harvest_from_dht_crawl_results(
             crawl_results, keyword, max_concurrent=5,
-        )
+    )
         if harvester_findings:
             logger.info(
                 f"[DHT] Metadata harvest: {len(harvester_findings)} IOC findings "
                 f"from {len(crawl_results)} crawl results"
-            )
+    )
     except Exception as e:
         logger.warning(f'[DHT] Metadata harvest failed (non-fatal): {e}')
 

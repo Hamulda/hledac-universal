@@ -45,7 +45,7 @@ class TestRemoteParquetSourceAsyncConnect:
         src = RemoteParquetSource(
             uri="https://example.com/data.parquet",
             source_type="https",
-        )
+    )
         return src
 
     @pytest.mark.asyncio
@@ -72,12 +72,12 @@ class TestRemoteParquetSourceAsyncConnect:
         await asyncio.gather(
             _increment_while_awaiting(),
             _await_connection(),
-        )
+    )
 
         assert counter["value"] == 5, (
             f"Event loop was blocked — counter only reached {counter['value']}/5. "
             "Sync duckdb.connect is blocking the event loop!"
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_ensure_connection_async_reuses_existing_connection(self, remote_source) -> None:
@@ -94,10 +94,10 @@ class TestRemoteParquetSourceAsyncConnect:
         assert elapsed < 0.1, (
             f"Second _ensure_connection_async call took {elapsed:.3f}s — "
             "should be near-instant (connection already established)"
-        )
+    )
         assert remote_source._conn is conn_after_first, (
             "Connection was recreated on second call — should reuse existing"
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_count_rows_async_does_not_block_loop(self, remote_source) -> None:
@@ -123,11 +123,11 @@ class TestRemoteParquetSourceAsyncConnect:
         await asyncio.gather(
             _increment_while_awaiting(),
             _count_rows(),
-        )
+    )
 
         assert counter["value"] == 3, (
             f"Event loop blocked during _count_rows_async — counter at {counter['value']}/3"
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_read_table_async_does_not_block_loop(self, remote_source) -> None:
@@ -162,11 +162,11 @@ class TestRemoteParquetSourceAsyncConnect:
         await asyncio.gather(
             _increment_while_awaiting(),
             _read_table(),
-        )
+    )
 
         assert counter["value"] == 3, (
             f"Event loop blocked during read_table_async — counter at {counter['value']}/3"
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_to_polars_lazy_async_does_not_block_loop(self, remote_source) -> None:
@@ -195,11 +195,11 @@ class TestRemoteParquetSourceAsyncConnect:
         await asyncio.gather(
             _increment_while_awaiting(),
             _to_lazy(),
-        )
+    )
 
         assert counter["value"] == 3, (
             f"Event loop blocked during to_polars_lazy_async — counter at {counter['value']}/3"
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_sync_ensure_connection_still_works_for_sync_context(self, remote_source) -> None:

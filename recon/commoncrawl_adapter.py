@@ -160,7 +160,7 @@ class WARCReplayResult:
                 ts=ts,
                 provenance=(self.source_type,),
                 payload_text=payload_text,
-            )
+    )
         except Exception as e:
             logger.debug(f'[commoncrawl] WARC to_canonical_finding failed: {e}')
             return None
@@ -552,7 +552,7 @@ class WARCContentAdapter:
                 session = await session_pool.httpx()
                 warc_bytes = await self._fetch_warc_range(
                     session, result.filename, offset, length,
-                )
+    )
                 if warc_bytes is None:
                     self._warc_stats['warc_errors'] += 1
                     return None
@@ -583,7 +583,7 @@ class WARCContentAdapter:
                     source_type=_SOURCE_TYPE_CONTENT,
                     warc_file=result.filename,
                     fetched_at=time_mod.monotonic(),
-                )
+    )
             except Exception as e:
                 self._warc_stats['warc_errors'] += 1
                 logger.debug(f'[commoncrawl] WARC replay error: {e}')
@@ -687,7 +687,7 @@ class CommonCrawlAdapter:
                 params=params,
                 headers={'User-Agent': 'Mozilla/5.0 (compatible; HledacBot/1.0; +mailto@ investigace)'},
                 timeout=httpx.Timeout(_TIMEOUT_PER_REQUEST),
-            )
+    )
             if resp.status_code == 429:
                 self._stats['rate_limited'] += 1
                 return CommonCrawlResult(query=domain, err='rate_limited', rate_limited=True, duration_s=time_mod.monotonic() - t0)

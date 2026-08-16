@@ -32,11 +32,7 @@ from hypothesis.strategies import (
     sampled_from,
 )
 
-
-
-
-
-
+from hledac.universal.brain.prompt_injection_validator import (
     PromptInjectionValidationResult,
     PromptInjectionValidator,
     _normalize_unicode,
@@ -47,8 +43,7 @@ from hypothesis.strategies import (
 
 # ---------------------------------------------------------------------------
 # sanitize_prompt_injection_patterns — fail-safe invariants
-
-from _core import aclose# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 class TestPromptInjectionSanitizationPropertyBased:
     """sanitize_prompt_injection_patterns invariants via Hypothesis."""

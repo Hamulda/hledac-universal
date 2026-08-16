@@ -1,11 +1,7 @@
 
 
 # monitoring — sprint dashboard and runtime observability
-
-
-
-
-
+from hledac.universal.monitoring.alert_manager import (
     AlertManager,
     AlertSeverity,
     Alert,
@@ -16,5 +12,3 @@
     MemoryDeltaTracker,
     reset_circuit_breaker_tracking,
 )
-
-from _core import aclose

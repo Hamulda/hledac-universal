@@ -62,7 +62,7 @@ logger = get_logger(__name__)
 _PROXY_ROUTES_ENABLED: bool = os.getenv("HLEDAC_PROXY_ROUTES", "1") != "0"
 _PROXY_ROUTES_MAX_ROWS: int = int(
     os.getenv("HLEDAC_PROXY_ROUTES_MAX_ROWS", "10000")
-)
+    )
 # In-memory cache config for hot-path lookups
 _ROUTE_CACHE_MAX: int = 256
 _ROUTE_CACHE_TTL_S: float = 300.0  # 5 minutes
@@ -147,7 +147,7 @@ class RouteEdge(Struct, frozen=True):
             self.success_rate * 0.40
             + latency_score * 0.35
             + self.recency_score * 0.25
-        )
+    )
 
     @property
     def thompson_alpha(self) -> float:
@@ -267,7 +267,7 @@ class RouteGraphService:
         self._cache: _RouteCache = _RouteCache(
             max_entries=_ROUTE_CACHE_MAX,
             ttl_s=_ROUTE_CACHE_TTL_S,
-        )
+    )
         self._evict_lock: threading.Lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -324,7 +324,7 @@ class RouteGraphService:
                         confidence=0.2,
                         reason="exploration",
                         edge=chosen,
-                    )
+    )
                 if edges:
                     chosen = random.choice(edges)
                     return RouteRecommendation(
@@ -335,7 +335,7 @@ class RouteGraphService:
                         confidence=0.5,
                         reason="exploration",
                         edge=chosen,
-                    )
+    )
 
             # Thompson Sampling on known-good routes (preferred_transport is
             # handled implicitly: known_good routes where transport matches
@@ -352,7 +352,7 @@ class RouteGraphService:
                     confidence=confidence,
                     reason="known_good",
                     edge=chosen,
-                )
+    )
 
             # Fallback: best composite score from all edges
             if edges:
@@ -366,7 +366,7 @@ class RouteGraphService:
                     confidence=0.3,
                     reason="fallback",
                     edge=chosen,
-                )
+    )
 
             return RouteRecommendation(domain=domain, reason="none")
 
@@ -396,7 +396,7 @@ class RouteGraphService:
                 success=True,
                 latency_ms=latency_ms,
                 body_bytes=body_bytes,
-            )
+    )
             await self._persist(updated)
         except Exception:  # noqa: BLE001 — fail-safe; non-critical
             pass
@@ -418,7 +418,7 @@ class RouteGraphService:
                 existing=existing or RouteEdge.empty(domain, proxy, transport),
                 success=False,
                 latency_ms=latency_ms,
-            )
+    )
             await self._persist(updated)
         except Exception:  # noqa: BLE001 — fail-safe; non-critical
             pass
@@ -534,7 +534,7 @@ class RouteGraphService:
             last_success=now if success else existing.last_success,
             last_failure=now if not success else existing.last_failure,
             first_seen=existing.first_seen if existing.first_seen > 0 else now,
-        )
+    )
 
     # ------------------------------------------------------------------
     # DuckDB persistence
@@ -593,7 +593,7 @@ class RouteGraphService:
                     self._store._file_conn  # type: ignore[union-attr] # noqa: SLF001
                     if self._store._db_path  # type: ignore[union-attr] # noqa: SLF001
                     else self._store._persistent_conn  # type: ignore[union-attr] # noqa: SLF001
-                )
+    )
                 if conn is None:
                     return []
                 rows = conn.execute(
@@ -624,7 +624,7 @@ class RouteGraphService:
                         last_success=float(r[11]) if r[11] else 0.0,
                         last_failure=float(r[12]) if r[12] else 0.0,
                         first_seen=float(r[13]) if r[13] else 0.0,
-                    )
+    )
                     for r in rows
                 ]
             except Exception:  # noqa: BLE001 — fail-safe
@@ -633,7 +633,7 @@ class RouteGraphService:
         return await loop.run_in_executor(
             self._store._shared_executor,  # type: ignore[union-attr] # noqa: SLF001
             _sync_query,
-        )
+    )
 
     async def _query_single_route_from_db(
         self,
@@ -653,7 +653,7 @@ class RouteGraphService:
                     self._store._file_conn  # type: ignore[union-attr] # noqa: SLF001
                     if self._store._db_path  # type: ignore[union-attr] # noqa: SLF001
                     else self._store._persistent_conn  # type: ignore[union-attr] # noqa: SLF001
-                )
+    )
                 if conn is None:
                     return None
                 r = conn.execute(
@@ -685,14 +685,14 @@ class RouteGraphService:
                     last_success=float(r[11]) if r[11] else 0.0,
                     last_failure=float(r[12]) if r[12] else 0.0,
                     first_seen=float(r[13]) if r[13] else 0.0,
-                )
+    )
             except Exception:  # noqa: BLE001 — fail-safe
                 return None
 
         return await loop.run_in_executor(
             self._store._shared_executor,  # type: ignore[union-attr] # noqa: SLF001
             _sync,
-        )
+    )
 
     async def _persist(self, edge: RouteEdge) -> None:
         """Persist a route edge to DuckDB with LRU eviction."""
@@ -711,7 +711,7 @@ class RouteGraphService:
                     self._store._file_conn  # type: ignore[union-attr] # noqa: SLF001
                     if self._store._db_path  # type: ignore[union-attr] # noqa: SLF001
                     else self._store._persistent_conn  # type: ignore[union-attr] # noqa: SLF001
-                )
+    )
                 if conn is None:
                     return
 
@@ -723,12 +723,12 @@ class RouteGraphService:
                     _dt.datetime.fromtimestamp(edge.last_success, tz=_dt.timezone.utc).isoformat()
                     if edge.last_success > 0
                     else None
-                )
+    )
                 last_failure_ts = (
                     _dt.datetime.fromtimestamp(edge.last_failure, tz=_dt.timezone.utc).isoformat()
                     if edge.last_failure > 0
                     else None
-                )
+    )
 
                 conn.execute(
                     "INSERT INTO proxy_routes "
@@ -764,7 +764,7 @@ class RouteGraphService:
                         last_success_ts,
                         last_failure_ts,
                     ],
-                )
+    )
 
                 # LRU eviction — use threading.Lock for thread-safe eviction
                 with self._evict_lock:
@@ -779,14 +779,14 @@ class RouteGraphService:
                             "ORDER BY COALESCE(last_success, first_seen) ASC LIMIT ?"
                             ")",
                             [excess],
-                        )
+    )
             except Exception:  # noqa: BLE001 — fail-safe; DB write failure
                 pass
 
         await loop.run_in_executor(
             self._store._shared_executor,  # type: ignore[union-attr] # noqa: SLF001
             _sync_upsert,
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -805,7 +805,7 @@ def _make_route_graph_service(store: DuckDBShadowStore | None) -> RouteGraphServ
 _get_route_graph_service = module_singleton_getter(
     singleton_name="_route_graph_singleton",
     factory=lambda: _make_route_graph_service(None),
-)
+    )
 
 
 def get_route_graph_service(

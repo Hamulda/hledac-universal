@@ -43,7 +43,7 @@ class TestEvaluateBranchConcurrencyConsistency:
                 assert decision.branch_concurrency == expected, (
                     f"[{uma_state}] evaluate().branch_concurrency={decision.branch_concurrency} != "
                     f"branch_admission().branch_concurrency={branch.branch_concurrency}"
-                )
+    )
                 assert branch.branch_concurrency == expected
 
     def _assert_model_loaded_branch_concurrency_match(self, gov: M1ResourceGovernor, expected: int) -> None:
@@ -57,7 +57,7 @@ class TestEvaluateBranchConcurrencyConsistency:
                 assert decision.branch_concurrency == expected, (
                     f"[model_loaded] evaluate().branch_concurrency={decision.branch_concurrency} != "
                     f"branch_admission().branch_concurrency={branch.branch_concurrency}"
-                )
+    )
                 assert branch.branch_concurrency == expected
 
     def test_branch_concurrency_ok(self, governor):
@@ -111,7 +111,7 @@ class TestRendererAdmissionConsistency:
                 assert decision.allow_renderer == expected, (
                     f"[{uma_state}] evaluate().allow_renderer={decision.allow_renderer} != "
                     f"renderer_admission().allowed={renderer.allowed}"
-                )
+    )
                 assert renderer.allowed == expected
 
     def _assert_renderer_model_loaded(self, gov: M1ResourceGovernor, expected: bool) -> None:
@@ -171,7 +171,7 @@ class TestModelAdmissionConsistency:
                 assert decision.allow_model_load == expected, (
                     f"[{uma_state}] evaluate().allow_model_load={decision.allow_model_load} != "
                     f"model_admission().allowed={model_adm.allowed}"
-                )
+    )
                 assert model_adm.allowed == expected
 
     def test_model_load_allowed_ok(self, governor):

@@ -55,14 +55,14 @@ from .media_engine import (  # [SILICON-02]
     is_audio_file,
     is_media_file,
     is_video_file,
-)
+    )
 from .media_ioc_pipeline import (  # [SILICON-07]
     MediaIocPipeline,
     MediaIocResult,
     scan_text_for_iocs,
     get_pipeline,
     close_pipeline,
-)
+    )
 from .whisper_transcriber import (  # [SILICON-02b]
     TranscriptionRouter,
     EngineChoice,
@@ -70,7 +70,7 @@ from .whisper_transcriber import (  # [SILICON-02b]
     get_transcription_router,
     transcribe_audio,
     transcribe_and_extract_iocs,
-)
+    )
 from .vision_encoder import VisionEncoder
 from _core import aclose
 

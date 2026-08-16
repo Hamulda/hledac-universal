@@ -278,7 +278,7 @@ class Snapshot:
                 f"Memory leak detected: RSS grew by {delta:.1f} MB "
                 f"(threshold={threshold_mb:.1f} MB). "
                 f"Snapshot RSS={self.rss_mb:.1f} MB, current RSS={get_rss_mb():.1f} MB"
-            )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +322,7 @@ class TracemallocStats:
                 peak_bytes=peak,
                 _baseline=(current, peak),
                 _started=True,
-            )
+    )
         except Exception as ex:
             log.warning("get_traced_memory failed: %s", ex)
             return TracemallocStats(current_bytes=0, peak_bytes=0, _started=False)
@@ -658,4 +658,4 @@ def assert_no_leak(
             f"Memory leak{' in ' + context if context else ''}:"
             f" RSS grew by {delta:.1f} MB (threshold={threshold_mb:.1f} MB)."
             f" before={before_mb:.1f} MB, after={after_mb:.1f} MB"
-        )
+    )

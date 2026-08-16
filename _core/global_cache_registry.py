@@ -127,11 +127,11 @@ class GlobalCacheRegistry:
                 clear=clear,
                 memory_pressure_threshold=memory_pressure_threshold,
                 _description=description,
-            )
+    )
             logger.debug(
                 f"[GlobalCacheRegistry] registered: {name}"
                 + (f" ({description})" if description else "")
-            )
+    )
 
     def unregister(self, name: str) -> bool:
         """Remove a cache from the registry.
@@ -212,7 +212,7 @@ class GlobalCacheRegistry:
                 logger.info(
                     f"[GlobalCacheRegistry] pressure-evicted: {name} "
                     f"({size} entries, threshold={entry.memory_pressure_threshold})"
-                )
+    )
             except Exception as e:
                 logger.warning(f"[GlobalCacheRegistry] pressure-evict failed for {name}: {e}")
                 sizes[name] = -1
@@ -221,7 +221,7 @@ class GlobalCacheRegistry:
             logger.info(
                 f"[GlobalCacheRegistry] pressure eviction complete: "
                 f"{len(sizes)} caches (threshold >= {threshold})"
-            )
+    )
         return sizes
 
     # -------------------------------------------------------------------------

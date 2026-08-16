@@ -13,8 +13,11 @@ CAN IMPORT:
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from _core import aclose
+
+logger = logging.getLogger(__name__)
 
 
 class _DuckDBQueryCache:
@@ -69,9 +72,10 @@ class _DuckDBQueryCache:
                 critical=False,  # recoverable data — fast writes acceptable
                 readahead=False,
                 meminit=False,
-            )
+    )
             object.__setattr__(self, "_l2_env", env)
         except Exception:  # noqa: BLE001 — best-effort; export failure; non-critical
+            logger.debug("LMDB environment initialization failed, L2 cache disabled", exc_info=True)
             object.__setattr__(self, "_l2_env", None)
 
     @staticmethod

@@ -111,7 +111,7 @@ class DLQPayload:
             attempt_count=row['attempt_count'],
             last_attempt_at=datetime.fromisoformat(row['last_attempt_at'])
                 if row['last_attempt_at'] else None,
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +184,7 @@ class DLQManager:
             str(self.db_path),
             check_same_thread=False,
             isolation_level=None,  # Autocommit mode
-        )
+    )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -197,7 +197,7 @@ class DLQManager:
         conn = await aiosqlite.connect(
             str(self.db_path),
             uri=True,
-        )
+    )
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA synchronous=NORMAL")
@@ -268,7 +268,7 @@ class DLQManager:
             error_message=str(error)[:1000],  # Bound error message
             payload_data=payload_data,
             metadata=metadata or {},
-        )
+    )
 
         conn = self._get_connection()
         try:
@@ -289,7 +289,7 @@ class DLQManager:
                     _json_encode(payload.metadata),
                     payload.created_at.isoformat(),
                 ),
-            )
+    )
 
             # Update stats (fire-and-forget)
             try:
@@ -307,7 +307,7 @@ class DLQManager:
                         payload.created_at.isoformat(),
                         payload.created_at.isoformat(),
                     ),
-                )
+    )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -347,7 +347,7 @@ class DLQManager:
             error_message=str(error)[:1000],
             payload_data=payload_data,
             metadata=metadata or {},
-        )
+    )
 
         conn = await self._get_async_connection()
         try:
@@ -368,7 +368,7 @@ class DLQManager:
                     _json_encode(payload.metadata),
                     payload.created_at.isoformat(),
                 ),
-            )
+    )
 
             try:
                 await conn.execute(
@@ -385,7 +385,7 @@ class DLQManager:
                         payload.created_at.isoformat(),
                         payload.created_at.isoformat(),
                     ),
-                )
+    )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -501,7 +501,7 @@ class DLQManager:
                 WHERE payload_id = ?
                 """,
                 (datetime.now(timezone.utc).isoformat(), payload_id),
-            )
+    )
         except Exception:  # noqa: BLE001
             pass
         finally:
@@ -524,7 +524,7 @@ class DLQManager:
                 WHERE payload_id = ?
                 """,
                 (datetime.now(timezone.utc).isoformat(), payload_id),
-            )
+    )
             await conn.commit()
         except Exception:  # noqa: BLE001
             pass
@@ -548,7 +548,7 @@ class DLQManager:
             cursor = conn.execute(
                 "DELETE FROM dlq_payloads WHERE created_at < ?",
                 (cutoff.isoformat(),),
-            )
+    )
             return cursor.rowcount
         except Exception:
             return 0
@@ -568,7 +568,7 @@ class DLQManager:
             cursor = await conn.execute(
                 "DELETE FROM dlq_payloads WHERE created_at < ?",
                 (cutoff.isoformat(),),
-            )
+    )
             await conn.commit()
             return cursor.rowcount
         except Exception:
@@ -595,7 +595,7 @@ class DLQManager:
                 FROM dlq_stats
                 ORDER BY count DESC
                 """
-            )
+    )
             return [
                 {
                     'source': row['source'],
@@ -706,7 +706,7 @@ def dlq_catch(
                             source=source,
                             error=e,
                             metadata=metadata,
-                        )
+    )
                     except Exception as dlq_error:
                         logger.debug("dlq_catch_store_failed: %s", dlq_error)
 
@@ -757,7 +757,7 @@ def dlq_catch(
                             source=source,
                             error=e,
                             metadata=metadata,
-                        )
+    )
                     except Exception as dlq_error:
                         logger.debug("dlq_catch_store_failed: %s", dlq_error)
 

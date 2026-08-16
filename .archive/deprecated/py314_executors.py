@@ -154,7 +154,7 @@ class ChunkedExecutor:
                 logger.debug(
                     'InterpreterPoolExecutor requested but subinterpreter support '
                     'not available — falling back to ThreadPoolExecutor'
-                )
+    )
                 self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
             else:
                 try:

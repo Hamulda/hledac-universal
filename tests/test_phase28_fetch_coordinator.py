@@ -56,7 +56,7 @@ class TestFetchCoordinatorConstruction:
             config=None,
             max_concurrent=3,
             blitz_mode=False,
-        )
+    )
 
         assert coordinator is not None
         # Verify __slots__ instances were created
@@ -84,7 +84,7 @@ class TestFetchCoordinatorConstruction:
         required_params = {"ioc_value", "ioc_type", "confidence"}
         assert required_params.issubset(params), (
             f"enqueue_pivot missing required params: {required_params - params}"
-        )
+    )
 
     def test_enqueue_pivot_accepts_provider(self):
         """enqueue_pivot must work with pivot_queue_provider dependency injection."""
@@ -99,7 +99,7 @@ class TestFetchCoordinatorConstruction:
             config=None,
             pivot_queue_provider=lambda: mock_queue,
             enqueue_pivot_provider=lambda **kw: mock_queue.put_nowait(**kw) if mock_queue else None,
-        )
+    )
 
         # Verify provider is stored
         assert hasattr(coordinator, "_pivot_queue_provider")
@@ -113,7 +113,7 @@ class TestFetchCoordinatorConstruction:
                 confidence=0.9,
                 degree=1.0,
                 task_type="generic_pivot",
-            )
+    )
         except Exception as exc:
             pytest.fail(f"enqueue_pivot raised unexpectedly: {exc}")
 
@@ -147,7 +147,7 @@ class TestFetchCoordinatorConstruction:
         coordinator = FetchCoordinator(
             config=None,
             pivot_stats_provider=lambda: mock_stats,
-        )
+    )
 
         assert hasattr(coordinator, "_pivot_stats_provider")
         retrieved_stats = coordinator._pivot_stats_provider()
@@ -175,7 +175,7 @@ class TestFetchCoordinatorProviderPattern:
         coordinator = FetchCoordinator(
             config=None,
             pivot_queue_provider=lambda: mock_queue,
-        )
+    )
 
         assert coordinator._pivot_queue_provider() is mock_queue
 
@@ -189,7 +189,7 @@ class TestFetchCoordinatorProviderPattern:
         coordinator = FetchCoordinator(
             config=None,
             concurrency_provider=mock_concurrency,
-        )
+    )
 
         assert hasattr(coordinator, "_concurrency_provider")
         result = coordinator._concurrency_provider()

@@ -339,7 +339,7 @@ async def normalize_text_batch(
             clamped,
             form,
             timeout=timeout,
-        )
+    )
         if result is None:
             return clamped  # return unmodified on error
         return result

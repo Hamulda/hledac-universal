@@ -90,7 +90,7 @@ class AssembleStage:
             assembled_texts=assembled_texts,
             assembled_text_lens=assembled_text_lens,
             quality_signals=quality_signals,
-        )
+    )
 
         return batch, telemetry
 
@@ -100,7 +100,7 @@ class AssembleStage:
             assembled_texts=[],
             assembled_text_lens=[],
             quality_signals=[],
-        )
+    )
 
 
 def _assemble_clean_feed_text(title: str, summary: str) -> str:

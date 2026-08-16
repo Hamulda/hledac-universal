@@ -61,7 +61,7 @@ class AspirationalAdapter(Exception):  # noqa: N818
             f"  auth: {self.auth_required}\n"
             f"  rate_limit: {self.rate_limit}\n"
             f"  source_type: {self.source_type}\n"
-        )
+    )
         if self.env_vars:
             base += f"  env_vars: {', '.join(self.env_vars)}\n"
         if self.implementation_notes:

@@ -33,7 +33,7 @@ class TestRaceFirstSuccessTruthy:
         result = await race_first_success(
             (slow_true(), "slow"),
             (fast_false(), "fast"),
-        )
+    )
         # slow (truthy) wins — falsy 0 doesn't qualify as winner
         assert result.result == 42
         assert result.winner_label == "slow"
@@ -53,7 +53,7 @@ class TestRaceFirstSuccessTruthy:
         result = await race_first_success(
             (first_slow(), "slow"),
             (second_fast(), "fast"),
-        )
+    )
         assert result.result is True
         assert result.winner_label == "fast"
 
@@ -72,7 +72,7 @@ class TestRaceFirstSuccessTruthy:
         result = await race_first_success(
             (winner(), "winner"),
             (loser(), "loser"),
-        )
+    )
         assert result.result == "hello"
         assert result.winner_label == "winner"
 
@@ -92,7 +92,7 @@ class TestRaceFirstSuccessFalsy:
             (create_session_fail(), "fail1"),
             (create_session_fail(), "fail2"),
             timeout=0.1,
-        )
+    )
         # All falsy → no winner → timeout returns None
         assert result.result is None
         assert result.winner_index == -1
@@ -116,7 +116,7 @@ class TestRaceFirstSuccessFalsy:
         result = await race_first_success(
             (truthy_tuple(), "truthy"),
             (falsy_tuple(), "falsy"),
-        )
+    )
         # truthy wins despite being slower
         assert result.result[0] is True
         assert result.winner_label == "truthy"
@@ -137,7 +137,7 @@ class TestRaceFirstSuccessFalsy:
             (falsy_wins(), "falsy"),
             (truthy_loses(), "truthy"),
             require_truthy=False,
-        )
+    )
         assert result.result == (False, None)
         assert result.winner_label == "falsy"
 
@@ -157,7 +157,7 @@ class TestRaceFirstSuccessFalsy:
             (fast_zero(), "zero"),
             (slow_one(), "one"),
             require_truthy=False,
-        )
+    )
         assert result.result == 0
         assert result.winner_label == "zero"
 
@@ -180,7 +180,7 @@ class TestRaceFirstSuccessExceptions:
         result = await race_first_success(
             (raises(), "fail"),
             (wins(), "win"),
-        )
+    )
         assert result.result is True
         assert result.winner_label == "win"
         assert len(result.errors) >= 1
@@ -200,7 +200,7 @@ class TestRaceFirstSuccessExceptions:
             (fail_a(), "a"),
             (fail_b(), "b"),
             timeout=1.0,
-        )
+    )
         assert result.result is None
         assert len(result.errors) == 2
 
@@ -219,7 +219,7 @@ class TestRaceFirstSuccessTimeout:
         result = await race_first_success(
             (never(), "never"),
             timeout=0.05,
-        )
+    )
         assert result.result is None
         assert result.winner_index == -1
         assert result.winner_label == ""
@@ -240,7 +240,7 @@ class TestRaceFirstSuccessTimeout:
             (fast_win(), "fast"),
             (slow_wait(), "slow"),
             timeout=2.0,
-        )
+    )
         assert result.result is True
         assert result.winner_label == "fast"
 
@@ -274,7 +274,7 @@ class TestRaceFirstSuccessCurlCffiPattern:
         result = await race_first_success(
             (ok_chrome136(), "chrome136"),
             (fail_chrome110(), "chrome110"),
-        )
+    )
         assert result.result[0] is True
         assert isinstance(result.result[1], FakeSession)
         assert result.winner_label == "chrome136"
@@ -295,7 +295,7 @@ class TestRaceFirstSuccessCurlCffiPattern:
             (false_tuple(), "falsy"),
             (true_tuple(), "truthy"),
             require_truthy=False,
-        )
+    )
         assert result.result == (False, None)
         assert result.winner_label == "falsy"
 
@@ -316,7 +316,7 @@ class TestRaceFirstSuccessCurlCffiPattern:
         result = await race_first_success(
             (coro_a(), "truthy_late"),
             (coro_b(), "falsy_early"),
-        )
+    )
         assert result.result is True
         assert result.winner_label == "truthy_late"
 
@@ -340,7 +340,7 @@ class TestRaceFirstSuccessFalsyResults:
             (fail1(), "fail1"),
             (fail2(), "fail2"),
             timeout=0.05,
-        )
+    )
         assert result.result is None
         assert result.winner_index == -1
         assert len(result.falsy_results) == 2
@@ -370,7 +370,7 @@ class TestRaceFirstSuccessFalsyResults:
         result = await race_first_success(
             (truthy_winner(), "winner"),
             (falsy_loser(), "loser"),
-        )
+    )
         assert result.result[0] is True
         assert result.winner_label == "winner"
         # Loser completes before TaskGroup exits → tracked
@@ -397,7 +397,7 @@ class TestRaceFirstSuccessFalsyResults:
             (raising_winner(), "win"),
             (falsy_loser(), "falsy"),
             timeout=1.0,
-        )
+    )
         # Loser completed (0.05s) before cancel took effect → tracked
         assert result.falsy_results == [(False, None)]
         # Winner raised → exception must be somewhere (errors or re-raised)
@@ -423,7 +423,7 @@ class TestRaceFirstSuccessFalsyResults:
             (winner(), "win"),
             (falsy_completion(), "falsy"),
             timeout=1.0,
-        )
+    )
         # winner already set → falsy runner should still run and complete
         assert result.result[0] is True
         # falsy result may or may not be captured depending on TaskGroup timing
@@ -447,7 +447,7 @@ class TestRaceFirstSuccessFalsyResults:
         result = await race_first_success(
             (raises(), "fail"),
             timeout=0.1,
-        )
+    )
         assert result.result is None
         assert len(result.errors) >= 1
         assert result.falsy_results == []

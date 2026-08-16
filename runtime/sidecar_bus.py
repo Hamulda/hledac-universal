@@ -485,7 +485,7 @@ async def _query_runner(
                 policy="log",
                 concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL),
                 ctx=ctx,
-            )
+    )
             for batch in result:
                 derived_findings.extend(batch or [])
             return await _store_ingest_and_count(store, derived_findings)
@@ -742,7 +742,7 @@ class FindingSidecarBus:
                 task = safe_create_task(
                     self._run_single_sidecar(name, self._runners[name], findings, store, query),
                     name=f'sidecar_bus:stage_runner:{name}'
-                )
+    )
                 stage_tasks.append(task)
                 runners_executed.add(name)
         return stage_tasks
@@ -761,7 +761,7 @@ class FindingSidecarBus:
                 task = safe_create_task(
                     self._run_single_sidecar(name, runner, findings, store, query),
                     name=f'sidecar_bus:remaining_runner:{name}'
-                )
+    )
                 remaining_tasks.append(task)
                 runners_executed.add(name)
         return remaining_tasks
@@ -781,13 +781,13 @@ class FindingSidecarBus:
             return SidecarRunResult(
                 sidecar_name=name, attempted=False, produced_count=0, stored_count=0,
                 skipped_reason=reason or 'ram_governor_critical', elapsed_ms=(_time.monotonic() - t0) * 1000
-            )
+    )
         blocked, reason = self._is_active_network_blocked(name)
         if blocked:
             return SidecarRunResult(
                 sidecar_name=name, attempted=False, produced_count=0, stored_count=0,
                 skipped_reason=reason or 'profile_disallows_active_network_sidecar', elapsed_ms=(_time.monotonic() - t0) * 1000
-            )
+    )
         try:
             async with asyncio.timeout(SIDECAR_TIMEOUT_S):
                 result = await runner(findings, store, query)
@@ -800,7 +800,7 @@ class FindingSidecarBus:
             return SidecarRunResult(
                 sidecar_name=name, attempted=True, produced_count=0, stored_count=0,
                 skipped_reason=f'{type(exc).__name__}:{exc}', elapsed_ms=(_time.monotonic() - t0) * 1000
-            )
+    )
 
     def _build_success_result(self, name: str, result: Any, t0: float) -> SidecarRunResult:
         """Build success SidecarRunResult from runner output."""
@@ -813,7 +813,7 @@ class FindingSidecarBus:
         return SidecarRunResult(
             sidecar_name=name, attempted=True, produced_count=produced_count,
             stored_count=stored_count, skipped_reason='', elapsed_ms=(_time.monotonic() - t0) * 1000
-        )
+    )
 
     async def _cancel_stage_tasks(self, tasks: list[asyncio.Task]) -> None:
         """Cancel pending tasks and wait for completion."""

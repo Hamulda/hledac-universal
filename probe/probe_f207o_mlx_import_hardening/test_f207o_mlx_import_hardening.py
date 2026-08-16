@@ -23,11 +23,11 @@ class TestMLXImportHardening(unittest.IsolatedAsyncioTestCase):
             "                'mlx.utils', 'mlx.lm', 'mlx._core', 'mlx._nn']:\n"
             "    sys.modules[_mod] = None\n"
             + code
-        )
+    )
         result = subprocess.run(
             [sys.executable, '-c', blocked_code],
             capture_output=True, text=True, timeout=30
-        )
+    )
         return result.returncode, result.stdout, result.stderr
 
     def _assert_mlx_unavailable(
@@ -107,7 +107,7 @@ print("mx_none:", {attr_name}.mx is None)
         """ssm_reranker.py imports successfully when mlx unavailable."""
         self._assert_module_imports_without_mlx(
             "prefetch.ssm_reranker", "ssm_reranker", extra_attrs=["nn"]
-        )
+    )
 
     def test_ssm_reranker_stub_raises_on_instantiation(self):
         """SSMReranker stub raises ImportError when instantiated without mlx."""

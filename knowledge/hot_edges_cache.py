@@ -294,7 +294,7 @@ def _flush_denorm_buffer_internal(
         if env is None:
             logger.warning(
                 f"[HOT-EDGES] LMDB env unavailable, preserving {len(buffer)} edges for retry"
-            )
+    )
             return False
 
         with env.begin(write=True) as txn:
@@ -303,7 +303,7 @@ def _flush_denorm_buffer_internal(
                 existing = txn.get(key)
                 existing_denorm = bool(
                     existing and len(existing) > 0 and existing[0] == _WIRE_MARKER_DENORM
-                )
+    )
 
                 if existing is None:
                     neighbors_denorm: list[tuple[int, int, str, str]] = deltas_in.copy()
@@ -410,7 +410,7 @@ def _open_env():
             readahead=False,
             critical=False,  # recoverable data — fast writes acceptable
             max_dbs=1,
-        )
+    )
         logger.debug(f"[HOT-EDGES] LMDB env opened at {_LMDB_PATH} ({_LMDB_MAP_SIZE // (1024*1024)} MB)")
         return _ENV
     except Exception as e:
@@ -1342,7 +1342,7 @@ class HotEdgesAtomicWriter:
                     existing = txn.get(key)
                     existing_denorm = bool(
                         existing and len(existing) > 0 and existing[0] == _WIRE_MARKER_DENORM
-                    )
+    )
 
                     if existing is None:
                         neighbors_denorm = deltas_in.copy()

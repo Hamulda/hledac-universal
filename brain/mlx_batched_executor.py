@@ -405,7 +405,7 @@ class MLXBatchedExecutor:
                 temperature=temperature if temperature is not None else 0.1,
                 max_tokens=max_tokens if max_tokens is not None else 512,
                 system_msg=system_msg,
-            )
+    )
             self._stats['submits'] += 1
             self._single_flight[prompt_hash] = scheduler_future
             # C3-08 FIX: maintain LRU order on insert

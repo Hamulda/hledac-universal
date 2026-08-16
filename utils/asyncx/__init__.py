@@ -42,18 +42,18 @@ from hledac.universal.utils.asyncx._core import (
     retry_backoff_async,
     safe_wait_for,
     stop_task,
-)
+    )
 
 from hledac.universal.utils.asyncx._fault import (
     get_cascading_failure_id,
     silent_except,
-)
+    )
 
 from hledac.universal.utils.asyncx._monitor import (
     AsyncMonitor,
     get_async_monitor,
     init_async_monitoring,
-)
+    )
 
 from hledac.universal.utils.asyncx._parallel import (
     ExceptionPolicy,
@@ -75,13 +75,16 @@ from hledac.universal.utils.asyncx._parallel import (
     try_group,
     _check_gathered,
     ConcurrencyBudgetResolver,
-)
+    # ISSUE-009: Unified entry points
+    execute_parallel,
+    execute_parallel_map,
+    )
 
 from hledac.universal.utils.asyncx._rate_limit import (
     BoundedPerHostGate,
     DomainRateLimiter,
     _TokenBucketState,
-)
+    )
 
 
 if TYPE_CHECKING:
@@ -97,6 +100,10 @@ __all__ = [
     "silent_except",
     "get_cascading_failure_id",
     # _parallel.py
+    # ISSUE-009: Unified entry points
+    "execute_parallel",
+    "execute_parallel_map",
+    # Legacy (use unified entry points above)
     "parallel",
     "parallel_ok",
     "try_group",
@@ -108,7 +115,6 @@ __all__ = [
     "safe_gather_strict",
     "safe_gather_fire_and_forget",
     "bounded_parallel_map",
-    "race_first_success",
     "chunked_taskgroup",
     "_check_gathered",
     "ParallelResult",
@@ -117,7 +123,6 @@ __all__ = [
     "_BoundedExceptionLog",
     "ExceptionPolicy",
     "ConcurrencyBudgetResolver",
-    "current_otel_context",
     # _rate_limit.py
     "BoundedPerHostGate",
     "DomainRateLimiter",

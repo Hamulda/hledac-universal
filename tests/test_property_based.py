@@ -29,19 +29,14 @@ from hledac.universal.coordinators.fetch_coordinator import (
     AIMD_MIN_CONCURRENCY,
     AIMD_DECREASE_BY_STATE,
 )
-
-
-
-
-
+from hledac.universal.tools.url_dedup import (
     create_rotating_bloom_filter,
     dedupe_url_list,
 )
 
 
 # ---------------------------------------------------------------------------
-
-from _core import aclose# AIMD Controller — convergence + bound invariants
+# AIMD Controller — convergence + bound invariants
 # ---------------------------------------------------------------------------
 
 class TestAIMDPropertyBased:

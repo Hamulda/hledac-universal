@@ -191,7 +191,7 @@ class TestTaskRegistryWinddown:
             background_work(),
             name="test:background",
             scope=TaskScope.ACQUISITION,
-        )
+    )
 
         counts = registry.get_counts()
         assert counts["active_tasks"] == 1, f"Expected 1 tracked task, got {counts['active_tasks']}"

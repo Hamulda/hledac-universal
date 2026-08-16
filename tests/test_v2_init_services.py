@@ -23,7 +23,7 @@ from hledac.universal.runtime.scheduler_v2._v2_init import (
     V2Init,
     _init_failure,
     _hasattr_safe,
-)
+    )
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult
 from _core import aclose
 
@@ -218,7 +218,7 @@ class TestCriticalServiceAssertions:
                 f"[A1-CRITICAL] V2Init cannot start: critical services unavailable: "
                 f"{'; '.join(_critical_failed)}. "
                 f"This indicates _lazy_imports.py is missing or modules failed to import."
-            )
+    )
 
 
 class TestExceptionGroupCompatibility:

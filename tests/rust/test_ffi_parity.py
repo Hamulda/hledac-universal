@@ -202,7 +202,7 @@ class TestFFIParity:
         assert ABI_MANIFEST.exists(), (
             f"Manifest not found at {ABI_MANIFEST}. "
             "Run: python rust_extensions/build_ffi_manifest.py"
-        )
+    )
 
     def test_manifest_schema(self) -> None:
         """Manifest must have required keys."""
@@ -232,7 +232,7 @@ class TestFFIParity:
             pytest.fail(
                 f"lib.rs git rev changed: manifest={saved_rev}, current={actual_rev}. "
                 "Run: python rust_extensions/build_ffi_manifest.py"
-            )
+    )
 
     def test_no_class_name_drift(self) -> None:
         """Class names in _spec (from m.add_class) must be in manifest.
@@ -257,7 +257,7 @@ class TestFFIParity:
                 f"[FFI class-name DRIFT] {len(missing)} class name(s) in "
                 f"_spec but NOT exported by Rust:\n"
                 + "\n".join(f"  - {s}" for s in sorted(missing))
-            )
+    )
 
     def test_register_functions_coverage(self) -> None:
         """Modules using register_functions must be present in manifest.
@@ -301,7 +301,7 @@ class TestFFIParity:
                 + "\n".join(
                     f"  {mod}: {', '.join(funcs)}"
                     for mod, funcs in sorted(by_domain.items())
-                )
+    )
             )
 
     def test_manifest_completeness(self) -> None:
@@ -318,4 +318,4 @@ class TestFFIParity:
                 "not in manifest:\n"
                 + "\n".join(f"  - {s}" for s in sorted(missing_in_manifest))
                 + "\n\nFix: python rust_extensions/build_ffi_manifest.py"
-            )
+    )

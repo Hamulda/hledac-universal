@@ -64,10 +64,9 @@ _GC_THRESHOLD = (700, 10, 5)
 # boot/idle/winddown phases. Dynamic threshold adjustments (pressure relief)
 # are no-ops when blitz mode is active.
 from hledac.universal.coordinators.resource.blitz_gc import (
-from _core._util import aclose
     BOOT_THRESHOLD,
     blitz_gc as _blitz_gc,
-)
+    )
 
 # GC thresholds for different UMA states — used by _apply_gc_thresholds()
 # during non-blitz phases (boot, idle, winddown). During active sprint,
@@ -496,7 +495,7 @@ async def _gc_background_loop(interval_s: float) -> None:
                     '[memory_cycle] gc.collect(2)+freeze run #%d at %.0fs',
                     _stats.gc_background_runs,
                     _stats.last_gc_background_monotonic,
-                )
+    )
             except Exception as exc:
                 _stats.last_gc_background_error = str(exc)
                 logger.debug('[memory_cycle] gc_background tick error: %s', exc)

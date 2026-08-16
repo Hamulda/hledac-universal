@@ -37,7 +37,7 @@ warnings.warn(
     "See F350M-R migration guide.",
     DeprecationWarning,
     stacklevel=2,
-)
+    )
 
 import asyncio
 from hledac.universal.utils.asyncx import safe_wait_for, bounded_parallel_map
@@ -256,7 +256,7 @@ async def _write_batch_to_table(writer_id: int, qname: str, batches: list) -> No
                 asyncio.to_thread(table.add, all_records),
                 timeout=30.0,
                 label=f'lancedb_table_add:{qname}'
-            )
+    )
             logger.debug(f'[LANCEDB:QW] writer={writer_id} wrote {len(all_records)} records to {qname}')
         except asyncio.TimeoutError:
             logger.warning(f'[LANCEDB:QW] writer={writer_id} add timed out after 30s')
@@ -294,7 +294,7 @@ async def _writer_loop(writer_id: int) -> None:
                 concurrency=2,
                 ordered=False,
                 ctx="lancedb_writer",
-            )
+    )
 
             # Mark all queues done
             for q, _, _, _ in items:
@@ -671,7 +671,7 @@ class LanceDBIdentityStore:
                         concurrency=2,
                         ordered=True,
                         ctx="lancedb_embed_fallback",
-                    )
+    )
                     for emb in emb_results:
                         if emb is not None:
                             all_embs.append(emb)
@@ -986,7 +986,7 @@ class LanceDBIdentityStore:
                 concurrency=3,
                 ordered=False,
                 ctx="warm_cache",
-            )
+    )
             logger.info(f'Cache warmed with {top_k} embeddings')
         except Exception as e:
             logger.debug(f'Cache warming failed: {e}')
@@ -1390,7 +1390,7 @@ class LanceDBIdentityStore:
             emb_field = next(
                 (f for f in lance_schema.fields if f.name == 'embedding'),
                 None
-            )
+    )
             if emb_field is None:
                 logger.warning('[LANCEDB] embedding field not found in existing table schema')
                 return True
@@ -1400,12 +1400,12 @@ class LanceDBIdentityStore:
                     f'[LANCEDB] Schema mismatch: expected dim={expected_dim}, '
                     f'existing table has dim={actual_list_size}. '
                     f'Run reembed_at_new_dimension() or delete the table at {self.uri}'
-                )
+    )
                 raise RuntimeError(
                     f'LanceDB schema drift detected: expected embedding dim={expected_dim}, '
                     f'existing table has dim={actual_list_size}. '
                     f'Delete the table or call reembed_at_new_dimension().'
-                )
+    )
             return True
         except Exception as e:
             if 'TableNotFound' in type(e).__name__ or 'not exist' in str(e).lower():
@@ -2137,7 +2137,7 @@ class LanceDBAcademicStore:
             emb_field = next(
                 (f for f in lance_schema.fields if f.name == 'embedding'),
                 None
-            )
+    )
             if emb_field is None:
                 logger.warning('[LANCEDB] embedding field not found in existing table schema')
                 return True
@@ -2147,12 +2147,12 @@ class LanceDBAcademicStore:
                     f'[LANCEDB] Schema mismatch: expected dim={expected_dim}, '
                     f'existing table has dim={actual_list_size}. '
                     f'Delete the table or re-embed at new dimension.'
-                )
+    )
                 raise RuntimeError(
                     f'AcademicPaper schema drift detected: expected embedding dim={expected_dim}, '
                     f'existing table has dim={actual_list_size}. '
                     f'Delete the table.'
-                )
+    )
             return True
         except Exception as e:
             if 'TableNotFound' in type(e).__name__ or 'not exist' in str(e).lower():

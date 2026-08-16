@@ -196,7 +196,7 @@ class DNSCacheService:
                 # when the dns feature is enabled. Falls back to loop.getaddrinfo().
                 raw_results = await async_getaddrinfo(
                     host, 0, proto=socket.IPPROTO_TCP
-                )
+    )
             finally:
                 if self._per_host_gate:
                     self._per_host_gate.release(sem)
@@ -227,7 +227,7 @@ class DNSCacheService:
             *[self.resolve(h) for h in hosts],
             policy="log",
             concurrency=10,
-        )
+    )
 
 
 # =============================================================================
@@ -256,7 +256,7 @@ class RateLimiterService:
             self._domain_limiter = DomainRateLimiter(
                 rate=self._rate_limit_rps,
                 max_hosts=self._max_hosts
-            )
+    )
         except ImportError:
             self._domain_limiter = None
 
@@ -351,7 +351,7 @@ class CircuitBreakerService:
             cb.domain_breaker_record_failure(
                 domain, is_timeout=is_timeout,
                 failure_kind=failure_kind or 'fetch_error'
-            )
+    )
         except (ImportError, AttributeError, OSError):  # noqa: BLE001
             pass
 
@@ -488,7 +488,7 @@ class FetchServiceConfig(msgspec.Struct, frozen=True, gc=False):
             rate_limit_rps=FeatureFlags.get_float(FeatureFlag.RATE_LIMIT_RPS, 0.5),
             max_retries=FeatureFlags.get_int(FeatureFlag.MAX_RETRIES, 3),
             timeout=FeatureFlags.get_float(FeatureFlag.FETCH_TIMEOUT, 30.0),
-        )
+    )
 
 
 class FetchServiceRegistry:
@@ -520,11 +520,11 @@ class FetchServiceRegistry:
         self._dns = DNSCacheService()
         self._rate_limiter = RateLimiterService(
             _rate_limit_rps=self._config.rate_limit_rps
-        )
+    )
         self._circuit_breaker = CircuitBreakerService()
         self._retry_policy = RetryPolicyService(
             config=RetryConfig(max_retries=self._config.max_retries)
-        )
+    )
 
         # Lazy-load transports based on config
         await self._initialize_transports()

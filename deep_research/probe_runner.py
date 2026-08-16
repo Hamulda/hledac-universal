@@ -247,7 +247,7 @@ async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_
     try:
         result = await _execute_probe_path(
             scanner, query, store, max_buckets, local_seam, start_time, timeout_s, result
-        )
+    )
     except Exception as e:
         logger.warning(f'[DEEP_PROBE] Unexpected error: {e}')
         result['errors'].append(str(e))

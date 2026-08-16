@@ -8,11 +8,7 @@ Tests that the global write queue properly serializes LanceDB writes.
 import asyncio
 from unittest.mock import MagicMock
 
-
-
-
-
-
+from hledac.universal.knowledge.lancedb_store import (
     _ensure_write_worker,
     _ensure_write_workers,
     _get_table_queue,
@@ -27,7 +23,6 @@ from unittest.mock import MagicMock
 class TestWriteQueueBasics:
     """Test write queue module-level state and worker startup."""
 
-from _core import aclose
     def test_queue_singleton(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """Queue is created on first access."""
         # Should not raise

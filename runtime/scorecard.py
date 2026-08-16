@@ -166,7 +166,7 @@ class ScorecardBuilder:
 
         findings_per_minute = (
             accepted / max(1, self._elapsed / 60.0) if self._elapsed > 0 else 0.0
-        )
+    )
         ioc_density = ioc_nodes / max(1, accepted) if accepted > 0 else 0.0
 
         return ScorecardResult(
@@ -182,7 +182,7 @@ class ScorecardBuilder:
             semantic_novelty=1.0,
             outlines_used=False,
             elapsed=self._elapsed,
-        )
+    )
 
     async def _task_dedup(self) -> None:
         """Thread-pool worker: fetch dedup runtime status from DuckDB."""
@@ -197,7 +197,7 @@ class ScorecardBuilder:
                         sprint_rep.findings
                         if hasattr(sprint_rep, "findings")
                         else None
-                    )
+    )
                     if findings_iterable:
                         for f in findings_iterable:
                             src = getattr(f, "source_type", None) or "unknown"
@@ -266,7 +266,7 @@ class ScorecardBuilder:
         result = await asyncio.to_thread(sync_get_cb)
         self._results["cb_states"] = (
             result if not isinstance(result, Exception) else {}
-        )
+    )
 
     async def _task_peak_rss(self) -> None:
         """Thread-pool worker: compute peak RSS."""
@@ -302,7 +302,7 @@ class ScorecardBuilder:
         result = await asyncio.to_thread(sync_get_ghost)
         self._results["ghost_entities"] = (
             result if not isinstance(result, Exception) else []
-        )
+    )
 
     # ── Phase 2: Build data + persist ──────────────────────────────────────
 
@@ -331,7 +331,7 @@ class ScorecardBuilder:
             arrow_metrics=result.arrow_metrics,
             peak_rss_mb=result.peak_rss_mb,
             analyst_brief=self._analyst_brief,
-        )
+    )
 
         # Sprint F232C: investigation_packet
         self._attach_investigation_packet()
@@ -345,7 +345,7 @@ class ScorecardBuilder:
         try:
             from hledac.universal.export.sprint_exporter import (
                 _build_investigation_packet,
-            )
+    )
 
             sprint_rep = self._sprint_report
             if sprint_rep is None:
@@ -398,7 +398,7 @@ class ScorecardBuilder:
                 try:
                     await store.upsert_scorecard(
                         self._scorecard_data_to_dict(data)
-                    )
+    )
                 except (RuntimeError, OSError):  # noqa: BLE001
                     pass
 
@@ -433,7 +433,7 @@ class ScorecardBuilder:
                             "duration_s": self._elapsed,
                             "ts": _t.time(),
                         }
-                    )
+    )
                 except (RuntimeError, OSError):  # noqa: BLE001
                     pass
 
@@ -461,7 +461,7 @@ class ScorecardBuilder:
                     list(duckdb_write_tasks),
                     policy="log",
                     ctx="scorecard_phase2_duckdb",
-                )
+    )
                 # parallel(policy="log") filtered exceptions → no manual _check_gathered needed
 
         # Markdown export + ghost run in PARALLEL via parallel(policy="log")
@@ -473,7 +473,7 @@ class ScorecardBuilder:
             ],
             policy="log",
             ctx="scorecard_markdown_export",
-        )
+    )
         return paths[0]  # first element is Path
 
     def _scorecard_data_to_dict(self, data: ScorecardData) -> dict[str, Any]:

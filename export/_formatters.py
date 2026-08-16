@@ -57,7 +57,7 @@ class JSONFormatter:
         from hledac.universal.paths import get_sprint_json_report_path
         from hledac.universal.export.components.pivot_builder import (
             _get_correlation_from_handoff,
-        )
+    )
 
         # Sprint F186C: Tighten typed contract
         eh = ensure_export_handoff(handoff, default_sprint_id=sprint_id or "unknown")
@@ -115,7 +115,7 @@ class JSONFormatter:
             logger.warning(
                 "[EXPORT] sanitize boundary parse failed (size=%d): %s. Using boundary_content as degraded fallback.",
                 len(sanitized_str), parse_err
-            )
+    )
             sanitized_obj = boundary_content if isinstance(boundary_content, dict) else {}
 
         # Sprint F150I Section  2: Build product_value_summary
@@ -127,7 +127,7 @@ class JSONFormatter:
         _cached_acq_truth = _se._get_acquisition_truth(eh)
         reconciled_pvs, _, truth_recon_applied, truth_recon_reason = _se.reconcile_terminal_truth(
             pvs, eh_scorecard, _cached_runtime_truth
-        )
+    )
         if truth_recon_applied:
             pvs = reconciled_pvs
             logger.info(f"[EXPORT] F229A truth reconciliation: {truth_recon_reason}")
@@ -144,7 +144,7 @@ class JSONFormatter:
         seeds_path = await _se._generate_next_sprint_seeds(
             store, pvs, eh.analyst_brief, eh.investigation_packet,
             export_mode=export_mode,
-        )
+    )
 
         # Sprint F150K: sprint_summary
         try:
@@ -192,7 +192,7 @@ class JSONFormatter:
             "steganography_detection",
             "digital_ghost_detection",
             "blockchain_forensics",
-        )
+    )
         try:
             if hasattr(store, "async_query_recent_findings"):
                 _all_findings = await store.async_query_recent_findings(limit=_EXPORT_FINDINGS_LIMIT)
@@ -224,7 +224,7 @@ class JSONFormatter:
             try:
                 graph_context_annotations = store.annotate_findings_with_graph_context(
                     findings_for_annotation, max_hops=2, max_annotations=50
-                )
+    )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -298,7 +298,7 @@ class JSONFormatter:
                             sprint_trend=sprint_trend,
                             source_leaderboard=source_leaderboard or [],
                             capability_synthesis=capability_synthesis,
-                        )
+    )
                     except Exception as _dash_err:
                         logger.debug("[EXPORT] dashboard build skipped: %s", _dash_err)
         except Exception:  # noqa: BLE001

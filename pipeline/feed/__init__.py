@@ -27,7 +27,7 @@ def __getattr__(name: str):
             FeedPipelineEntryResult,
             FeedPipelineRunResult,
             async_run_live_feed_pipeline,
-        )
+    )
         return locals()[name]
     if name == "FeedPipelineOrchestrator":
         from hledac.universal.pipeline._feed_orchestrator import FeedPipelineOrchestrator

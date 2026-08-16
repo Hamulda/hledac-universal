@@ -28,7 +28,7 @@ Použití:
             raise ImportError(
                 "Ani Rust extension, ani core.rust_backend nejsou dostupné. "
                 "Sestavte Rust extension: cd rust_extensions && maturin develop --release"
-            )
+    )
 
 ABI Versioning Policy (R-23):
     - (major, minor, patch): major = breaking change, minor = new API, patch = bugfix

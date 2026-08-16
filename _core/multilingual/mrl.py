@@ -36,7 +36,7 @@ MRL_DIMENSIONS = (
     512,   # Half
     768,   # ModernBERT native
     1024,  # BGE-M3 native (multilingual)
-)
+    )
 
 
 class MRLTruncator:
@@ -80,7 +80,7 @@ class MRLTruncator:
             logger.warning(
                 f'target_dim {target_dim} not in MRL_DIMENSIONS ladder. '
                 f'Using anyway but consider using: {[d for d in MRL_DIMENSIONS if d <= source_dim]}'
-            )
+    )
     
     @property
     def source_dim(self) -> int:
@@ -108,7 +108,7 @@ class MRLTruncator:
         if embedding.shape[-1] != self._source_dim:
             raise ValueError(
                 f'Expected embedding dim {self._source_dim}, got {embedding.shape[-1]}'
-            )
+    )
         
         # Truncate to target_dim (prefix of MRL representation)
         truncated = embedding[..., :self._target_dim]
@@ -134,7 +134,7 @@ class MRLTruncator:
         if embeddings.shape[-1] != self._source_dim:
             raise ValueError(
                 f'Expected embedding dim {self._source_dim}, got {embeddings.shape[-1]}'
-            )
+    )
         
         # Truncate along last dimension
         truncated = embeddings[..., :self._target_dim]
@@ -210,7 +210,7 @@ class MRLTruncator:
                 source_dim=self._source_dim,
                 target_dim=dim,
                 normalize=self._normalize
-            )
+    )
             result[dim] = truncator.truncate_batch(embeddings)
         
         return result

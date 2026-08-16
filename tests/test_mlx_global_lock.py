@@ -18,11 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
-
-
-
-
+from hledac.universal._core.mlx_inference_lock import (
     _get_mlx_inference_lock,
     mlx_inference_lock_aio,
     mlx_inference_lock_context,
@@ -32,8 +28,7 @@ import pytest
 class TestMlxGlobalLock:
     """Test suite for MLX global inference lock."""
 
-
-from _core import aclose    def test_lock_is_singleton(self) -> None:
+    def test_lock_is_singleton(self) -> None:
         """Ověř že lock je singleton = stejná instance pro všechny volající."""
         lock1 = _get_mlx_inference_lock()
         lock2 = _get_mlx_inference_lock()

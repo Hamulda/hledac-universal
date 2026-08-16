@@ -88,11 +88,12 @@ static CONNECTION_SEM: tokio::sync::Semaphore =
 // ============================================================================
 
 /// Get or create the shared tokio runtime.
-///
-/// [MODERN-07]: Replaced local OnceLock with shared runtime from async_runtime module.
-/// This consolidates 3 separate runtimes (dns, quic, arti) into 1 shared runtime,
+/// [MODERN-07]: Returns the shared Tokio runtime from async_runtime module.
+/// Consolidates 3 separate runtimes (dns, quic, arti) into 1 shared runtime,
 /// saving ~16MB of memory overhead.
-fn get_runtime() -> &'static tokio::runtime::Runtime {
+///
+/// Named get_shared_runtime() to avoid shadowing std::thread::get_runtime.
+fn get_shared_runtime() -> &'static tokio::runtime::Runtime {
     crate::async_runtime::get_runtime()
 }
 
@@ -146,7 +147,7 @@ pub fn fetch(
     };
 
     // Use global runtime instead of creating per-request
-    let rt = get_runtime();
+    let rt = get_shared_runtime();
     let result = rt.block_on(async {
         fetch_async_internal(
             &host,

@@ -41,18 +41,18 @@ _RE_AWS_ACCESS_KEY = re.compile(r'\bAKIA[0-9A-Z]{16}\b')
 _RE_AWS_SECRET_KEY = re.compile(
     r'\b(?:aws)?_?secret_?access?_?key\s*[=:]\s*[\'"]?([A-Za-z0-9/+=]{40})[\'"]?',
     re.IGNORECASE
-)
+    )
 _RE_STRIPE_KEY = re.compile(r'\bsk_live_[0-9a-zA-Z]{24}\b')
 _RE_SLACK_TOKEN = re.compile(
     r'\bxox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[A-Za-z0-9]{24,32}\b'
-)
+    )
 _RE_HUGGINGFACE_TOKEN = re.compile(r'\bhf_[a-zA-Z0-9]{34}\b')
 _RE_DOPPLER_SECRET = re.compile(r'\bdp\.pt\.[a-zA-Z0-9]{43}\b')
 _RE_INFISICAL_TOKEN = re.compile(r'\binf-[a-zA-Z0-9]{43}\b')
 _RE_VERCEL_TOKEN = re.compile(r'\b[a-zA-Z0-9]{24,}\b')
 _RE_SUPABASE_KEY = re.compile(
     r'\beyJ[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\b'
-)
+    )
 _RE_GOOGLE_API_KEY = re.compile(r'\bAIza[0-9A-Za-z\-_]{35}\b')
 
 # Bearer tokens & generic auth
@@ -60,17 +60,17 @@ _RE_BEARER_TOKEN = re.compile(r'\bBearer\s+[A-Za-z0-9_\.\-]{20,}\b', re.IGNORECA
 _RE_GENERIC_TOKEN = re.compile(
     r'\b(?:token|key|secret|password|passwd|pwd|auth|credential)[\'"]?[:=]?\s*[\'"]?([A-Za-z0-9_\-]{16,64})[\'"]?\b',
     re.IGNORECASE
-)
+    )
 _RE_GENERIC_API_KEY = re.compile(
     r'\b(?:api[_-]?key|apikey|api_secret)\s*[=:]\s*[\'"]?([A-Za-z0-9_\-]{20,64})[\'"]?',
     re.IGNORECASE
-)
+    )
 
 # Private keys
 _RE_PRIVATE_KEY = re.compile(
     r'-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----',
     re.IGNORECASE
-)
+    )
 
 # System paths (internal)
 _RE_HLEDAC_PATH = re.compile(r'~/.hledac/[^\s\'"]+|/Users/[^/]+/.hledac/[^\s\'"]+')
@@ -79,11 +79,11 @@ _RE_INTERNAL_PATH = re.compile(r'/Users/[a-zA-Z0-9_]+/[^\s\'"]{10,}')
 # Network
 _RE_IPV4 = re.compile(
     r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b'
-)
+    )
 _RE_IPV6 = re.compile(r'\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b')
 _RE_PRIVATE_IPV4 = re.compile(
     r'\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b'
-)
+    )
 
 # Email (for optional masking)
 _RE_EMAIL = re.compile(r'\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b')

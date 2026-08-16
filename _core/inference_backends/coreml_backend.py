@@ -80,14 +80,14 @@ class CoreMLBackend:
                 prompt=request.prompt,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
-            )
+    )
             latency_ms = (time.monotonic() - t0) * 1000
             return InferenceResponse(
                 text=result.text,
                 tokens_generated=result.tokens_generated,
                 latency_ms=latency_ms,
                 backend=InferenceBackend.COREML,
-            )
+    )
         except InferenceError:
             raise
         except Exception as exc:

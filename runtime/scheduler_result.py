@@ -694,7 +694,7 @@ class SprintResultBuilder:
                     try:
                         summary = asyncio.get_event_loop().run_until_complete(
                             ledger.get_health_summary()
-                        )
+    )
                     except RuntimeError:
                         summary = {
                             "registry": {"total_failures": 0, "high_critical_count": 0, "component_details": {}},
@@ -737,7 +737,7 @@ class SprintResultBuilder:
                 cycles_started=5,
                 aborted=True,
                 abort_reason="timeout"
-            )
+    )
         """
         for k, v in kwargs.items():
             self._set(k, v)

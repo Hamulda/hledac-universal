@@ -82,7 +82,7 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
             self.max_feed_accepted_before_nonfeed_terminal is None
             and self.max_feed_per_source is None
             and self.max_feed_share_before_nonfeed_terminal is None
-        )
+    )
 
     def is_active(self) -> bool:
         """Return True when any cap is configured (non-sentinel)."""
@@ -129,7 +129,7 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
                     return True, (
                         f"feed_cap_active:nonfeed_profile:{_effective_intent}:{feed_accepted_so_far}"
                         f">={profile_cap}"
-                    )
+    )
 
             # F227D: Mission-aware cap — use per-intent threshold when nonfeed unresolved
             if self._mission_cap_active(mission_intent) and nonfeed_unresolved:
@@ -138,7 +138,7 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
                     return True, (
                         f"feed_cap_active:mission:{mission_intent}:{feed_accepted_so_far}"
                         f">={mission_cap}"
-                    )
+    )
 
             # Base budget caps — only evaluated when budget is active
             if self.is_active():
@@ -151,7 +151,7 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
                     return True, (
                         f"feed_cap_active:global:{feed_accepted_so_far}"
                         f">={self.max_feed_accepted_before_nonfeed_terminal}"
-                    )
+    )
 
                 # Cap 3: per-source cap
                 if self.max_feed_per_source is not None:
@@ -160,7 +160,7 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
                             return True, (
                                 f"feed_cap_active:per_source:{source}:{count}"
                                 f">={self.max_feed_per_source}"
-                            )
+    )
 
                 # Cap 2: feed share of total (only meaningful when nonfeed unresolved)
                 if (
@@ -174,7 +174,7 @@ class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
                             return True, (
                                 f"feed_cap_active:share:{share:.2f}"
                                 f">={self.max_feed_share_before_nonfeed_terminal}"
-                            )
+    )
 
             return False, ""
         except Exception:

@@ -125,7 +125,7 @@ def build_graph_chatml_context(
     if contested and used_tokens < token_budget * 0.9:
         contested_section, contested_tokens = _build_contested_section(
             counter_paths, narratives, used_tokens, token_budget
-        )
+    )
         if contested_section:
             sections.append(contested_section)
             used_tokens += contested_tokens

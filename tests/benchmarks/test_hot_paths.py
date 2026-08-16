@@ -25,7 +25,7 @@ class TestIOCCanonical:
             "<p>Hash: a3f5c2d1e4b6f8a9c0d1e2f3a4b5c6d7e8f9a0b</p>"
             "<p>Another domain test.example.com and 10.0.0.255</p>"
             + "<p>Long content " * 200 + "</p>"
-        )
+    )
         result = benchmark(rust.ioc.extract_iocs_flat, text)
         assert isinstance(result, list)
 
@@ -38,7 +38,7 @@ class TestIOCCanonical:
             "IP: 192.168.1.1 | 2001:db8::1 | "
             "a3f5c2d1e4b6f8a9c0d1e2f3a4b5c6d7e8f9a0b | "
             "test.example.com | 10.0.0.255 | "
-        )
+    )
         text = (chunk + "\n") * 2500  # ~100KB
         result = benchmark(rust.ioc.extract_iocs_flat, text)
         assert isinstance(result, list)

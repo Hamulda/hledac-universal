@@ -60,7 +60,7 @@ _CHROME_UAS: tuple[_ChromeUA, ...] = (
     ("Chrome/124.0.0.0", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
     ("Chrome/124.0.0.0", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
     ("Chrome/120.0.0.0", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"),
-)
+    )
 
 # Firefox 133-136 ESR (Windows/macOS/Linux)
 _FIREFOX_UAS: tuple[_FirefoxUA, ...] = (
@@ -72,7 +72,7 @@ _FIREFOX_UAS: tuple[_FirefoxUA, ...] = (
     ("Firefox/133.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"),
     ("Firefox/133.0", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0"),
     ("Firefox/133.0", "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0"),
-)
+    )
 
 # Safari 17-18 (macOS Sonoma 14.4 / Sequoia 15 / iOS 17-18)
 _SAFARI_UAS: tuple[_SafariUA, ...] = (
@@ -80,7 +80,7 @@ _SAFARI_UAS: tuple[_SafariUA, ...] = (
     ("Version/17.4 Safari/605.1.15", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"),
     ("Version/17.4 Safari/604.1", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
     ("Version/17.4 Safari/604.1", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"),
-)
+    )
 
 # Edge 124-136 (Windows only — Edge is Chromium-based)
 _EDGE_UAS: tuple[_EdgeUA, ...] = (
@@ -89,7 +89,7 @@ _EDGE_UAS: tuple[_EdgeUA, ...] = (
     ("Edg/134.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0"),
     ("Edg/133.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0"),
     ("Edg/124.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0"),
-)
+    )
 
 # All pools flat — for _RNG.choice across all browsers
 _ALL_UAS: tuple[tuple[str, str], ...] = _CHROME_UAS + _FIREFOX_UAS + _SAFARI_UAS + _EDGE_UAS
@@ -140,7 +140,7 @@ _ACCEPT_LANGUAGE_POOL: tuple[str, ...] = (
     "fr-FR,fr;q=0.9,en;q=0.8",
     "ja-JP,ja;q=0.9,en;q=0.8",
     "zh-CN,zh;q=0.9,en;q=0.8",
-)
+    )
 
 # --------------------------------------------------------------------------------
 # Accept-Encoding
@@ -149,7 +149,7 @@ _ACCEPT_ENCODING_POOL: tuple[str, ...] = (
     "gzip, deflate, br",
     "gzip, deflate",
     "deflate, gzip, br",
-)
+    )
 
 # --------------------------------------------------------------------------------
 # Module-level thread-safe helpers
@@ -223,7 +223,7 @@ _CHROME_TOKEN_CHOICES = (
     '"Chromium";v="136"',
     '"Google Chrome";v="136"',
     '"Not-A.Brand";v="99"',
-)
+    )
 
 
 def build_randomized_headers(

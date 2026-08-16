@@ -13,7 +13,7 @@ warnings.warn(
     "This shim will be removed in a future sprint.",
     DeprecationWarning,
     stacklevel=2,
-)
+    )
 
 from hledac.universal.transport.http_utils import fetch_json, safe_fetch
 from _core import aclose

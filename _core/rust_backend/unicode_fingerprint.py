@@ -166,7 +166,7 @@ class UnicodeFingerprint:
             len(self.zero_width_pattern) == 0
             and len(self.homoglyph_pattern) == 0
             and len(self.unicode_bidi_sequence) == 0
-        )
+    )
     
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -188,7 +188,7 @@ class UnicodeFingerprint:
             homoglyph_pattern=tuple(data.get("homoglyph_pattern", [])),
             unicode_bidi_sequence=tuple(data.get("unicode_bidi_sequence", [])),
             fingerprint_hash=tuple(data.get("fingerprint_hash", [])),
-        )
+    )
 
 
 # =============================================================================
@@ -328,7 +328,7 @@ class _RustUnicodeFingerprintDomain:
             ),
             unicode_bidi_sequence=tuple(result.unicode_bidi_sequence),
             fingerprint_hash=tuple(result.fingerprint_hash),
-        )
+    )
     
     def compute_similarity(self, a: UnicodeFingerprint, b: UnicodeFingerprint) -> float:
         """

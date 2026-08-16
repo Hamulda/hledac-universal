@@ -138,7 +138,7 @@ async def async_search_tvnews(
             error_type="import_error",
             elapsed_s=elapsed,
             error=f"session_pool_unavailable:{exc}",
-        )
+    )
 
     # Build search params — TV News collection
     params = {
@@ -216,14 +216,14 @@ def _process_tvnews_response(data: dict, query: str, max_results: int, elapsed: 
         return DiscoveryBatchResult(
             hits=(), error_type="provider_empty", elapsed_s=elapsed,
             provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family="archive",
-        )
+    )
 
     docs = data.get("response", {}).get("docs", [])
     if not docs:
         return DiscoveryBatchResult(
             hits=(), error_type="provider_empty", elapsed_s=elapsed,
             provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family="archive",
-        )
+    )
 
     seen_ids: set[str] = set()
     hits_list: list[DiscoveryHit] = []
@@ -313,7 +313,7 @@ async def search_tvnews_for_query(
                 "retrieved_ts": hit.retrieved_ts,
                 "reason": hit.reason,
             }
-        )
+    )
     return findings
 
 class TVNewsAdapter(BaseDiscoveryMixin):
@@ -366,4 +366,4 @@ class TVNewsAdapter(BaseDiscoveryMixin):
                 score=hit.score,
                 reason=hit.reason,
                 metadata=metadata,
-            )
+    )

@@ -124,7 +124,7 @@ def decide(
             rss_gib=rss,
             js_confidence=js_confidence,
             reason=f"hard limit {_HARD_GIB:.1f} GiB, RSS={rss:.2f}",
-        )
+    )
 
     if rss >= _SOFT_GIB:
         if priority <= 3 and js_confidence >= 0.75:
@@ -134,21 +134,21 @@ def decide(
                 rss,
                 priority,
                 js_confidence,
-            )
+    )
             return BrowserDecision(
                 tier="camoufox",
                 allowed=True,
                 rss_gib=rss,
                 js_confidence=js_confidence,
                 reason=f"soft override: priority={priority} confidence={js_confidence:.2f}",
-            )
+    )
         return BrowserDecision(
             tier="deferred",
             allowed=False,
             rss_gib=rss,
             js_confidence=js_confidence,
             reason=f"soft limit {_SOFT_GIB:.1f} GiB, priority={priority}",
-        )
+    )
 
     return BrowserDecision(
         tier="camoufox",

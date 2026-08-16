@@ -131,13 +131,13 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
                     "</article></html>"
                 ),
                 url=url,
-            )
+    )
 
         # Patch discovery and fetcher
         from hledac.universal.pipeline.live_public_pipeline import (
             _patch_discovery,
             _patch_fetcher_and_matcher,
-        )
+    )
 
         _patch_discovery(canned_search)
         _patch_fetcher_and_matcher(
@@ -149,7 +149,7 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
                 value="CVE-2026-9999",
                 label="vulnerability_id",
             )] if "CVE-2026-9999" in t else [],
-        )
+    )
 
         # Create store
         store = DuckDBShadowStore(db_path=str(db_path))
@@ -164,7 +164,7 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
             fetch_timeout_s=10.0,
             fetch_max_bytes=200_000,
             fetch_concurrency=1,
-        )
+    )
 
         # Query DuckDB for persisted findings
         findings = await store.async_get_recent_findings(limit=20)
@@ -177,13 +177,13 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
         assert len(pipeline_findings) >= 1 or pipeline_result.accepted_findings >= 1, (
             f"Expected >=1 finding. store={len(pipeline_findings)}, "
             f"pipeline accepted={pipeline_result.accepted_findings}"
-        )
+    )
 
         # Runtime truth: accepted_findings in pipeline result should be consistent
         assert pipeline_result.accepted_findings >= 0, (
             f"pipeline_result.accepted_findings should be >= 0, "
             f"got {pipeline_result.accepted_findings}"
-        )
+    )
 
         # If findings exist in store, verify their structure
         for f in pipeline_findings:
@@ -197,24 +197,24 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
         p12_start = source.find("# P12: Hypothesis generation")
         assert p12_start != -1, (
             "P12 hypothesis generation code not found in async_run_live_public_pipeline"
-        )
+    )
         p12_block = source[p12_start:p12_start + 5000]
 
         # P12 must use fail-soft (except asyncio.TimeoutError with return "")
         assert "asyncio.TimeoutError" in p12_block and 'return ""' in p12_block, (
             "P12 must catch TimeoutError per-task and return empty string — fail-soft"
-        )
+    )
         # P12 must use as_completed for concurrent ToT evaluation
         assert "as_completed" in p12_block, (
             "P12 must use asyncio.as_completed for concurrent ToT evaluation"
-        )
+    )
 
         print(
             f"\n[hypothesis_burst_truth] test passed: "
             f"store_findings={len(pipeline_findings)} "
             f"pipeline_accepted={pipeline_result.accepted_findings} "
             f"p12_code_present=True"
-        )
+    )
 
         await store.aclose()
     finally:

@@ -115,6 +115,6 @@ def __getattr__(name: str):
             f"intel.{name} is deprecated — import from \"{canonical}\" directly instead.",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         return import_module(canonical)
     raise AttributeError(f"module 'intel' has no attribute {name!r}")

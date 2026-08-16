@@ -66,7 +66,7 @@ def _probe_mlx() -> AccelerationStatus:
             version=getattr(mx, "__version__", "unknown"),
             install_hint=None,
             platform_note="Apple Silicon MLX accelerator",
-        )
+    )
     except ImportError:
         return AccelerationStatus(
             name="mlx",
@@ -75,7 +75,7 @@ def _probe_mlx() -> AccelerationStatus:
             version=None,
             install_hint="pip install mlx",
             platform_note="Apple Silicon MLX (mlx community package)",
-        )
+    )
 
 
 def _probe_torch() -> AccelerationStatus:
@@ -98,7 +98,7 @@ def _probe_torch() -> AccelerationStatus:
             version=torch.__version__,
             install_hint=None,
             platform_note=f"torch MPS available: {mps_available}" + (f" ({mps_note})" if mps_note else ""),
-        )
+    )
     except ImportError:
         return AccelerationStatus(
             name="torch",
@@ -107,7 +107,7 @@ def _probe_torch() -> AccelerationStatus:
             version=None,
             install_hint="pip install torch --index-url https://download.pytorch.org/whl/cpu",
             platform_note="CPU-only PyTorch; MPS (Metal) requires Apple Silicon",
-        )
+    )
 
 
 def _probe_torch_mps() -> AccelerationStatus:
@@ -121,7 +121,7 @@ def _probe_torch_mps() -> AccelerationStatus:
                 version=None,
                 install_hint="torch is required for MPS",
                 platform_note="torch.backends.mps not available",
-            )
+    )
         available = torch.backends.mps.is_available()
         return AccelerationStatus(
             name="torch_mps",
@@ -130,7 +130,7 @@ def _probe_torch_mps() -> AccelerationStatus:
             version=None,
             install_hint=None if available else "Requires Apple Silicon Mac",
             platform_note="Metal Performance Shaders for torch on Apple Silicon",
-        )
+    )
     except ImportError:
         return AccelerationStatus(
             name="torch_mps",
@@ -139,7 +139,7 @@ def _probe_torch_mps() -> AccelerationStatus:
             version=None,
             install_hint="pip install torch",
             platform_note="torch required for MPS probe",
-        )
+    )
 
 
 def _probe_fast_langdetect() -> AccelerationStatus:
@@ -152,7 +152,7 @@ def _probe_fast_langdetect() -> AccelerationStatus:
             version=getattr(fast_langdetect, "__version__", "unknown"),
             install_hint=None,
             platform_note="FTZ-format language detection (10x faster than langdetect)",
-        )
+    )
     except ImportError:
         return AccelerationStatus(
             name="fast_langdetect",
@@ -161,7 +161,7 @@ def _probe_fast_langdetect() -> AccelerationStatus:
             version=None,
             install_hint="pip install fast-langdetect",
             platform_note="Language detection (optional acceleration)",
-        )
+    )
 
 
 def _probe_datasketch() -> AccelerationStatus:
@@ -175,7 +175,7 @@ def _probe_datasketch() -> AccelerationStatus:
             version=ver,
             install_hint=None,
             platform_note="MinHash LSH for near-duplicate detection",
-        )
+    )
     except ImportError:
         return AccelerationStatus(
             name="datasketch",
@@ -184,7 +184,7 @@ def _probe_datasketch() -> AccelerationStatus:
             version=None,
             install_hint="pip install datasketch",
             platform_note="MinHash LSH (optional for relationship discovery)",
-        )
+    )
 
 
 def _probe_rapidfuzz() -> AccelerationStatus:
@@ -197,7 +197,7 @@ def _probe_rapidfuzz() -> AccelerationStatus:
             version=getattr(rapidfuzz, "__version__", "unknown"),
             install_hint=None,
             platform_note="C-based Levenshtein/Jaro-Winkler string matching",
-        )
+    )
     except ImportError:
         return AccelerationStatus(
             name="rapidfuzz",
@@ -206,7 +206,7 @@ def _probe_rapidfuzz() -> AccelerationStatus:
             version=None,
             install_hint="pip install rapidfuzz",
             platform_note="Fuzzy string matching (optional for identity stitching)",
-        )
+    )
 
 
 # ---------------------------------------------------------------------------

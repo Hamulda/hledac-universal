@@ -5,11 +5,7 @@ Tests unified LRU model pool for M1 8GB memory management.
 import asyncio
 import pytest
 
-
-
-
-
-
+from hledac.universal.brain.mlx_model_pool import (
     MLXModelPool,
     MLXModelPoolConfig,
     ModelEntry,
@@ -24,8 +20,7 @@ class TestMLXModelPool:
     """Test MLXModelPool functionality."""
 
     def setup_method(self) -> None:
-
-from _core import aclose        """Reset singleton before each test."""
+        """Reset singleton before each test."""
         MLXModelPool.reset_instance()
 
     def teardown_method(self) -> None:

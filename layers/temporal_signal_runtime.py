@@ -228,7 +228,7 @@ def build_temporal_priority_hints(k: int = 10) -> list[dict]:
             + change_point_score * 0.20
             + source_synchrony_score * 0.15,
             0, 1
-        )
+    )
 
     Reasons are derived from component scores:
         - burst_cluster     : burst_score > 0.6
@@ -252,7 +252,7 @@ def build_temporal_priority_hints(k: int = 10) -> list[dict]:
                 + s.burst_score * 0.20
                 + s.change_point_score * 0.20
                 + s.source_synchrony_score * 0.15
-            )
+    )
 
             # Derive reason tag (in priority order)
             # Note: periodicity_score influences the reason tag (periodic_checkin)

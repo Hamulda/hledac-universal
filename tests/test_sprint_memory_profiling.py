@@ -34,7 +34,7 @@ from tests.utils.memory_profiler import (
     TracemallocStats,
     assert_no_leak,
     get_rss_mb,
-)
+    )
 
 
 def _leak_in_subprocess(size: int = 5_000_000, threshold_mb: float = 1.0) -> bool:
@@ -75,7 +75,7 @@ sys.exit(0 if delta > {threshold_mb} else 1)
             [sys.executable, "-c", code],
             capture_output=True,
             timeout=30,
-        )
+    )
         return proc.returncode == 0
     except subprocess.TimeoutExpired, OSError:
         return False
@@ -97,7 +97,7 @@ class TestSprintMemoryProfilingA_RssSnapshot(unittest.IsolatedAsyncioTestCase):
         current = get_rss_mb()
         assert abs(snap.rss_mb - current) < 100, (
             f"Snapshot RSS {snap.rss_mb:.0f} MB differs too much from current {current:.0f} MB"
-        )
+    )
 
     def test_delta_mb_zero_on_noop(self):
         """delta_mb() returns ~0 for no-op (within GC noise margin)."""
@@ -441,7 +441,7 @@ class TestSprintMemoryProfilingG_SessionTracer(unittest.IsolatedAsyncioTestCase)
             TracemallocSnapshot,
             init_session_tracer,
             stop_session_tracer,
-        )
+    )
 
         stop_session_tracer()
         init_session_tracer(nframes=10)
@@ -476,7 +476,7 @@ class TestSprintMemoryProfilingG_SessionTracer(unittest.IsolatedAsyncioTestCase)
             TracemallocSnapshot,
             is_tracing,
             stop_session_tracer,
-        )
+    )
 
         stop_session_tracer()
         snap = TracemallocSnapshot()

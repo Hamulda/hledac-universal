@@ -151,7 +151,7 @@ class TestBrokenArtifactAwareness(unittest.TestCase):
             self.skipTest(
                 f"Known broken artifact: _check_universal_coordinators called {call_count}x "
                 f"but undefined. See docs/audits/COORDINATOR_ROUTING_AUTHORITY_AUDIT.md"
-            )
+    )
 
 
 class TestMixinArchitectureRemoved(unittest.TestCase):
@@ -164,7 +164,7 @@ class TestMixinArchitectureRemoved(unittest.TestCase):
         self.assertFalse(
             mixins_path.exists(),
             "coordinators/mixins.py must be deleted — dead mixin architecture"
-        )
+    )
 
     def test_no_coordinator_inherits_from_mixin(self):
         """No coordinator class may inherit from mixin classes."""
@@ -192,7 +192,7 @@ class TestMixinArchitectureRemoved(unittest.TestCase):
         self.assertEqual(
             violations, [],
             "Mixin inheritance found:\n" + "\n".join(violations)
-        )
+    )
 
     def test_universal_coordinator_has_inline_implementations(self):
         """UniversalCoordinator must have track_operation, get_load_factor, check_memory_pressure."""

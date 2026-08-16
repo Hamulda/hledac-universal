@@ -39,7 +39,7 @@ class TestMLXBridgePrefetchReusable:
         mock_engine._tokenizer = MagicMock()
         mock_engine._tokenizer.apply_chat_template = MagicMock(
             return_value="<|im_start|>user\ntest<|im_end|>\n"
-        )
+    )
         mock_engine._tokenizer.encode = MagicMock(return_value=[1, 2, 3, 4, 5])
 
         mock_cache = MagicMock()
@@ -76,7 +76,7 @@ class TestMLXBridgePrefetchReusable:
         mock_engine._tokenizer = MagicMock()
         mock_engine._tokenizer.apply_chat_template = MagicMock(
             return_value="<|im_start|>user\ntest<|im_end|>\n"
-        )
+    )
         mock_engine._tokenizer.encode = MagicMock(return_value=[1, 2, 3, 4, 5])
 
         mock_cache = MagicMock()

@@ -26,7 +26,7 @@ from ._stage_protocol import (
     BoundedStageQueue,
     StageContext,
     StageMetrics,
-)
+    )
 from _core import aclose
 
 if TYPE_CHECKING:
@@ -121,7 +121,7 @@ class PipelineOrchestrator:
             make_enrich_aimd,
             make_extract_aimd,
             make_fetch_aimd,
-        )
+    )
 
         # Discovery — first stage, no input
         discovery = DiscoveryStage(
@@ -129,7 +129,7 @@ class PipelineOrchestrator:
             max_results=ctx.max_results,
             public_bootstrap_enabled=True,
             seed_context=None,
-        )
+    )
 
         # Dedup
         dedup = DedupStage(capacity=10_000)
@@ -143,7 +143,7 @@ class PipelineOrchestrator:
             fetch_max_bytes=ctx.fetch_max_bytes,
             fetch_concurrency=ctx.fetch_concurrency,
             uma_state=ctx.uma_state,
-        )
+    )
 
         # Match
         match = MatchStage()
@@ -154,14 +154,14 @@ class PipelineOrchestrator:
             aimd_controller=enrich_aimd,
             query=ctx.query,
             uma_state=ctx.uma_state,
-        )
+    )
 
         # Store — last stage
         store = StoreStage(
             store=ctx.store,
             batch_size=50,
             flush_interval_s=2.0,
-        )
+    )
 
         self._stages = [discovery, dedup, fetch, match, enrich, store]
 
@@ -201,7 +201,7 @@ class PipelineOrchestrator:
                 self._adapter_task = main_tg.create_task(
                     _adapt_queues_to_uma(),
                     name="adapter:uma_queue_sizing",
-                )
+    )
 
                 # Discovery → Dedup
                 disc_task = main_tg.create_task(
@@ -211,7 +211,7 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:discovery",
-                )
+    )
 
                 dedup_task = main_tg.create_task(
                     self._stages[1].run(
@@ -220,7 +220,7 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:dedup",
-                )
+    )
 
                 # Dedup → Fetch
                 fetch_task = main_tg.create_task(
@@ -230,7 +230,7 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:fetch",
-                )
+    )
 
                 # Fetch → Match
                 match_task = main_tg.create_task(
@@ -240,7 +240,7 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:match",
-                )
+    )
 
                 # Match → Enrich
                 enrich_task = main_tg.create_task(
@@ -250,7 +250,7 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:enrich",
-                )
+    )
 
                 # Enrich → Store (final)
                 store_task = main_tg.create_task(
@@ -260,7 +260,7 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:store",
-                )
+    )
 
                 self._tasks = [
                     disc_task,
@@ -281,7 +281,7 @@ class PipelineOrchestrator:
             elapsed_ms = (time.monotonic() - start_time) * 1000
             logger.info(
                 "PipelineOrchestrator.run() completed in %.1fms", elapsed_ms
-            )
+    )
 
         return self._ctx.metrics
 

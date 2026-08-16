@@ -20,11 +20,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
-
-
-
-
-
+from hledac.universal._core.mlx_embeddings import (
     EmbeddingTask,
     MLXEmbeddingManager,
     apply_task_prefix,
@@ -36,7 +32,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 class TestEmbeddingTask:
     """Testy pro EmbeddingTask enum a helper funkce."""
 
-from _core import aclose
     def test_asymmetric_prefix_differ(self):
         """Asymetrické tasky musí mít různé prefixy."""
         text = "machine learning"

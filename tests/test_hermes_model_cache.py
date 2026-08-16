@@ -50,7 +50,7 @@ from brain._hermes_cache import (
     _get_memory_pressure_level,
     _mlx_cache_clear,
     hermes_cache,
-)
+    )
 from brain.deephermes3_engine import _maybe_evict_hermes_cache
 from _core import aclose
 

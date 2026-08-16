@@ -86,7 +86,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
         """Check env gate directly — bypasses LaneRegistry (no auto_re lane exists)."""
         return os.environ.get("HLEDAC_ENABLE_AUTO_RE", "0").strip().lower() in (
             "1", "true", "yes"
-        )
+    )
 
     def reset_sprint(self) -> None:
         """Reset per-sprint attempt counter. Called by SidecarOrchestrator on sprint start."""
@@ -116,7 +116,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
                 "[AUTO-RE] Rate limit: %d/%d attempts used",
                 self._attempt_count,
                 _MAX_AUTO_RE_ATTEMPTS_PER_SPRINT,
-            )
+    )
             return []
 
         # Lazy engine init
@@ -140,7 +140,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
             len(unknown_candidates),
             self._attempt_count + 1,
             _MAX_AUTO_RE_ATTEMPTS_PER_SPRINT,
-        )
+    )
 
         # Process each candidate (up to rate limit)
         findings: list[Any] = []
@@ -224,7 +224,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
                     or raw_meta.get("path")
                     or finding.get("file_path")
                     or finding.get("path")
-                )
+    )
                 content = raw_meta.get("content") or finding.get("content")
 
             if file_path and content and isinstance(content, bytes) and file_path not in seen_paths:
@@ -259,7 +259,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
                 file_path,
                 getattr(result, "stage", "?"),
                 getattr(result, "error", ""),
-            )
+    )
             return []
 
         # Convert ParsedIOC → finding dict
@@ -345,6 +345,6 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
                     confidence=finding.get("confidence", 0.5),
                     source=finding["source"],
                     observed_at=observed_at,
-                )
+    )
         except Exception as e:
             logger.debug("[AUTO-RE] graph upsert failed: %s", e)

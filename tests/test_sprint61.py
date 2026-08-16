@@ -208,7 +208,7 @@ class TestNymPolicy:
         transport, params = await policy.select_transport(
             RiskLevel.CRITICAL, time_budget=60, sensitivity=0.8,
             need_cover_traffic=True, request_id="req1"
-        )
+    )
         assert transport == mock_nym_transport
         assert params['cover_traffic'] is True
 
@@ -414,7 +414,7 @@ class TestFederatedCoordinatorV2:
             nym_policy=nym_policy,
             key_manager=km,
             model_provider=model_provider
-        )
+    )
 
         assert coordinator.node_id == "node1"
         assert coordinator.peer_registry is not None
@@ -436,7 +436,7 @@ class TestFederatedCoordinatorV2:
             nym_policy=None,
             key_manager=km,
             model_provider=lambda: {}
-        )
+    )
 
         await coordinator.start()
         await coordinator.stop()

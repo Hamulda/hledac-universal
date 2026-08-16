@@ -204,7 +204,7 @@ def _check_ffmpeg() -> bool:
             ["ffmpeg", "-version"],
             capture_output=True,
             timeout=5,
-        )
+    )
         _ffmpeg_available = result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         _ffmpeg_available = False
@@ -264,11 +264,11 @@ async def _convert_to_wav_16khz(
             str(output_path),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
-        )
+    )
         _, stderr = await safe_wait_for(
             proc.communicate(),
             timeout=60.0,
-        )
+    )
         if proc.returncode != 0:
             err_text = stderr.decode()[:200] if stderr else "unknown error"
             logger.warning("[WhisperEngine] ffmpeg conversion failed: %s", err_text)
@@ -323,11 +323,11 @@ async def _download_model_ggml(model_size: str) -> Path | None:
                 url,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
-            )
+    )
             _, stderr = await safe_wait_for(
                 proc.communicate(),
                 timeout=_MODEL_DOWNLOAD_TIMEOUT_S + 30,
-            )
+    )
             if proc.returncode != 0:
                 err = stderr.decode()[:200] if stderr else "unknown"
                 logger.error("[WhisperEngine] Model download failed: %s", err)
@@ -597,13 +597,13 @@ class WhisperEngine:
             try:
                 from hledac.universal.brain.ane_embedder import (
                     get_mlx_family_mutex,
-                )
+    )
                 mutex = get_mlx_family_mutex()
                 config = _MODEL_CONFIGS.get(model_size, _MODEL_CONFIGS["tiny"])
                 if not mutex.try_acquire_embed_ane(config["size_mb"]):
                     logger.warning(
                         "[WhisperEngine] ANE slot busy (LLM active) — retry later"
-                    )
+    )
                     self._initialized = True
                     return False
                 self._coreml_available = _check_ane()
@@ -639,7 +639,7 @@ class WhisperEngine:
                     "[WhisperEngine] Freed old %s model for %s switch",
                     self._model_size if self._model_size != model_size else model_size,
                     model_size,
-                )
+    )
 
             # Step 4: Initialize whisper.cpp model
             try:
@@ -656,13 +656,13 @@ class WhisperEngine:
                             "[WhisperEngine] whisper.cpp initialized — "
                             "%s model + CoreML ANE encoder",
                             model_size,
-                        )
+    )
                     else:
                         logger.info(
                             "[WhisperEngine] whisper.cpp initialized — "
                             "%s model (CPU-only)",
                             model_size,
-                        )
+    )
                 else:
                     self._whisper_params = None
                     logger.info("[WhisperEngine] whisper.cpp initialized — %s", model_size)
@@ -703,7 +703,7 @@ class WhisperEngine:
             try:
                 from hledac.universal.brain.ane_embedder import (
                     get_mlx_family_mutex,
-                )
+    )
                 get_mlx_family_mutex().release('embed_ane')
             except ImportError:  # noqa: BLE001
                 pass
@@ -752,7 +752,7 @@ class WhisperEngine:
                             "[WhisperEngine] Audio file too large: %d MB (max %d MB)",
                             file_size // (1024 * 1024),
                             _MAX_AUDIO_FILE_BYTES // (1024 * 1024),
-                        )
+    )
                         return None
                     if file_size == 0:
                         logger.warning("[WhisperEngine] Empty audio file")
@@ -771,7 +771,7 @@ class WhisperEngine:
                         word_timestamps,
                     ),
                     timeout=_TRANSCRIBE_TIMEOUT_S,
-                )
+    )
 
                 duration = time_module.monotonic() - start_time
                 if result:
@@ -781,7 +781,7 @@ class WhisperEngine:
                         engine="whisper_cpp",
                         model_size=model_size,
                         coreml_used=self._coreml_loaded,
-                    )
+    )
                     logger.info(
                         "[WhisperEngine] Transcribed %.1fs audio in %.1fs "
                         "(CoreML=%s, lang=%s, confidence=%.2f)",
@@ -790,14 +790,14 @@ class WhisperEngine:
                         self._coreml_loaded,
                         result.language,
                         result.confidence,
-                    )
+    )
                 return result
 
             except asyncio.TimeoutError:
                 logger.warning(
                     "[WhisperEngine] Transcription timed out after %.0fs",
                     _TRANSCRIBE_TIMEOUT_S,
-                )
+    )
                 return None
             except Exception as exc:
                 logger.warning("[WhisperEngine] Transcription failed: %s", exc)
@@ -870,7 +870,7 @@ class WhisperEngine:
 
             avg_confidence = (
                 total_confidence / len(segments) if segments else 0.0
-            )
+    )
 
             return TranscriptionResult(
                 text=" ".join(full_text_parts),
@@ -878,7 +878,7 @@ class WhisperEngine:
                 duration_s=audio_duration,
                 confidence=avg_confidence,
                 segments=segments,
-            )
+    )
 
         except Exception as exc:
             logger.warning("[WhisperEngine] _transcribe_sync error: %s", exc)

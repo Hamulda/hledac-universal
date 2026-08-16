@@ -548,7 +548,7 @@ class StealthSession:
                 headers=stealth_headers,
                 data=data,
                 **kwargs
-            )
+    )
 
             # Check for transient error
             if self._is_transient_error(response.status_code):
@@ -578,7 +578,7 @@ class StealthSession:
                 netloc.endswith('.onion')
                 or netloc.startswith('tor:')
                 or netloc.endswith('.onion.')
-            )
+    )
         except Exception:
             return False
 
@@ -615,7 +615,7 @@ class StealthSession:
                         body_bytes=body_bytes,
                         content_type='application/octet-stream',
                         truncated=truncated
-                    )
+    )
 
         # Circuit breaker check
         allowed, reason = self.manager._stealth_domain_allowed(url)
@@ -653,7 +653,7 @@ class StealthSession:
                 session = await self._get_session()
                 response, _, should_retry = await self._execute_request_attempt(
                     session, method, url, stealth_headers, data, **kwargs
-                )
+    )
 
                 if should_retry:
                     continue
@@ -672,7 +672,7 @@ class StealthSession:
                     body_bytes=body_bytes,
                     content_type=response.headers.get('Content-Type'),
                     truncated=truncated
-                )
+    )
 
                 self._update_stats(result)
                 logger.debug(f'Request completed: {response.status_code} ({len(body_bytes)} bytes)')

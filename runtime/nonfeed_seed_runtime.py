@@ -27,11 +27,7 @@ Safety invariants:
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
-
-
-
-
-
+from .nonfeed_seed_extractor import (
     classify_seed_quality,
     extract_nonfeed_seeds_from_findings,
     extract_nonfeed_seeds_from_text,
@@ -40,7 +36,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..knowledge.duckdb_store import DuckDBShadowStore
 
-from _core import aclose
 # Upper bounds for runtime pivot prelude seed extraction
 _MAX_SEEDS_FROM_QUERY: int = 50
 _MAX_SEEDS_FROM_FINDINGS: int = 100

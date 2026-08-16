@@ -245,7 +245,7 @@ def benchmark_native_rust_future() -> BenchmarkResult | None:
     try:
         from hledac.universal.rust_extensions.tracing import (
             async_span_enter, async_span_exit, is_tracing_active
-        )
+    )
         
         async def rust_future_wrapper() -> None:
             """Wrapper that uses Rust async spans."""
@@ -259,7 +259,7 @@ def benchmark_native_rust_future() -> BenchmarkResult | None:
         return run_benchmark(
             name="async_span (Rust tracing)",
             async_func=rust_future_wrapper,
-        )
+    )
     except ImportError as e:
         print(f"  [SKIP] rust_extensions not available: {e}")
         return None
@@ -291,7 +291,7 @@ async def mixed_workload_native(iterations: int = 10) -> None:
     try:
         from hledac.universal.rust_extensions.tracing import (
             async_span_enter, async_span_exit
-        )
+    )
         
         trace_id, span_id, span_key = async_span_enter("mixed_workload")
         try:
@@ -330,7 +330,7 @@ def benchmark_concurrency_scaling() -> dict[int, tuple[float, float]]:
             try:
                 from hledac.universal.rust_extensions.tracing import (
                     async_span_enter, async_span_exit
-                )
+    )
                 trace_id, span_id, span_key = async_span_enter(f"concurrent_{concurrency}")
                 try:
                     tasks = [asyncio.create_task(asyncio.sleep(0)) for _ in range(concurrency)]
@@ -351,14 +351,14 @@ def benchmark_concurrency_scaling() -> dict[int, tuple[float, float]]:
             concurrent_native,
             iterations=100,
             warmup=10,
-        )
+    )
         
         result_python = run_benchmark(
             f"Python asyncio ({concurrency}x)",
             concurrent_python,
             iterations=100,
             warmup=10,
-        )
+    )
         
         results[concurrency] = (result_native.mean_ms, result_python.mean_ms)
     

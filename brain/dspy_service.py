@@ -487,7 +487,7 @@ async def score_findings(findings: list, min_score: float=4.0) -> list | None:
             [_score_batch_sem(b) for b in batches],
             policy="log",
             ctx="dspy_score",
-        )
+    )
         for item in result.ok:
             if isinstance(item, list):
                 scored.extend(item)
@@ -501,7 +501,7 @@ async def score_findings(findings: list, min_score: float=4.0) -> list | None:
             'latency_ms=%.0f scored=%d filtered=%d',
             total_batches, _SCORING_CONCURRENCY, _SCORING_BATCH_SIZE,
             elapsed_ms, len(scored), len(filtered)
-        )
+    )
         return filtered if filtered else None
     except Exception as e:
         logger.warning('dspy_service: score_findings failed: %s', e)

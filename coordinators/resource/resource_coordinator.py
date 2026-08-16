@@ -78,7 +78,7 @@ from hledac.universal.coordinators.resource.blitz_gc import (
     POST_TEARDOWN_THRESHOLD,
     _GC_FREEZE_NATIVE as _BLITZ_GC_FREEZE_NATIVE,
     blitz_gc as _blitz_gc,
-)
+    )
 from _core import aclose
 
 # Legacy threshold constant — kept for backward compat, but BlitzGCStrategy
@@ -216,7 +216,7 @@ async def gc_collect_async(
             logger.debug(
                 "[GC] blitz active — skipping gen-%s collect (deferred to teardown)",
                 generation if not force_aggressive else "aggressive",
-            )
+    )
             return
         # fall through for non-blitz paths
 
@@ -294,7 +294,7 @@ class AIMDController(msgspec.Struct, gc=False):
             decrease_factor=0.75,
             success_threshold=2,
             name="enrich",
-        )
+    )
         window = await controller.on_success()  # increase
         window = await controller.on_failure()  # decrease
     """
@@ -460,7 +460,7 @@ class BackpressureMonitor:
             stealth_max=_DEFAULT_STEALTH_MAX,
             uma_state="ok",
             io_only=False,
-        )
+    )
         self._last_evaluate: float = 0.0
         self._lock = asyncio.Lock()
         self._state_changes: int = 0
@@ -494,7 +494,7 @@ class BackpressureMonitor:
                     uma_state="ok",
                     io_only=False,
                     swap_detected=False,
-                )
+    )
                 self._last_evaluate = now
                 return self._decision
 
@@ -517,7 +517,7 @@ class BackpressureMonitor:
                 thermal_headroom=governor_decision.thermal_headroom,
                 worker_scale_factor=governor_decision.worker_scale_factor,
                 batch_scale_factor=governor_decision.batch_scale_factor,
-            )
+    )
             if new_decision.uma_state != self._last_state:
                 # F1 FIX: propagate UMA state to ConcurrencyBudgetRegistry so all
                 # parallel() call sites globally respect the same memory pressure limits.
@@ -531,7 +531,7 @@ class BackpressureMonitor:
                     f"[BACKPRESSURE] uma_state: {self._last_state} → "
                     f"{new_decision.uma_state} "
                     f"(clearnet_max={clearnet_max}, stealth_max={stealth_max})"
-                )
+    )
                 self._state_changes += 1
                 self._last_state = new_decision.uma_state
             self._decision = new_decision
@@ -635,7 +635,7 @@ class _CapacitySampler:
                 capture_output=True,
                 text=True,
                 timeout=5,
-            )
+    )
             return "Metal" in result.stdout
         except (subprocess.TimeoutExpired, OSError, ValueError):
             return False
@@ -662,7 +662,7 @@ class _CapacitySampler:
                 gpu_usage=gpu_usage,
                 metal_available=metal_available,
                 sampled_at_monotonic=now,
-            )
+    )
             return self._cpu_cache
 
     async def _get_metal_with_cache(self, now: float) -> bool:

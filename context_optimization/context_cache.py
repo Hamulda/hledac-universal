@@ -645,7 +645,7 @@ class MultiLevelContextCache:
             concurrency=16,  # Increased from 8 — get is I/O bound, more concurrency helps
             policy="log",
             ctx="context_cache:get",
-        )
+    )
 
         # Identify missing entries and their original indices
         missing_items: list[tuple[int, Any]] = [
@@ -663,7 +663,7 @@ class MultiLevelContextCache:
             concurrency=16,  # Increased — compute is CPU/IO bound
             policy="collect",  # Collect errors, don't fail the whole batch
             ctx="context_cache:compute",
-        )
+    )
 
         # Phase 3: parallel set for ALL computed results at once
         # Only successful results (not None) get cached
@@ -671,7 +671,7 @@ class MultiLevelContextCache:
         # so zip pairing is correct — we skip None values here
         assert len(compute_results.ok) == len(missing_items), (
             f"compute_results.ok length mismatch: {len(compute_results.ok)} != {len(missing_items)}"
-        )
+    )
         set_coros: list = []
         for (orig_idx, _), result in zip(missing_items, compute_results.ok):
             if result is not None:  # Skip failed computations
@@ -683,7 +683,7 @@ class MultiLevelContextCache:
                 concurrency=16,
                 policy="log",  # Best-effort set — don't fail on cache errors
                 ctx="context_cache:set",
-            )
+    )
 
         failure_count = len(compute_results.errors) if hasattr(compute_results, 'errors') else len(missing_items) - len(set_coros)
         print(f'Cache warming complete ({len(set_coros)} entries cached, {failure_count} compute failures skipped)')

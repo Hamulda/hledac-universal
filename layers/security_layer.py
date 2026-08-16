@@ -77,7 +77,7 @@ class SecurityLayer:
         result = await security.obfuscate_string(
             "API_KEY_12345",
             level=ObfuscationLevel.HEAVY
-        )
+    )
 
         # Mask research query
         masked = security.mask_query("corporate espionage techniques")
@@ -588,10 +588,10 @@ class SecurityLayer:
         # asyncio.to_thread uses shared pool, no explicit cleanup needed
         await safe_cleanup_component(
             self._secure_destructor, 'SecureDestructor', logger, _type='async'
-        )
+    )
         await safe_cleanup_component(
             self._mission_audit, 'MissionAudit', logger, _type='sync'
-        )
+    )
         logger.info('✅ SecurityLayer cleanup complete')
 import time
 from dataclasses import dataclass, field

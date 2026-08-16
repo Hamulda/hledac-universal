@@ -17,11 +17,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-
-
-
-
-
+from hledac.universal.network.ipfs_client import (
     MAX_FILE_SIZE_BYTES,
     ipfs_content_to_finding_dict,
     ipfs_fetch_as_findings,
@@ -32,7 +28,6 @@ import pytest
 class TestIpfsContentToFindingDict:
     """Test transform from IPFS content to CanonicalFinding-compatible dict."""
 
-from _core import aclose
     def test_produces_valid_dict_structure(self):
         """Dict has all required CanonicalFinding fields."""
         result = ipfs_content_to_finding_dict(

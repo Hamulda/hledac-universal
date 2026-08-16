@@ -230,7 +230,7 @@ def register_lock(
                 f"Lock name '{name}' already registered. "
                 f"Two different lock objects with the same name is a bug. "
                 f"Use unique names or reuse the existing lock."
-            )
+    )
 
         _register_lock(category, lock, name, frame_info)
 
@@ -385,7 +385,7 @@ def assert_lock_registered(name: str) -> None:
                 f"Register it with: register_lock(LockCategory.XXX, {name}, '{name}')",
                 ResourceWarning,
                 stacklevel=2,
-            )
+    )
 
 
 # ==============================================================================

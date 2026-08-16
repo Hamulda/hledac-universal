@@ -353,7 +353,7 @@ class TestRustBackendHotEdgesFallback:
         # Rust API: IntCounterLayoutRust takes field_names list, not size int
         layout = rust.int_counter.IntCounterLayoutRust(
             ["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9"]
-        )
+    )
         layout.set("f3", 100)
         assert layout.get("f3") == 100
         layout.bump("f3", 1)
@@ -566,13 +566,13 @@ class TestRustBackendSprintPoliciesFallback:
             dominance_ratio_threshold=0.95,
             min_nonfeed_findings=5,
             strict=False,
-        )
+    )
         # Balanced: 50% feed, 50% nonfeed
         result = guard.compute(
             total_accepted=10,
             feed_accepted=5,
             nonfeed_accepted=5,
-        )
+    )
         assert result.feed_dominance_ratio == 0.5
         assert result.feed_dominance_class == "balanced"
         assert result.guard_triggered is False
@@ -586,13 +586,13 @@ class TestRustBackendSprintPoliciesFallback:
             dominance_ratio_threshold=0.8,
             min_nonfeed_findings=5,
             strict=False,
-        )
+    )
         # Feed dominant: 90% feed
         result = guard.compute(
             total_accepted=10,
             feed_accepted=9,
             nonfeed_accepted=1,
-        )
+    )
         assert result.feed_dominance_ratio == 0.9
         assert result.feed_dominance_class == "feed_dominant"
         assert result.guard_triggered is True
@@ -606,7 +606,7 @@ class TestRustBackendSprintPoliciesFallback:
             dominance_ratio_threshold=0.94,  # Lower threshold so guard triggers at 0.95
             min_nonfeed_findings=5,
             strict=True,
-        )
+    )
         # Guard triggered (95% feed > 94% threshold) but nonfeed < min_nonfeed_findings
         # and no escape hatch → should block early exit
         result = guard.compute(
@@ -615,7 +615,7 @@ class TestRustBackendSprintPoliciesFallback:
             nonfeed_accepted=1,
             eligible_nonfeed_lanes_terminal=False,
             nonfeed_diagnostic_timed_out=False,
-        )
+    )
         assert result.feed_dominance_ratio == 0.95
         assert result.guard_triggered is True
         assert result.block_early_exit is True
@@ -629,7 +629,7 @@ class TestRustBackendSprintPoliciesFallback:
             total_accepted=0,
             feed_accepted=0,
             nonfeed_accepted=0,
-        )
+    )
         assert result.feed_dominance_ratio == 0.0
         assert result.feed_dominance_class == "balanced"
         assert result.guard_triggered is False
@@ -709,7 +709,7 @@ class TestRustBackendSprintPoliciesFallback:
             total_accepted=100,
             feed_accepted=96,
             nonfeed_accepted=4,
-        )
+    )
         assert "feed_dominance_ratio" in result
         assert result["feed_dominance_ratio"] == 0.96
         assert "guard_triggered" in result

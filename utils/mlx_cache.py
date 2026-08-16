@@ -474,7 +474,7 @@ def _ensure_metal_memory_limits() -> bool:
             f"[Sprint 8T] Metal limits configured: "
             f"cache={dynamic_cache_limit // 1024**2} MiB (of {_METAL_CACHE_LIMIT_BYTES // 1024**2} MiB max), "
             f"wired={_METAL_WIRED_LIMIT_BYTES // 1024**2} MiB"
-        )
+    )
         return True
 
 
@@ -563,7 +563,7 @@ def reconfigure_metal_cache_limit(
             f"[F265H] Metal cache reconfigured: {new_limit // 1024**2} MiB "
             f"(state={uma_state}, thermal_headroom={thermal_headroom:.2f}, "
             f"floor={_METAL_CACHE_EMERGENCY_FLOOR_BYTES // 1024**2} MiB)"
-        )
+    )
         return True
     except Exception as e:
         _last_setter_error = f"set_cache_limit failed: {e}"
@@ -597,7 +597,7 @@ async def async_reconfigure_metal_cache_limit(
     try:
         return await asyncio.to_thread(
             reconfigure_metal_cache_limit, uma_state, thermal_headroom
-        )
+    )
     except Exception:
         return False
 
@@ -891,7 +891,7 @@ async def _memory_status_poller_task(interval_s: float = 0.5) -> None:
                     logger.info(
                         f"[ISSUE-7.2] Metal cache reconfigured: state={state_name}, "
                         f"available={available / 1024**2:.0f} MiB"
-                    )
+    )
                 except Exception as e:
                     logger.debug(f"[ISSUE-7.2] reconfigure_metal_cache_limit failed: {e}")
                 _current_uma_state_u8 = new_state_u8

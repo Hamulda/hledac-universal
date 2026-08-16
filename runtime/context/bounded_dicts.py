@@ -24,7 +24,7 @@ Usage as msgspec field default_factory:
     class MyStruct(msgspec.Struct, gc=False):
         seen_hashes: dict[str, bool] = msgspec.field(
             default_factory=lambda: BoundedLRUDict(maxsize=100_000, on_evict=None)
-        )
+    )
 
 Memory budget (M1 8GB):
   - 100k entries × ~72 bytes/entry ≈ 7.2 MB (seen_hashes)

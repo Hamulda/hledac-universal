@@ -14,11 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-
-
-
-
-
+from _core.storage_router import (
     _DECISION_MATRIX,
     _INVALIDATION_CHAIN,
     StorageKind,
@@ -30,8 +26,7 @@ import pytest
 )
 
 # ---------------------------------------------------------------------------
-
-from _core import aclose# Decision matrix tests
+# Decision matrix tests
 # ---------------------------------------------------------------------------
 
 

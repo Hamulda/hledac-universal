@@ -101,14 +101,14 @@ SANDBOX_ENABLED: bool = FeatureFlags.get(FeatureFlag.DOC_SANDBOX, default=True)
 
 SANDBOX_ALLOW_FALLBACK: bool = (
     os.environ.get("HLEDAC_SANDBOX_ALLOW_FALLBACK", "1") == "1"
-)
+    )
 
 # [NEXUS]-018-03: MachRemap threshold — files >= this size (bytes) are
 # candidates for zero-copy Mach vm_remap. Below this, tempfile is faster.
 # Default: 100 MB. Override: HLEDAC_MACH_REMAP_MIN_SIZE env var.
 SANDBOX_MACH_REMAP_MIN_SIZE: int = int(
     os.environ.get("HLEDAC_MACH_REMAP_MIN_SIZE", str(100 * 1024 * 1024))
-)
+    )
 
 # macOS Seatbelt available on macOS 10.10+
 _sandbox_exec_path: str | None = None
@@ -231,7 +231,7 @@ def profile_file_risk(
             is_archive=False,
             is_executable=False,
             reasons=("read_error",),
-        )
+    )
 
     # Magic bytes
     magic = header[:16]
@@ -444,7 +444,7 @@ async def _run_in_subprocess_isolation(
         sandbox_profile = _build_generic_sandbox_profile(
             os.fspath(Path.home()),
             args[0] if args else "",
-        )
+    )
 
     # Build command
     cmd = args
@@ -453,7 +453,7 @@ async def _run_in_subprocess_isolation(
         profile_path = _write_sandbox_profile(
             f"isolated_{os.getpid()}_{id(args)}",
             sandbox_profile,
-        )
+    )
         cmd = ["sandbox-exec", "-p", str(profile_path)] + cmd
 
     proc = await asyncio.create_subprocess_exec(
@@ -470,7 +470,7 @@ async def _run_in_subprocess_isolation(
         stdout, stderr = await safe_wait_for(
             proc.communicate(input=stdin_data),
             timeout=timeout_s,
-        )
+    )
         return proc.returncode or 0, stdout, stderr
     except asyncio.TimeoutError:
         try:
@@ -540,7 +540,7 @@ def try_rust_whisper(audio_path: str, model_size: str, language: str | None) -> 
             audio_path,
             model_size=model_size,
             language=language,
-        )
+    )
         
         if raw and raw.get('text'):
             return {
@@ -692,11 +692,11 @@ async def run_whisper_in_subprocess(
             audio_profile = _build_audio_sandbox_profile(
                 os.fspath(Path.home()),
                 audio_path,
-            )
+    )
             profile_path = _write_sandbox_profile(
                 f'whisper_{os.getpid()}',
                 audio_profile,
-            )
+    )
             cmd = ['sandbox-exec', '-p', str(profile_path)] + cmd
 
         proc = await asyncio.create_subprocess_exec(
@@ -704,19 +704,19 @@ async def run_whisper_in_subprocess(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=safe_env,
-        )
+    )
 
         try:
             # D5 FIX: safe_wait_for for correct TaskGroup composition
             stdout, stderr = await safe_wait_for(
                 proc.communicate(),
                 timeout=timeout_s,
-            )
+    )
             elapsed_ms = (time.monotonic() - start) * 1000
             logger.info(
                 "[ADVERSARY-001] Whisper subprocess: path=%s rc=%s elapsed=%.1fms",
                 Path(audio_path).name, proc.returncode, elapsed_ms,
-            )
+    )
             if proc.returncode == 0 and stdout:
                 return json.loads(stdout.decode('utf-8', errors='replace'))
             else:
@@ -877,7 +877,7 @@ class MediaSandboxCoordinator:
             "[SANDBOX] MediaSandboxCoordinator init: enabled=%s, "
             "seatbelt=%s, wasm=%s, fallback=%s",
             enabled, self._seatbelt_available, self._wasm_available, allow_fallback,
-        )
+    )
 
     @property
     def stats(self) -> SandboxStats:
@@ -892,7 +892,7 @@ class MediaSandboxCoordinator:
             errors=self._stats["errors"],
             whisper_sandboxed=self._whisper_stats["sandboxed"],
             whisper_fallback=self._whisper_stats["fallback"],
-        )
+    )
 
     @property
     def is_sandboxed(self) -> bool:
@@ -936,7 +936,7 @@ class MediaSandboxCoordinator:
         logger.debug(
             "[SANDBOX] Whisper risk: path=%s risk=%s entropy=%.2f",
             Path(audio_path).name, risk.risk_level.name, risk.entropy_bits_per_byte,
-        )
+    )
 
         # Step 1: Try sandboxed subprocess execution (Tier-B)
         sandboxed_result = await run_whisper_in_subprocess(
@@ -944,7 +944,7 @@ class MediaSandboxCoordinator:
             model_size=model_size,
             language=language,
             timeout_s=timeout_s,
-        )
+    )
 
         if sandboxed_result and not sandboxed_result.get('error'):
             elapsed_ms = (time.monotonic() - start) * 1000
@@ -956,7 +956,7 @@ class MediaSandboxCoordinator:
                 "elapsed=%.1fms text_len=%d",
                 Path(audio_path).name, elapsed_ms,
                 len(sandboxed_result.get('text', '')),
-            )
+    )
             return WhisperTranscriptionResult(
                 text=sandboxed_result.get('text', ''),
                 language=sandboxed_result.get('language'),
@@ -966,21 +966,21 @@ class MediaSandboxCoordinator:
                 seatbelt_used=self._seatbelt_available,
                 error=None,
                 segments=sandboxed_result.get('segments', []),
-            )
+    )
 
         # Step 2: Fallback to direct engine execution
         if sandboxed_result and sandboxed_result.get('error'):
             logger.warning(
                 "[ADVERSARY-001] Whisper subprocess failed: %s — trying direct engine",
                 sandboxed_result.get('error'),
-            )
+    )
 
         direct_result = await self._run_whisper_direct_engine(
             audio_path=audio_path_str,
             model_size=model_size,
             language=language,
             timeout_s=timeout_s,
-        )
+    )
 
         if direct_result.text:
             self._whisper_stats["fallback"] += 1
@@ -993,7 +993,7 @@ class MediaSandboxCoordinator:
         logger.error(
             "[ADVERSARY-001] Whisper transcription failed: %s",
             error_msg,
-        )
+    )
         return WhisperTranscriptionResult(
             text="",
             language=None,
@@ -1002,7 +1002,7 @@ class MediaSandboxCoordinator:
             sandboxed=False,
             seatbelt_used=False,
             error=error_msg,
-        )
+    )
 
     async def _run_whisper_direct_engine(
         self,
@@ -1025,7 +1025,7 @@ class MediaSandboxCoordinator:
             "[ADVERSARY-001 SECURITY] Whisper running WITHOUT sandbox isolation. "
             "Audio: %s",
             Path(audio_path).name,
-        )
+    )
 
         # ── Priority 1: Rust whisper (CoreML/ANE acceleration) ──────────────────
         # SILICON-02: Rust whisper.cpp with dedicated ANE memory, M1 8GB safe
@@ -1042,7 +1042,7 @@ class MediaSandboxCoordinator:
                         language=language,
                     ),
                     timeout=timeout_s,
-                )
+    )
 
                 if raw and raw.get("text"):
                     elapsed_ms = (time.monotonic() - start) * 1000
@@ -1050,7 +1050,7 @@ class MediaSandboxCoordinator:
                         "[ADVERSARY-001] Rust whisper direct: path=%s "
                         "elapsed=%.1fms coreml=%s",
                         Path(audio_path).name, elapsed_ms, raw.get("coreml_used", False),
-                    )
+    )
                     return WhisperTranscriptionResult(
                         text=raw.get("text", ""),
                         language=raw.get("language", language or "en"),
@@ -1067,14 +1067,14 @@ class MediaSandboxCoordinator:
                             }
                             for s in raw.get("segments", [])
                         ],
-                    )
+    )
         except ImportError:
             logger.debug("[ADVERSARY-001] Rust whisper not available")
         except asyncio.TimeoutError:
             return WhisperTranscriptionResult(
                 text="",
                 error=f"timeout after {timeout_s}s",
-            )
+    )
         except Exception as exc:
             logger.debug("[ADVERSARY-001] Rust whisper error: %s", exc)
 
@@ -1091,13 +1091,13 @@ class MediaSandboxCoordinator:
                     language=language,
                 ),
                 timeout=timeout_s,
-            )
+    )
 
             if raw is None or not raw.text:
                 return WhisperTranscriptionResult(
                     text="",
                     error="engine returned empty result",
-                )
+    )
 
             elapsed_ms = (time.monotonic() - start) * 1000
             coreml_note = " +CoreML/ANE" if raw.coreml_used else ""
@@ -1105,7 +1105,7 @@ class MediaSandboxCoordinator:
                 "[ADVERSARY-001] Whisper direct engine: path=%s "
                 "elapsed=%.1fms coreml=%s",
                 Path(audio_path).name, elapsed_ms, raw.coreml_used,
-            )
+    )
 
             return WhisperTranscriptionResult(
                 text=raw.text,
@@ -1123,18 +1123,18 @@ class MediaSandboxCoordinator:
                     }
                     for s in raw.segments
                 ],
-            )
+    )
 
         except asyncio.TimeoutError:
             return WhisperTranscriptionResult(
                 text="",
                 error=f"timeout after {timeout_s}s",
-            )
+    )
         except Exception as exc:
             return WhisperTranscriptionResult(
                 text="",
                 error=str(exc),
-            )
+    )
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -1165,14 +1165,14 @@ class MediaSandboxCoordinator:
                 tier=SandboxTier.NONE,
                 sandboxed=False,
                 elapsed_ms=0.0,
-            )
+    )
 
         risk = profile_file_risk(file_path, source)
         logger.debug(
             "[SANDBOX] PDF risk: level=%s, entropy=%.2f, type=%s, reasons=%s",
             risk.risk_level.name, risk.entropy_bits_per_byte, risk.file_type,
             risk.reasons,
-        )
+    )
 
         if risk.risk_level == FileRiskLevel.TRUSTED and source == "clearnet":
             # Low-risk PDF: still apply seatbelt
@@ -1184,7 +1184,7 @@ class MediaSandboxCoordinator:
             tier=SandboxTier.SEATBELT,
             timeout_s=timeout_s,
             elapsed_start=start,
-        )
+    )
 
     async def run_audio_analysis(
         self,
@@ -1213,7 +1213,7 @@ class MediaSandboxCoordinator:
                 tier=SandboxTier.NONE,
                 sandboxed=False,
                 elapsed_ms=0.0,
-            )
+    )
 
         risk = profile_file_risk(file_path, source)
 
@@ -1223,7 +1223,7 @@ class MediaSandboxCoordinator:
             tier=SandboxTier.SEATBELT,
             timeout_s=timeout_s,
             elapsed_start=start,
-        )
+    )
 
     async def run_image_forensics(
         self,
@@ -1252,7 +1252,7 @@ class MediaSandboxCoordinator:
                 tier=SandboxTier.NONE,
                 sandboxed=False,
                 elapsed_ms=0.0,
-            )
+    )
 
         risk = profile_file_risk(file_path, source)
 
@@ -1267,7 +1267,7 @@ class MediaSandboxCoordinator:
             tier=tier,
             timeout_s=timeout_s,
             elapsed_start=start,
-        )
+    )
 
     async def run_unknown_binary(
         self,
@@ -1296,7 +1296,7 @@ class MediaSandboxCoordinator:
                 tier=SandboxTier.NONE,
                 sandboxed=False,
                 elapsed_ms=0.0,
-            )
+    )
 
         risk = profile_file_risk(file_path, source)
 
@@ -1305,7 +1305,7 @@ class MediaSandboxCoordinator:
             file_path=file_path,
             timeout_s=timeout_s,
             elapsed_start=start,
-        )
+    )
 
     # ── Internal ────────────────────────────────────────────────────────────
 
@@ -1333,7 +1333,7 @@ class MediaSandboxCoordinator:
                 file_path=file_path,
                 timeout_s=timeout_s,
                 elapsed_start=elapsed_start,
-            )
+    )
 
         profile = profile_builder(home, file_path_str)
         profile_name = f"media_{Path(file_path).suffix.lstrip('.')}_{os.getpid()}"
@@ -1350,7 +1350,7 @@ class MediaSandboxCoordinator:
                 tier=tier,
                 elapsed_ms=elapsed_ms,
                 sandboxed=True,
-            )
+    )
         except Exception as e:
             elapsed_ms = (time.monotonic() - elapsed_start) * 1000
             logger.warning("[SANDBOX] Seatbelt error: %s", e)
@@ -1360,14 +1360,14 @@ class MediaSandboxCoordinator:
                     file_path=file_path,
                     timeout_s=timeout_s,
                     elapsed_start=elapsed_start,
-                )
+    )
             return SandboxResult(
                 success=False,
                 tier=tier,
                 elapsed_ms=elapsed_ms,
                 error=str(e),
                 sandboxed=True,
-            )
+    )
         finally:
             try:
                 profile_path.unlink(missing_ok=True)
@@ -1422,7 +1422,7 @@ class MediaSandboxCoordinator:
             logger.debug(
                 "[MACH-REMAP] cannot stat %s — tempfile path",
                 file_path,
-            )
+    )
 
         # Build safe environment
         safe_env = {
@@ -1432,7 +1432,7 @@ class MediaSandboxCoordinator:
                 for prefix in (
                     "API_", "KEY_", "TOKEN", "SECRET",
                     "HLEDAC_", "SHODAN", "CENSYS", "GREYNOISE",
-                )
+    )
             )
         }
 
@@ -1465,7 +1465,7 @@ except Exception as e:
                         bridge.remap_for_sandbox,
                         str(file_path),
                         file_size,
-                    )
+    )
                     if remap_result is not None:
                         logger.info(
                             "[MACH-REMAP] zero-copy remap: pid=%d addr=0x%x "
@@ -1474,12 +1474,12 @@ except Exception as e:
                             remap_result.mapped_addr,
                             remap_result.mapped_size,
                             file_path.name,
-                        )
+    )
                 except Exception as exc:
                     logger.debug(
                         "[MACH-REMAP] remap_for_sandbox raised: %s — tempfile fallback",
                         exc,
-                    )
+    )
                     remap_result = None
 
         # ── Execute (Path A: remap | Path B: tempfile) ────────────────────
@@ -1494,7 +1494,7 @@ except Exception as e:
                     timeout_s,
                     elapsed_start,
                     analysis_script,
-                )
+    )
                 elapsed_ms = (time.monotonic() - elapsed_start) * 1000
                 self._stats["zero_copy"] += 1
                 return SandboxResult(
@@ -1505,7 +1505,7 @@ except Exception as e:
                     returncode=returncode,
                     elapsed_ms=elapsed_ms,
                     sandboxed=True,
-                )
+    )
             else:
                 # ── Path B: Tempfile subprocess (existing fallback) ─────────────
                 tmp = tempfile.NamedTemporaryFile(
@@ -1513,7 +1513,7 @@ except Exception as e:
                     mode='wb',
                     delete=False,
                     dir=tempfile.gettempdir(),
-                )
+    )
                 tmp.write(file_path.read_bytes())
                 tmp.close()
                 temp_path = Path(tmp.name)
@@ -1524,12 +1524,12 @@ except Exception as e:
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                         env=safe_env,
-                    )
+    )
                     # D5 FIX: safe_wait_for for correct TaskGroup composition
                     stdout, stderr = await safe_wait_for(
                         proc.communicate(),
                         timeout=timeout_s,
-                    )
+    )
                     elapsed_ms = (time.monotonic() - elapsed_start) * 1000
                     self._stats["subprocess"] += 1
                     return SandboxResult(
@@ -1540,7 +1540,7 @@ except Exception as e:
                         returncode=proc.returncode or 0,
                         elapsed_ms=elapsed_ms,
                         sandboxed=True,
-                    )
+    )
                 finally:
                     try:
                         temp_path.unlink(missing_ok=True)
@@ -1551,7 +1551,7 @@ except Exception as e:
             logger.warning(
                 "[SANDBOX] subprocess isolation timeout after %.1fs",
                 timeout_s,
-            )
+    )
             elapsed_ms = (time.monotonic() - elapsed_start) * 1000
             self._stats["errors"] += 1
             return SandboxResult(
@@ -1560,7 +1560,7 @@ except Exception as e:
                 elapsed_ms=elapsed_ms,
                 error="timeout",
                 sandboxed=True,
-            )
+    )
         except Exception as exc:
             logger.warning("[SANDBOX] subprocess isolation error: %s", exc)
             elapsed_ms = (time.monotonic() - elapsed_start) * 1000
@@ -1571,7 +1571,7 @@ except Exception as e:
                 elapsed_ms=elapsed_ms,
                 error=str(exc),
                 sandboxed=True,
-            )
+    )
 
     async def _collect_mach_child_output(
         self,
@@ -1619,7 +1619,7 @@ except Exception as e:
             try:
                 data = _os.read(
                     _os.open(handshake_path, _os.O_RDONLY), 4
-                )
+    )
                 if data:
                     import struct as _struct
                     real_pid = _struct.unpack("<I", data)[0]
@@ -1640,7 +1640,7 @@ except Exception as e:
             try:
                 wpid, status = await _asyncio.to_thread(
                     _os.wait4, real_pid, _os.WNOHANG
-                )
+    )
                 if wpid != 0:
                     rc = _os.WEXITSTATUS(status) if _os.WIFEXITED(status) else -1
                     # Read result file
@@ -1921,7 +1921,7 @@ def _build_pymupdf_analysis_script(temp_file_path: str) -> str:
 
 SANDBOX_MACH_REMAP_MIN_SIZE = int(
     os.environ.get("HLEDAC_MACH_REMAP_MIN_SIZE", str(100 * 1024 * 1024))
-)
+    )
 
 
 async def run_pymupdf_sandboxed(
@@ -1948,7 +1948,7 @@ async def run_pymupdf_sandboxed(
         if not any(
             prefix in k
             for prefix in ("API_", "KEY_", "TOKEN", "SECRET", "HLEDAC_", "SHODAN", "CENSYS", "GREYNOISE")
-        )
+    )
     }
 
     home = os.fspath(Path.home())
@@ -1963,14 +1963,14 @@ async def run_pymupdf_sandboxed(
                 try:
                     remap_result = await asyncio.to_thread(
                         bridge.remap_for_sandbox, str(file_path), file_size,
-                    )
+    )
                     if remap_result:
                         logger.info("[PYMUPDF-SANDBOX] MachRemap: pid=%d size=%d",
                             remap_result.child_pid, file_size)
                         script = _build_pymupdf_analysis_script(str(file_path))
                         stdout_data, returncode = await _collect_pymupdf_mach_child(
                             remap_result.child_pid, timeout_s, script,
-                        )
+    )
                         if returncode == 0 and stdout_data:
                             try:
                                 return json.loads(stdout_data.decode("utf-8", errors="replace"))
@@ -1990,7 +1990,7 @@ async def run_pymupdf_sandboxed(
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=safe_env,
-            )
+    )
             # D5 FIX: safe_wait_for for correct TaskGroup composition
             stdout, stderr = await safe_wait_for(proc.communicate(), timeout=timeout_s)
 

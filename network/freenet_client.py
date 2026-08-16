@@ -57,7 +57,7 @@ SSK_PATTERN = re.compile(r"\b(SSK@[A-Za-z0-9~\-_]{40,60})")
 # Generic Freenet URI
 FREENET_URI_PATTERN = re.compile(
     r"freenet:(USK|CHK|SSK|KSK)@[A-Za-z0-9~\-_./]+", re.IGNORECASE,
-)
+    )
 
 # ── Known Freenet sites / freesites — OSINT entry points ──────────────────────
 KNOWN_FREESITES: list[dict] = [
@@ -204,19 +204,19 @@ async def fetch_freesite(
                         logger.warning(
                             "Freenet response too large: %s bytes for %s",
                             content_length, key[:60],
-                        )
+    )
                         return None
                 content = resp.text
                 if len(content.encode("utf-8")) > max_size:
                     logger.warning(
                         "Freenet response too large after decode: %s", key[:60],
-                    )
+    )
                     return None
                 return content
             logger.debug(
                 "Freenet fetch failed: status %s for %s",
                 resp.status_code, key[:60],
-            )
+    )
             return None
     except (httpx.TimeoutException, asyncio.TimeoutError):
         logger.debug("Freenet fetch timeout: %s", key[:60])
@@ -341,7 +341,7 @@ class FreenetSiteEnumerator:
                         if "<title" in content.lower():
                             title_match = re.search(
                                 r"<title[^>]*>([^<]+)", content, re.IGNORECASE,
-                            )
+    )
                             if title_match:
                                 title = title_match.group(1).strip()[:200]
                         discovered = extract_freenet_keys(content)
@@ -404,7 +404,7 @@ async def freenet_to_findings(query: str) -> list[CanonicalFinding]:
                 ts=time.time(),
                 provenance=(f"freenet:{site['key']}",),
                 payload_text=site.get("content_preview", "")[:4096],
-            )
+    )
             findings.append(finding)
     except Exception as e:
         logger.debug("Freenet to findings failed: %s", e)

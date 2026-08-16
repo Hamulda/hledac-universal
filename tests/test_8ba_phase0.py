@@ -78,7 +78,7 @@ class TestSprint8BAPhase0:
                         pytest.fail(
                             f"threading.Lock found in async function {node.name} "
                             f"at {path}:{node.lineno} — must use asyncio.Lock instead"
-                        )
+    )
 
     def test_no_remaining_eager_scipy_networkx_in_owned_files(self):
         """Verify scipy/networkx are not eagerly imported in owned files."""

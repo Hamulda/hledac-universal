@@ -77,7 +77,7 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
             has_return_exceptions = any(
                 kw.arg == "return_exceptions"
                 for kw in node.keywords
-            )
+    )
 
             if has_return_exceptions:
                 continue

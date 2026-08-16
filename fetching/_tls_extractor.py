@@ -5,11 +5,14 @@ Optimized for M1 8GB with Rust acceleration for SAN/issuer processing.
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 from _core import aclose
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 def extract_tls_metadata_from_response(resp) -> dict:
@@ -90,7 +93,7 @@ def extract_tls_metadata_from_response(resp) -> dict:
         result['tls_cert_issuer'] = issuer
         result['tls_cert_sha256'] = sha256
     except Exception:  # noqa: BLE001 — best-effort
-        pass
+        logger.debug("Rust TLS metadata extraction failed, TLS cert data unavailable", exc_info=True)
 
     return result
 

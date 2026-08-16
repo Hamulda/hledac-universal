@@ -39,7 +39,7 @@ _COREML_PYTHON: Path = (
     Path(os.environ['HLEDAC_COREML_PYTHON'])
     if 'HLEDAC_COREML_PYTHON' in os.environ
     else (Path(_which_312) if _which_312 else _venv_python)
-)
+    )
 _SERVICE_SCRIPT = Path(__file__).resolve().parent / 'service.py'
 _LOG_DIR = Path.home() / 'Library' / 'Logs' / 'hledac'
 _LOG_FILE = _LOG_DIR / 'coreml-service.log'
@@ -105,7 +105,7 @@ class CoreMLServiceManager:
             "Use start_async() or asyncio.to_thread(start).",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         if self.is_running():
             logger.info('CoreML service already running')
             return
@@ -215,7 +215,7 @@ class CoreMLServiceManager:
             "Use ensure_running_async() instead.",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         mgr = self.get_instance()
         if not mgr.is_running():
             mgr.start()

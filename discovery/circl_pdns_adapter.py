@@ -576,4 +576,4 @@ class CirclPDNSAdapter(BaseDiscoveryMixin):
                 score=hit.score,
                 reason=hit.reason,
                 metadata=metadata,
-            )
+    )

@@ -13,7 +13,6 @@ import logging
 import os
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
 from pathlib import Path
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
@@ -28,7 +27,7 @@ class SearchDocument(Struct, frozen=True):
     url: str
     title: str
     content: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
     score: float = 0.0
     # frozen=True auto-generates __hash__ and __eq__
 
@@ -174,7 +173,7 @@ class LocalSearchSeam:
             self._bm25: Any = TantivyFulltextIndex(
                 k1=k1, b=b,
                 index_path=str(Path.home() / '.hledac' / 'osint_fulltext_index'),
-            )
+    )
         except ImportError:
             self._bm25 = BM25Index(k1=k1, b=b)
         self._metadata = MetadataStore()

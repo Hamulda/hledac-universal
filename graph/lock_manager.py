@@ -358,7 +358,7 @@ class GraphLockManager:
                 is_stale, reason = _is_lock_stale(
                     self._lock_path,
                     pathlib.Path(self._db_path),
-                )
+    )
                 if is_stale:
                     try:
                         self._lock_path.unlink(missing_ok=True)

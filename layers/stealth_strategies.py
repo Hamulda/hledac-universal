@@ -83,7 +83,7 @@ class UARotationConfig(msgspec.Struct, gc=False):
             "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        )
+    )
     )
 
 
@@ -358,7 +358,7 @@ class FingerprintMuterStrategy:
             ProfileGenerator,
             _EvasionScriptGenerator,
             FingerprintProfile,
-        )
+    )
 
         self._profile_gen = ProfileGenerator()
         self._current_profile = self._profile_gen.generate()
@@ -368,7 +368,7 @@ class FingerprintMuterStrategy:
     async def unmount(self, ctx: Any) -> None:
         logger.debug(
             f"FingerprintMuterStrategy: {self._evasions_applied} evasions, {self._profile_rotations} rotations"
-        )
+    )
 
     async def on_event(self, ctx: Any, event: Any) -> Any:
         if event.type == "pre_fetch" and self._config.enabled:
@@ -397,7 +397,7 @@ class FingerprintMuterStrategy:
             from hledac.universal.layers.evasion_pipeline import compute_detection_score
             return compute_detection_score(
                 self._current_profile.to_evasion_scripts()
-            )
+    )
         return {}
 
     def get_stats(self) -> dict[str, Any]:
@@ -540,7 +540,7 @@ class CaptchaSolvingStrategy:
                 self._config.provider_endpoint,
                 data={"key": api_key, "method": "base64", "body": b64},
                 timeout=httpx.Timeout(30.0),
-            )
+    )
             result = response.text
 
             if not result.startswith("OK|"):
@@ -554,7 +554,7 @@ class CaptchaSolvingStrategy:
                 poll_response = await session.get(
                     f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}",
                     timeout=httpx.Timeout(10.0),
-                )
+    )
                 res = poll_response.text
 
                 if res.startswith("OK|"):
@@ -589,5 +589,5 @@ STEALTH_STRATEGIES: tuple[type[StealthStrategy], ...] = (
     CircuitManagementStrategy,
     FingerprintMuterStrategy,
     CaptchaSolvingStrategy,
-)
+    )
 """All registered stealth strategies — used by StealthLayer to instantiate."""

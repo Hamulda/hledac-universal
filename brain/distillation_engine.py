@@ -273,7 +273,7 @@ class DistillationEngine:
                     cursor.execute(
                         '\n                        INSERT INTO examples (query, chain, score, metadata, timestamp)\n                        VALUES (?, ?, ?, ?, ?)\n                        ',
                         (example.query, _json.encode(example.chain).decode('utf-8'), example.score, _json.encode(example.metadata).decode('utf-8'), example.timestamp),
-                    )
+    )
                     conn.commit()
 
             await asyncio.to_thread(_do_insert)

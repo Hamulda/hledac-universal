@@ -50,7 +50,7 @@ from .bridge import (
     LMDB_PERSIST_KEY,
     FederatedBridge,
     QTableProtocol,
-)
+    )
 from .coordinator import (
     AGGREGATION_MAX_FINDINGS,
     DISTRIBUTE_TOTAL_TIMEOUT_S,
@@ -62,7 +62,7 @@ from .coordinator import (
     NodeLane,
     NodeResult,
     is_federated_enabled,
-)
+    )
 from .qtable import MAX_QTABLE_ENTRIES, FederatedQTable
 from _core import aclose
 

@@ -39,7 +39,7 @@ def probe_bootstrap_truth() -> tuple[int, int]:
     try:
         from hledac.universal.utils.patterns.pattern_matcher import (  # noqa: F401
             get_default_bootstrap_patterns,
-        )
+    )
 
         count = len(get_default_bootstrap_patterns())
         version = 2  # Sprint 8AZ bootstrap pack v2

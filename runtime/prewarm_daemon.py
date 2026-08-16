@@ -127,7 +127,7 @@ class PrewarmDaemon:
                 model_path = os.environ.get(
                     "HLEDAC_HERMES_MODEL_PATH",
                     "/Users/vojtechhamada/.cache/hledac/hermes-3-llama-3.2-3b-4bit"
-                )
+    )
 
                 # Check if already cached (idempotent via HermesModelCache)
                 cache = hermes_cache()
@@ -149,7 +149,7 @@ class PrewarmDaemon:
                     logger.info(
                         "[PREENABLE] Hermes local path missing — treating as HF repo: %s",
                         model_path,
-                    )
+    )
                     loaded = await asyncio.to_thread(mlx_lm.load, model_path)
                     model_obj, tokenizer_obj = loaded[0], loaded[1]
 
@@ -209,7 +209,7 @@ class PrewarmDaemon:
                     model_name=os.environ.get(
                         "HLEDAC_SLM_MODEL_NAME", "mlx-community/Qwen2.5-0.5B-4bit"
                     ),
-                )
+    )
                 # Trigger eager load by awaiting _load_model
                 if hasattr(decomposer, "_load_model"):
                     await decomposer._load_model()
@@ -226,7 +226,7 @@ class PrewarmDaemon:
             _prewarm_mlx_embed(),
             _prewarm_slm_decomposer(),
             label="prewarm_daemon:_prewarm_models",
-        )
+    )
 
         # P2-13: Prewarm curl_cffi session pool in parallel — ~100-300ms per slot
         # vs sequential fill ~= 400-1200ms total. Fills all 4 slots concurrently.

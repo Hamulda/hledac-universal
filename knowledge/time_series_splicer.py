@@ -357,7 +357,7 @@ class BlockchainAdapter:
 _HTTP_DATE_RE = re.compile(
     r"(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat),\s+(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?\s*GMT",
     re.IGNORECASE,
-)
+    )
 _MONTH_MAP = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
     "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
@@ -654,7 +654,7 @@ class TimeSeriesSplicer:
                     sprint_id        VARCHAR DEFAULT '',
                     inserted_at      DOUBLE DEFAULT CAST(UNIX_TIMESTAMP AS DOUBLE),
                     PRIMARY KEY (entity_value, ioc_type, protocol, timestamp_ns)
-                )
+    )
             """)
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_timeline_entity
@@ -768,7 +768,7 @@ class TimeSeriesSplicer:
                 "COALESCE(time_series_spliced.corroborating_sources, []), "
                 "excluded.corroborating_sources)",
                 rows,
-            )
+    )
             return n
         except Exception as exc:
             self._log.debug("[TIMESERIES] Batch insert failed, falling back to per-row: %s", exc)
@@ -790,7 +790,7 @@ class TimeSeriesSplicer:
                         "NULLIF(time_series_spliced.source_evidence_url, ''), "
                         "excluded.source_evidence_url)",
                         row,
-                    )
+    )
                     inserted += 1
                 except Exception as perr:
                     self._log.debug("[TIMESERIES] Row insert failed: %s", perr)
@@ -868,7 +868,7 @@ class TimeSeriesSplicer:
                     source_evidence_url=r[5],
                     corroborating_sources=tuple(r[6]) if r[6] else (),
                     raw_timestamp=r[7],
-                )
+    )
                 for r in rows
             ]
         except Exception as exc:

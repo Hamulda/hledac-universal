@@ -33,11 +33,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-
-
-
-
-
+from _core.inference_coordinator import (
     InferenceBackend,
     InferenceCoordinator,
     InferenceRequest,
@@ -49,7 +45,6 @@ import pytest
 
 # ─── A4 Invariants ──────────────────────────────────────────────────────────
 
-from _core import aclose
 class TestSprintA4BackendSimplification:
     """B1: MLXCEL is now the default; MLX_INPROC always available as fallback."""
 

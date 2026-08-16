@@ -134,7 +134,7 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
         logger.info(
             "hishel not installed — HTTP cache disabled (install: "
             "uv pip install hishel aiosqlite"
-        )
+    )
         return base_transport
 
     try:
@@ -162,7 +162,7 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
     try:
         storage = hishel.AsyncSqliteStorage(  # type: ignore[attr-defined]
             default_ttl=float(DEFAULT_TTL_SECONDS),
-        )
+    )
     except (TypeError, ImportError) as exc:
         # Fallback: storage=None lets AsyncCacheTransport use default (null/in-memory)
         logger.debug("hishel AsyncSqliteStorage unavailable (%s), using null storage", exc)
@@ -175,7 +175,7 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
             shared=True,
             supported_methods=["GET", "HEAD"],
             allow_stale=True,
-        )
+    )
     )
 
     # --- wrap base transport --------------------------------------------------
@@ -195,7 +195,7 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
             next_transport=base_transport,
             storage=cast(hishel.AsyncBaseStorage | None, storage),
             policy=policy,
-        )
+    )
     except Exception as exc:  # noqa: BLE001
         logger.warning("hishel AsyncCacheTransport wrap failed: %s", exc)
         return base_transport

@@ -28,10 +28,10 @@ class TestEmbeddingDimensions:
 
         assert hasattr(MLXEmbeddingManager, 'EMBEDDING_DIM'), (
             "MLXEmbeddingManager missing EMBEDDING_DIM attribute"
-        )
+    )
         assert MLXEmbeddingManager.EMBEDDING_DIM == 256, (
             f"MLXEmbeddingManager.EMBEDDING_DIM={MLXEmbeddingManager.EMBEDDING_DIM}, expected 256 (MRL canonical)"
-        )
+    )
 
     def test_mlx_mrl_dim_equals_embedding_dim(self) -> None:
         """MLXEmbeddingManager.MRL_DIM must equal EMBEDDING_DIM (both 256)."""
@@ -39,13 +39,13 @@ class TestEmbeddingDimensions:
 
         assert hasattr(MLXEmbeddingManager, 'MRL_DIM'), (
             "MLXEmbeddingManager missing MRL_DIM attribute"
-        )
+    )
         assert MLXEmbeddingManager.MRL_DIM == 256, (
             f"MLXEmbeddingManager.MRL_DIM={MLXEmbeddingManager.MRL_DIM}, expected 256"
-        )
+    )
         assert MLXEmbeddingManager.MRL_DIM == MLXEmbeddingManager.EMBEDDING_DIM, (
             f"MRL_DIM ({MLXEmbeddingManager.MRL_DIM}) must equal EMBEDDING_DIM ({MLXEmbeddingManager.EMBEDDING_DIM})"
-        )
+    )
 
     def test_lancedb_store_mrl_dim_is_256(self) -> None:
         """LanceDBIdentityStore._current_mrl_dim must be 256 (MRL canonical)."""
@@ -56,7 +56,7 @@ class TestEmbeddingDimensions:
         source = inspect.getsource(LanceDBIdentityStore.__init__)
         assert '_current_mrl_dim = 256' in source, (
             "LanceDBIdentityStore.__init__ must set _current_mrl_dim = 256"
-        )
+    )
 
     def test_embedding_pipeline_mrl_dim_is_256(self) -> None:
         """EmbeddingPipeline _EMBEDDING_DIM must be 256 (MRL canonical)."""
@@ -64,10 +64,10 @@ class TestEmbeddingDimensions:
 
         assert hasattr(embedding_pipeline, '_EMBEDDING_DIM'), (
             "embedding_pipeline missing _EMBEDDING_DIM attribute"
-        )
+    )
         assert embedding_pipeline._EMBEDDING_DIM == 256, (
             f"embedding_pipeline._EMBEDDING_DIM={embedding_pipeline._EMBEDDING_DIM}, expected 256 (MRL canonical)"
-        )
+    )
 
     def test_all_backends_consistent(self) -> None:
         """All canonical embedding backends must use 256d vectors."""
@@ -92,7 +92,7 @@ class TestEmbeddingDimensions:
         assert not mismatches, (
             f"Embedding dimension mismatch(es): {', '.join(mismatches)}. "
             f"All backends must use canonical MRL dimension {CANONICAL_DIM}"
-        )
+    )
 
 
 class TestEmbeddingVectorShape:
@@ -105,10 +105,10 @@ class TestEmbeddingVectorShape:
         # Check that MRL_DIM is defined and equals canonical
         assert hasattr(MLXEmbeddingManager, 'MRL_DIM'), (
             "MLXEmbeddingManager missing MRL_DIM attribute"
-        )
+    )
         assert MLXEmbeddingManager.MRL_DIM == 256, (
             f"MLXEmbeddingManager.MRL_DIM={MLXEmbeddingManager.MRL_DIM}, expected 256"
-        )
+    )
 
     def test_embedding_pipeline_truncates_to_256(self) -> None:
         """EmbeddingPipeline should use _EMBEDDING_DIM = 256."""
@@ -116,7 +116,7 @@ class TestEmbeddingVectorShape:
 
         assert embedding_pipeline._EMBEDDING_DIM == 256, (
             f"EmbeddingPipeline should truncate to 256d, got {embedding_pipeline._EMBEDDING_DIM}d"
-        )
+    )
 
 
 class TestMRLArchitecture:
@@ -136,11 +136,11 @@ class TestMRLArchitecture:
 
         assert hasattr(MLXEmbeddingManager, 'NATIVE_DIM'), (
             "MLXEmbeddingManager missing NATIVE_DIM attribute"
-        )
+    )
         assert MLXEmbeddingManager.NATIVE_DIM == 768, (
             f"MLXEmbeddingManager.NATIVE_DIM={MLXEmbeddingManager.NATIVE_DIM}, "
             f"expected 768 (ModernBERT native hidden size)"
-        )
+    )
 
     def test_mrl_dims_is_canonical_tuple(self) -> None:
         """MRL_DIMS must be (256, 512, 768) — the only ModernBERT MRL slices."""
@@ -148,15 +148,15 @@ class TestMRLArchitecture:
 
         assert hasattr(MLXEmbeddingManager, 'MRL_DIMS'), (
             "MLXEmbeddingManager missing MRL_DIMS attribute"
-        )
+    )
         assert MLXEmbeddingManager.MRL_DIMS == (256, 512, 768), (
             f"MLXEmbeddingManager.MRL_DIMS={MLXEmbeddingManager.MRL_DIMS}, "
             f"expected (256, 512, 768) — the canonical Matryoshka slices"
-        )
+    )
         # Ensure tuple (immutable, hashable) — not list
         assert isinstance(MLXEmbeddingManager.MRL_DIMS, tuple), (
             "MRL_DIMS must be a tuple for immutability"
-        )
+    )
 
     def test_mrl_canonical_in_canonical_dims(self) -> None:
         """EMBEDDING_DIM=256 must be in MRL_DIMS (canonical invariance)."""
@@ -165,13 +165,13 @@ class TestMRLArchitecture:
         assert MLXEmbeddingManager.EMBEDDING_DIM in MLXEmbeddingManager.MRL_DIMS, (
             f"EMBEDDING_DIM={MLXEmbeddingManager.EMBEDDING_DIM} must be in "
             f"MRL_DIMS={MLXEmbeddingManager.MRL_DIMS}"
-        )
+    )
         # And it must be the smallest MRL dim (RAM sweet-spot)
         assert MLXEmbeddingManager.EMBEDDING_DIM == min(MLXEmbeddingManager.MRL_DIMS), (
             f"EMBEDDING_DIM should be the smallest MRL dim for M1 8GB UMA "
             f"RAM/bandwidth sweet-spot. Got {MLXEmbeddingManager.EMBEDDING_DIM}, "
             f"min(MRL_DIMS)={min(MLXEmbeddingManager.MRL_DIMS)}"
-        )
+    )
 
     def test_validate_mrl_dim_accepts_canonical(self) -> None:
         """validate_mrl_dim() returns True for 256, 512, 768."""
@@ -180,7 +180,7 @@ class TestMRLArchitecture:
         for valid_dim in (256, 512, 768):
             assert MLXEmbeddingManager.validate_mrl_dim(valid_dim) is True, (
                 f"validate_mrl_dim({valid_dim}) must return True"
-            )
+    )
 
     def test_validate_mrl_dim_rejects_invalid(self) -> None:
         """validate_mrl_dim() returns False for non-MRL dimensions."""
@@ -193,7 +193,7 @@ class TestMRLArchitecture:
         for invalid_dim in (0, 1, 128, 384, 1024, -1):
             assert MLXEmbeddingManager.validate_mrl_dim(invalid_dim) is False, (
                 f"validate_mrl_dim({invalid_dim}) must return False"
-            )
+    )
 
     def test_get_mrl_dims_returns_tuple(self) -> None:
         """get_mrl_dims() is the runtime accessor for MRL_DIMS."""
@@ -214,7 +214,7 @@ class TestMRLArchitecture:
         src = inspect.getsource(assert_embedding_dimension)
         assert "512" in src, (
             "assert_embedding_dimension() must validate 512 as a valid dim"
-        )
+    )
 
 
 if __name__ == "__main__":

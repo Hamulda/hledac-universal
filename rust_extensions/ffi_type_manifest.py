@@ -571,7 +571,7 @@ def _parse_struct_body(name: str, body: str, full_text: str) -> PyClass:
             python_type=rust_type_to_python(rust_type),
             has_get=has_get,
             has_set=has_set
-        )
+    )
         pyclass.fields.append(field)
         
         # Track slots
@@ -662,7 +662,7 @@ def parse_pymethods(text: str, struct_name: str) -> list[PyClassMethod]:
             signature=f"({', '.join(sig_parts)})",
             return_type=rust_type_to_python(return_type.strip()),
             is_async=is_async
-        )
+    )
         methods.append(method)
     
     return methods
@@ -773,7 +773,7 @@ def parse_module_registrations(lib_rs_text: str) -> dict[str, ModuleRegistration
             registrations[module_name] = ModuleRegistration(
                 module=module_name,
                 registration_type="mixed"
-            )
+    )
         registrations[module_name].classes.append(class_name)
     
     # Pattern 2: module_name::register_functions(m)?;
@@ -784,7 +784,7 @@ def parse_module_registrations(lib_rs_text: str) -> dict[str, ModuleRegistration
             registrations[module_name] = ModuleRegistration(
                 module=module_name,
                 registration_type="register_functions"
-            )
+    )
         elif registrations[module_name].registration_type == "mixed":
             registrations[module_name].registration_type = "register_functions"
     
@@ -796,7 +796,7 @@ def parse_module_registrations(lib_rs_text: str) -> dict[str, ModuleRegistration
             registrations[module_name] = ModuleRegistration(
                 module=module_name,
                 registration_type="register"
-            )
+    )
     
     # Pattern 4: module_name::register_module(m)?;
     for match in re.finditer(r"(\w+)::register_module\(m\)\?;", lib_rs_text):
@@ -806,7 +806,7 @@ def parse_module_registrations(lib_rs_text: str) -> dict[str, ModuleRegistration
             registrations[module_name] = ModuleRegistration(
                 module=module_name,
                 registration_type="register_module"
-            )
+    )
     
     # Pattern 5: m.add_function(wrap_pyfunction!(module::function, m))?;
     for match in re.finditer(r"wrap_pyfunction!\((\w+)::(\w+),\s*m\)", lib_rs_text):
@@ -817,7 +817,7 @@ def parse_module_registrations(lib_rs_text: str) -> dict[str, ModuleRegistration
             registrations[module_name] = ModuleRegistration(
                 module=module_name,
                 registration_type="mixed"
-            )
+    )
         registrations[module_name].functions.append(func_name)
     
     return registrations
@@ -946,7 +946,7 @@ def generate_pyclass_stub(pyclass: PyClass) -> str:
         
         lines.append(
             f"    {prefix}def {method.name}{method.signature} -> {method.return_type}: ..."
-        )
+    )
     
     return "\n".join(lines)
 

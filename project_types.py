@@ -70,7 +70,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Self
-from core import aclose
+from _core import aclose
+# ISSUE-015: Import canonical model constants
+from config.settings import HERMES_MODEL_DEFAULT, MODERNBERT_MODEL_DEFAULT, GLINER_MODEL_DEFAULT
 if TYPE_CHECKING:
     import numpy as np
     from .autonomous_analyzer import AutoResearchProfile
@@ -208,23 +210,29 @@ class ReasoningMode(Enum):
     HYBRID_TOT_MOE = 'hybrid_tot_moe'
 
 class ModelConfig(msgspec.Struct, gc=False):
-    """Model configuration for M1 8GB - 3 model stack only"""
-    HERMES_MODEL: str = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
+    """Model configuration for M1 8GB - 3 model stack only
+    
+    ISSUE-015: Uses canonical model constants from config.settings.
+    """
+    HERMES_MODEL: str = HERMES_MODEL_DEFAULT
     HERMES_CONTEXT: int = 8192
     HERMES_TEMP: float = 0.3
-    MODERNBERT_MODEL: str = 'mlx-community/answerdotai-ModernBERT-base-6bit'
+    MODERNBERT_MODEL: str = MODERNBERT_MODEL_DEFAULT
     EMBED_DIM: int = 768
-    GLINER_MODEL: str = 'knowledgator/gliner-relex-large-v0.5'
+    GLINER_MODEL: str = GLINER_MODEL_DEFAULT
 
 class ResearchConfig(msgspec.Struct, gc=False):
-    """Research execution configuration"""
+    """Research execution configuration
+    
+    ISSUE-015: Uses canonical model constants from config.settings.
+    """
     mode: ResearchMode = ResearchMode.STANDARD
     max_steps: int = 20
     max_time_minutes: int = 30
     memory_limit_mb: float = 5500.0
-    hermes_model: str = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
-    modernbert_model: str = 'mlx-community/answerdotai-ModernBERT-base-6bit'
-    gliner_model: str = 'knowledgator/gliner-relex-large-v0.5'
+    hermes_model: str = HERMES_MODEL_DEFAULT
+    modernbert_model: str = MODERNBERT_MODEL_DEFAULT
+    gliner_model: str = GLINER_MODEL_DEFAULT
     enable_knowledge_graph: bool = False
     enable_rag: bool = True
     db_path: str | None = None
@@ -1337,7 +1345,7 @@ class MicroSprintPlan(msgspec.Struct, frozen=True, gc=False):
             max_hops=max_hops,
             timeout=timeout,
             reason=reason,
-        )
+    )
 
 
 class MicroSprintResult(msgspec.Struct, frozen=True, gc=False):

@@ -48,7 +48,7 @@ class TestMetalMemoryStats:
             peak_gb=3.0,
             metal_tier="critical",
             pressure_level="critical",
-        )
+    )
         assert stats.metal_tier == "critical"
         assert stats.pressure_level == "critical"
 

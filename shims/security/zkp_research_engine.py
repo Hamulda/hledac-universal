@@ -46,7 +46,7 @@ class ZKPResearchEngine:
                 "ZKP not implemented — HLEDAC_ENABLE_ZKP=1 is set but "
                 "ZKPResearchEngine is a stub. Real ZKP requires libsnark or "
                 "circom WASM binding with a trusted setup ceremony."
-            )
+    )
 
     def is_available(self) -> bool:
         """ZKP is never available from this stub."""
@@ -57,7 +57,7 @@ class ZKPResearchEngine:
         raise ZKPError(
             "ZKP proof generation not implemented. "
             "Requires: libsnark/circom WASM, R1CS constraints, trusted setup."
-        )
+    )
 
     def verify(self, proof: bytes, statement: dict) -> bool:
         """Stub — always returns False."""

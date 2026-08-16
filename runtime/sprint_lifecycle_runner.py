@@ -81,7 +81,7 @@ class SprintLifecycleRunner:
         self._guard_observation: dict = {}
         self._phase_transition_callback: Callable[[str, str], None] | None = (
             phase_transition_callback
-        )
+    )
         self._prev_phase: str = "BOOT"
         # Issue #14: progress callback for dashboard updates during sleep
         self._progress_callback: Callable[..., None] | None = progress_callback
@@ -195,7 +195,7 @@ class SprintLifecycleRunner:
                     log.debug(
                         "[SprintLifecycleRunner] prewindup barrier callback error (allowing windup): %s",
                         exc,
-                    )
+    )
                     return False
             else:
                 self._guard_observation["callback_supplied"] = False
@@ -219,7 +219,7 @@ class SprintLifecycleRunner:
                     self._guard_observation["allowed"] = False
                     log.debug(
                         "[SprintLifecycleRunner] Windup blocked by pre-windup barrier"
-                    )
+    )
                     return False
                 else:
                     self._guard_observation["reason"] = "barrier_passed"
@@ -390,7 +390,7 @@ class SprintLifecycleRunner:
             log.debug(
                 "[SprintLifecycleRunner] phase_transition_callback error: %s",
                 e,
-            )
+    )
         self._prev_phase = new_phase_str
 
     # ── Phase / wall clock accessors ────────────────────────────────────────

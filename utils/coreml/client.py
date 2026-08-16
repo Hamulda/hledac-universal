@@ -14,7 +14,7 @@ from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential_jitter,
-)
+    )
 
 from .service import BatchPredictRequest, BatchPredictResult, ComputeUnit, ConvertRequest, ConvertResult, HealthResult, PredictRequest, PredictResult
 from hledac.universal.utils.sync_bridge import run_sync_async
@@ -75,7 +75,7 @@ class CoreMLClient:
                 base_url=self._base_url,
                 timeout=httpx.Timeout(self._timeout),
                 limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
-            )
+    )
         return self._client
 
     @retry(

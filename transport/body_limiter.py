@@ -64,7 +64,7 @@ async def _read_body_into(
                 logger.warning(
                     f"Body read hit CHUNKS_BUDGET={CHUNKS_BUDGET} without byte cap; "
                     f"truncating at {len(content_bytes)} bytes"
-                )
+    )
                 truncated = True
                 break
             content_bytes.extend(chunk)
@@ -74,13 +74,13 @@ async def _read_body_into(
             total_read=len(content_bytes),
             truncated=truncated,
             chunks_consumed=chunks_consumed,
-        )
+    )
 
     async for chunk in chunks:
         if chunks_consumed >= CHUNKS_BUDGET:
             logger.warning(
                 f"Body read hit CHUNKS_BUDGET={CHUNKS_BUDGET}; truncating at {max_bytes} bytes"
-            )
+    )
             truncated = True
             break
         content_bytes.extend(chunk)

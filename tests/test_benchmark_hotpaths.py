@@ -35,7 +35,7 @@ def _check_regression(name: str, measured_ms: float) -> None:
         pytest.fail(
             f"BENCHMARK REGRESSION: {name} took {measured_ms:.2f}ms "
             f"(baseline {baseline:.2f}ms, +{((measured_ms / baseline) - 1) * 100:.1f}%)"
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ def test_benchmark_duckdb_ingest_batch(session_duckdb_store):
             confidence=0.9,
             ts=time.time(),
             provenance=("benchmark",),
-        )
+    )
         for i in range(100)
     ]
 

@@ -718,7 +718,7 @@ class CVIntelligenceClient:
             concurrency=min(5, len(tech_stack)),
             policy="collect",
             ctx="nvd_fallback",
-        )
+    )
         for cve_list in result.ok:
             for cve in cve_list:
                 yield cve
@@ -794,7 +794,7 @@ class CVIntelligenceClient:
             concurrency=min(5, len(cve_ids)),
             policy="collect",
             ctx="epss_enrichment",
-        )
+    )
         # Build lookup from results
         epss_map: dict[str, dict[str, float]] = {}
         for cve_id, epss_result in zip(cve_ids, result.ok, strict=False):

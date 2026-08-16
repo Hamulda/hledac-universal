@@ -155,7 +155,7 @@ class SprintReportAnalyzer:
         report_path = (
             path 
             or "/Users/vojtechhamada/.hledac/reports/8sa_1782562379071_994960_report.json"
-        )
+    )
         try:
             with open(report_path) as f:
                 return cls(json.load(f))
@@ -253,7 +253,7 @@ class SprintReportAnalyzer:
             "acquisition_prelude_duration_s", "acquisition_prelude_reason",
             "acquisition_prelude_required_lanes", "acquisition_prelude_skipped_lanes",
             "acquisition_prelude_terminal_lanes",
-        )
+    )
         
         for key in prelude_keys:
             if (value := self._report.get(key)) is not None:
@@ -270,7 +270,7 @@ class SprintReportAnalyzer:
         term_keys = (
             "acquisition_terminality_checked", "acquisition_terminality_satisfied",
             "acquisition_terminality_missing_lanes",
-        )
+    )
         
         for key in term_keys:
             if (value := self._report.get(key)) is not None:

@@ -1,34 +1,31 @@
 """
 core/resource_pool.py — Centralized Resource Pool for Hledac Universal
 
-R-1 Solution: Unified resource pool addressing:
+ISSUE-010: This module maintains specialized resource pools (DuckDB, MLX, ANE, CoreML).
+For CPU execution pools, use the new unified utils.pools module instead:
 
+    # CPU pools (deprecated in this module)
+    from utils.pools import (
+        run_in_cpu_pool_async,      # Rayon cpu_pool (4 P-cores)
+        run_in_io_pool_async,       # Rayon io_pool (2 threads)
+        run_in_thread_pool_async,   # ThreadPoolExecutor fallback
+        run_in_subinterpreter,      # SubinterpreterPoolExecutor (3.14.6+)
+    )
 
-
-
-
-
-
-
-
-- 8 DuckDB instances without coordination
-- 110+ run_in_executor submissions
-- ANE/MLX/CoreML resources without coordination
-
-Provides explicit named pools with context manager interface:
-- duckdb_pool (4 instances, round-robin)
-- mlx_pool (1 stream)
-- ane_pool (1 stream)
-- coreml_pool (1 stream)
-- cpu_io_pool (8 workers) — asyncio.to_thread bounded
-- cpu_blocking_pool (4 workers) — ThreadPoolExecutor for sync I/O
+This module provides:
+- duckdb_pool (2 instances, round-robin) — specialized resource
+- mlx_pool (1 stream) — MLX Metal inference
+- ane_pool (1 stream) — Apple Neural Engine
+- coreml_pool (1 stream) — CoreML runtime
+- cpu_io_pool — ThreadPoolExecutor for sync I/O (consider utils.pools)
 
 M1 8GB UMA constraints:
-- DuckDB: 4 connections × ~50MB = ~200MB (vs 8× idle)
+- DuckDB: 2-4 connections × ~50MB = ~100-200MB
 - Thread pools: bounded by ConcurrencyPreset from resource_governor
 - MLX/ANE/CoreML: lazy init, single stream each
 
 Sprint R-1 (2026-07-18)
+ISSUE-010 Update (2026-08-15)
 """
 from __future__ import annotations
 import asyncio
@@ -621,21 +618,56 @@ async def run_in_io_pool(func: Any, *args: Any, **kwargs: Any) -> Any:
     """
     Run function in bounded CPU I/O pool.
 
+    DEPRECATED (ISSUE-010): Use utils.pools.run_in_thread_pool_async instead.
+    This function kept for backward compatibility.
+
     Respects M1ResourceGovernor adaptive limits.
     """
-    loop = asyncio.get_running_loop()
-    executor = _cpu_io_pool.get_executor()
-    return await loop.run_in_executor(executor, lambda: func(*args, **kwargs))
+    import warnings
+
+    warnings.warn(
+        "DEPRECATED (ISSUE-010): run_in_io_pool is deprecated. "
+        "Use utils.pools.run_in_thread_pool_async instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    # Try new unified API first, fall back to old implementation
+    try:
+        from hledac.universal.utils.pools import run_in_thread_pool_async
+
+        return await run_in_thread_pool_async(func, *args, **kwargs)
+    except Exception:
+        loop = asyncio.get_running_loop()
+        executor = _cpu_io_pool.get_executor()
+        return await loop.run_in_executor(executor, lambda: func(*args, **kwargs))
+
 
 async def run_in_blocking_pool(func: Any, *args: Any, **kwargs: Any) -> Any:
     """
     Run blocking function in bounded CPU blocking pool.
 
+    DEPRECATED (ISSUE-010): Use utils.pools.run_in_thread_pool_async instead.
+    This function kept for backward compatibility.
+
     Use for truly blocking I/O (file ops, sync DB calls).
     """
-    loop = asyncio.get_running_loop()
-    executor = _cpu_blocking_pool.get_executor()
-    return await loop.run_in_executor(executor, lambda: func(*args, **kwargs))
+    import warnings
+
+    warnings.warn(
+        "DEPRECATED (ISSUE-010): run_in_blocking_pool is deprecated. "
+        "Use utils.pools.run_in_thread_pool_async instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    # Try new unified API first, fall back to old implementation
+    try:
+        from hledac.universal.utils.pools import run_in_thread_pool_async
+
+        return await run_in_thread_pool_async(func, *args, **kwargs)
+    except Exception:
+        loop = asyncio.get_running_loop()
+        executor = _cpu_blocking_pool.get_executor()
+        return await loop.run_in_executor(executor, lambda: func(*args, **kwargs))
 
 @dataclass(frozen=True, slots=True)
 class PoolStats:

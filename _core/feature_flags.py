@@ -85,7 +85,7 @@ from hledac.universal.utils.flag_registry import (
     FLAG_REGISTRY,
     FlagSpec,
     validate_flag_combo as _validate_registry_combo,
-)
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -1004,7 +1004,7 @@ class FeatureFlags:
                 logger.warning(
                     f"[SWARM-010] DEPRECATED flag {deprecated.old_name} is set. "
                     f"Use {deprecated.new_name} instead. Reason: {deprecated.reason}"
-                )
+    )
                 return cls._parse_bool(deprecated_value)
 
         # Check current env var
@@ -1118,7 +1118,7 @@ class FeatureFlags:
             metadata[f].get("min_ram_mb", 0)
             for f in FeatureFlag
             if f.value in active and f in metadata
-        )
+    )
         if total_ram > cls.RAM_FATAL_MB:
             errors.append(FlagValidationError(
                 flag="RAM_BUDGET",
@@ -1148,7 +1148,7 @@ class FeatureFlags:
             "HLEDAC_RAG_",
             "HLEDAC_MLX",
             "HLEDAC_HOT_EDGES",
-        )
+    )
         for env_key in os.environ:
             if env_key.startswith("HLEDAC_"):
                 is_known = any(env_key.startswith(p) for p in known_prefixes)
@@ -1203,7 +1203,7 @@ class FeatureFlags:
                     is_deprecated=is_deprecated,
                     deprecated_replacement=deprecated.new_name if deprecated else None,
                     is_active=current_value,
-                )
+    )
             )
 
         # Sort by category then name
@@ -1236,7 +1236,7 @@ class FeatureFlags:
                 warnings.append(
                     f"[DEPRECATED] {deprecated.old_name} → {deprecated.new_name}: "
                     f"{deprecated.reason}"
-                )
+    )
         return warnings
 
     @classmethod
@@ -1291,7 +1291,7 @@ def validate_sprint_flags() -> int:
             f"\n[SWARM-010] Flag validation failed with {len(errors)} error(s). "
             "Fix the issues above or set --force to bypass.",
             file=sys.stderr,
-        )
+    )
         return 2
 
     if warnings:

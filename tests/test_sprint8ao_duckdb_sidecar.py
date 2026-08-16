@@ -157,7 +157,7 @@ print(json.dumps({
         if data.get("is_ramdisk_mode"):
             assert data.get("temp_dir", "").endswith("duckdb_tmp"), (
                 f"temp_dir should end with duckdb_tmp: {data.get('temp_dir')}"
-            )
+    )
 
     def test_duckdb_sidecar_sets_max_temp_directory_size_when_active(self):
         """When RAMDISK_ACTIVE, max_temp reflects the configured limit."""
@@ -174,10 +174,10 @@ print(json.dumps({
             pytest.skip("RAMDisk is active on this machine; test requires inactive RAMDisk")
         assert data.get("is_ramdisk_mode") is False, (
             f"Expected ramdisk_mode=False: {data}"
-        )
+    )
         assert data.get("db_path") == ":memory:", (
             f"Expected db_path=:memory:: {data.get('db_path')}"
-        )
+    )
 
     def test_duckdb_sidecar_disables_spill_when_ramdisk_inactive(self):
         """When RAMDISK inactive, db_path is :memory: (no SSD spill path)."""
@@ -190,13 +190,13 @@ print(json.dumps({
         # but the max_temp property reflects the configured env limit (1GB default)
         assert data.get("is_ramdisk_mode") is False, (
             f"Expected ramdisk_mode=False: {data}"
-        )
+    )
         assert data.get("db_path") == ":memory:", (
             f"Expected :memory: mode: {data.get('db_path')}"
-        )
+    )
         assert data.get("temp_dir") is None, (
             f"Expected no temp_dir in inactive mode: {data.get('temp_dir')}"
-        )
+    )
 
     def test_duckdb_sidecar_roundtrip_insert_query(self):
         """insert_shadow_finding and query_recent_findings work end-to-end."""
@@ -207,11 +207,11 @@ print(json.dumps({
         assert data.get("init_ok") is True, f"init failed: {data}"
         assert data.get("insert_finding_ok") is True, (
             f"insert_finding failed: {data}"
-        )
+    )
         assert data.get("insert_run_ok") is True, f"insert_run failed: {data}"
         assert (data.get("query_count") or 0) >= 1, (
             f"no results returned: {data}"
-        )
+    )
 
     def test_duckdb_sidecar_close_releases_connection(self):
         """close() is idempotent and sets initialized=False."""
@@ -289,7 +289,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
             capture_output=True,
             text=True,
             cwd=str(UNIVERSAL_ROOT),
-        )
+    )
         lines = [l for l in result.stdout.strip().splitlines()  # noqa: E741
                  if l.startswith("{") and not l.startswith("WARNING")]
         assert len(lines) >= 2, f"unexpected output: {result.stdout!r}"
@@ -324,7 +324,7 @@ ok = store._wal_write_finding(
     query='orphan',
     source_type='test',
     confidence=0.5,
-)
+    )
 print(json.dumps({'fail_soft_ok': ok, 'db_path': store._db_path}))
 store.close()
 """
@@ -334,7 +334,7 @@ store.close()
             text=True,
             cwd=str(UNIVERSAL_ROOT),
             env={**os.environ, "PYTHONPATH": "/Users/vojtechhamada/PycharmProjects/Hledac"},
-        )
+    )
         lines = [l for l in result.stdout.strip().splitlines()  # noqa: E741
                  if l.startswith("{") and not l.startswith("WARNING")]
         assert len(lines) >= 1, f"unexpected output: {result.stdout!r}"

@@ -30,7 +30,7 @@ class TestComputeBackoffJitter:
         ]
         assert all(0.0 <= s <= 8.0 for s in samples), (
             f"out-of-range samples: {[s for s in samples if not (0.0 <= s <= 8.0)]}"
-        )
+    )
 
     def test_backoff_has_variance(self) -> None:
         """Decorrelated jitter must produce non-trivial spread (stddev > 0.5).

@@ -36,11 +36,10 @@ logger = logging.getLogger(__name__)
 
 # MODERN-35 Fix: Import CPU affinity utilities
 from hledac.universal.utils.cpu_affinity import (
-from _core._util import aclose
     set_mlx_affinity,
     is_apple_silicon,
     get_core_topology,
-)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +160,7 @@ class ModelLifecycle:
                 if hasattr(raw, "check_available_memory"):
                     allowed, _avail, reason = raw.check_available_memory(
                         max_memory_bytes, available_bytes
-                    )
+    )
                     if not allowed:
                         raise RuntimeError(f"[E4-MEMORY] MLX model load rejected: {reason}")
                     return
@@ -175,7 +174,7 @@ class ModelLifecycle:
             raise RuntimeError(
                 f"[E4-MEMORY] Insufficient memory for MLX load: "
                 f"available={available_bytes} < required={max_memory_bytes}"
-            )
+    )
 
     # ------------------------------------------------------------------
     # Lazy load
@@ -256,7 +255,7 @@ class ModelLifecycle:
                     logger.debug(
                         "[LIFECYCLE] MLX P-core affinity set (P-cores=%d, E-cores=%d)",
                         topology["p_cores"], topology["e_cores"]
-                    )
+    )
                 
                 # Allocate pre-warm buffer
                 _warm_buffer = mx.zeros([12_000_000], dtype=mx.float32)  # 48 MB
@@ -388,7 +387,7 @@ class ModelLifecycle:
                             kv_bits=4,          # F179C: KV cache 4-bit quantization (M1 8GB RAM budget)
                             max_kv_size=8192,   # F179C: KV cache size cap
                             verbose=False,
-                        )
+    )
                     finally:
                         # F179C: mx.eval([]) + gc.collect() + clear_cache (správné pořadí dle moe_router.py)
                         try:

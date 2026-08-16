@@ -51,7 +51,7 @@ class TestM1CoreDetection:
                     ["sysctl", "-n", "machdep.cpu.brand"],
                     capture_output=True,
                     text=True,
-                )
+    )
                 is_apple = "Apple" in result.stdout
                 assert is_m1 and is_apple, "Should be Apple Silicon on Darwin"
             except Exception:
@@ -72,7 +72,7 @@ class TestM1CoreDetection:
                 performance_cores,
                 efficient_cores,
                 total_cores,
-            )
+    )
 
             perf = performance_cores()
             eff = efficient_cores()
@@ -222,7 +222,7 @@ class TestM1MemoryOptimization:
             # Should have gc=False
             assert hasattr(_CachedModel, "__slots__") or hasattr(
                 _CachedModel, "__struct_fields"
-            )
+    )
         except ImportError:
             pytest.skip("msgspec not available")
 
@@ -232,7 +232,7 @@ class TestM1MemoryOptimization:
             from utils._m1_platform import (
                 BoundedCache,
                 LRU,
-            )
+    )
         except ImportError:
             pytest.skip("M1 platform utils not available")
 

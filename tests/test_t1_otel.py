@@ -45,7 +45,7 @@ from otel import (
     set_status,
     shutdown_telemetry,
     span,
-)
+    )
 from otel._buffer import BoundedRing
 from otel._exporter_ring import RingBufferExporter
 from otel._exporter_stdout import StdoutJSONExporter
@@ -791,7 +791,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.01,  # aggressive sampling
             slow_span_threshold_ms=1000.0,
             skip_prefixes=("fetch.",),
-        )
+    )
         # ERROR span with high-freq prefix should still be exported
         span = _FakeSpan(name="fetch.url", status_code="ERROR")
         proc.on_end(span)  # type: ignore[arg-type]
@@ -808,7 +808,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.01,  # aggressive sampling
             slow_span_threshold_ms=50.0,  # 50ms threshold
             skip_prefixes=("fetch.",),
-        )
+    )
         # Slow span with high-freq prefix should still be exported
         span = _FakeSpan(name="fetch.url", duration_ms=100.0)  # 100ms > 50ms threshold
         proc.on_end(span)  # type: ignore[arg-type]
@@ -825,7 +825,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.1,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.", "http.", "db."),
-        )
+    )
         # Run many spans to observe statistical ~10% export rate
         exported = 0
         total = 10_000
@@ -853,7 +853,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.01,  # would skip 99% of matching
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.",),
-        )
+    )
         # Span NOT matching any skip prefix → always exported
         span = _FakeSpan(name="sprint.run", duration_ms=5.0)
         proc.on_end(span)  # type: ignore[arg-type]
@@ -870,7 +870,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.01,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("custom.",),  # only custom. prefix is sampled
-        )
+    )
         # fetch.url should NOT be sampled (not in custom prefixes)
         span = _FakeSpan(name="fetch.url", duration_ms=5.0)
         proc.on_end(span)  # type: ignore[arg-type]
@@ -893,7 +893,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.5,  # 50% for easy counting
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.",),
-        )
+    )
         # Submit 100 spans
         for i in range(100):
             span = _FakeSpan(name="fetch.url", duration_ms=5.0, trace_id=i)
@@ -915,7 +915,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.1,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.",),
-        )
+    )
         span = _FakeSpan(name="fetch.url")
         proc.on_start(span)  # type: ignore[arg-type]
         assert len(next_proc.started) == 1
@@ -949,7 +949,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.1,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.",),
-        )
+    )
         # Span whose get_span_context() raises — triggers fail-soft path
         class _RaisingFakeSpan(_FakeSpan):
             def get_span_context(self) -> Any:
@@ -970,7 +970,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.1,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch",),
-        )
+    )
         # Same trace_id + name should always be same result
         results = []
         for _ in range(100):
@@ -1018,7 +1018,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.1,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.", "http."),
-        )
+    )
         # Submit 1000 fast high-freq spans
         for i in range(1000):
             span = _FakeSpan(name="fetch.url", duration_ms=5.0, trace_id=i)

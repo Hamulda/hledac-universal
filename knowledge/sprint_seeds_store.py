@@ -67,7 +67,7 @@ async def async_save_sprint_seeds(sprint_id: str, seeds: list[str]) -> None:
         store = AsyncLMDBKVStore(
             path=_LMDB_PATH,
             map_size=_LMDB_MAP_SIZE,
-        )
+    )
         key = _make_key(sprint_id)
         val = encode(seeds)
         await store.put(key.decode(), val)
@@ -95,7 +95,7 @@ async def async_load_sprint_seeds(sprint_id: str) -> list[str]:
         store = AsyncLMDBKVStore(
             path=_LMDB_PATH,
             map_size=_LMDB_MAP_SIZE,
-        )
+    )
         key = _make_key(sprint_id)
         raw = await store.get(key.decode())
         if raw is None:

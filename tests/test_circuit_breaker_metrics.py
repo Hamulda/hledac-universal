@@ -8,11 +8,7 @@ Verifies:
 """
 import time
 
-
-
-
-
-
+from transport.circuit_breaker import (
     CIRCUIT_FAILURE_THRESHOLD,
     _metrics_safe_increment,
     clear_all_breakers,
@@ -24,7 +20,6 @@ import time
 class TestCircuitBreakerMetrics:
     """Test circuit breaker state transitions and metrics wiring."""
 
-from _core import aclose
     def setup_method(self):
         """Reset global breaker state before each test."""
         clear_all_breakers()

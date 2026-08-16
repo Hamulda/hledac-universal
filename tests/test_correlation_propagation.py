@@ -38,7 +38,7 @@ class TestEvidenceLogCorrelation:
                 event_type="observation",
                 payload={"data": "test"},
                 confidence=0.9,
-            )
+    )
 
             assert event.event_id is not None
             assert event.run_id == run_id
@@ -64,7 +64,7 @@ class TestEvidenceLogCorrelation:
                 payload={"data": "test"},
                 confidence=0.9,
                 correlation=correlation,
-            )
+    )
 
             assert "_correlation" in event.payload
             assert event.payload["_correlation"]["run_id"] == "run_123"
@@ -91,7 +91,7 @@ class TestEvidenceLogCorrelation:
                 event_type="decision",
                 payload={"kind": "test"},
                 correlation=correlation,
-            )
+    )
 
             assert event.payload["_correlation"]["run_id"] == "run_789"
             assert event.payload["_correlation"]["branch_id"] is None
@@ -117,7 +117,7 @@ class TestEvidenceLogCorrelation:
                 event_type="evidence_packet",
                 payload={"url": "https://example.com"},
                 correlation=correlation,
-            )
+    )
 
             d = event.to_dict()
             serialized = json.dumps(d, sort_keys=True)
@@ -146,7 +146,7 @@ class TestEvidenceLogCorrelation:
                 event_type="observation",
                 payload={"key": "value1"},
                 correlation=correlation,
-            )
+    )
             log.create_event(
                 event_type="observation",
                 payload={"key": "value2"},
@@ -182,7 +182,7 @@ class TestToolExecLogCorrelation:
                 input_data=b"input",
                 output_data=b"output",
                 status="success",
-            )
+    )
 
             assert event.event_id is not None
             assert event.correlation is None
@@ -208,7 +208,7 @@ class TestToolExecLogCorrelation:
                 output_data=b"results",
                 status="success",
                 correlation=correlation,
-            )
+    )
 
             assert event.correlation is not None
             assert event.correlation["run_id"] == "run_tool"
@@ -237,7 +237,7 @@ class TestToolExecLogCorrelation:
                 output_data=b"html",
                 status="success",
                 correlation=correlation,
-            )
+    )
 
             d = event.to_dict()
             assert "correlation" in d
@@ -307,7 +307,7 @@ class TestMetricsRegistryCorrelation:
                 run_dir=Path(tmpdir),
                 run_id="test_corr",
                 correlation=correlation,
-            )
+    )
 
             # Verify correlation is stored
             assert registry._correlation == correlation
@@ -326,7 +326,7 @@ class TestMetricsRegistryCorrelation:
                 run_dir=Path(tmpdir),
                 run_id="test_flush",
                 correlation=correlation,
-            )
+    )
 
             # Use valid metric name from METRIC_NAMES
             registry.inc("orchestrator_frontier_size")
@@ -375,7 +375,7 @@ class TestAnalyticsHookCorrelation:
             shadow_ingest_failures,
             shadow_record_finding,
             shadow_reset_failures,
-        )
+    )
 
         # Ensure shadow is disabled
         shadow_reset_failures()
@@ -391,7 +391,7 @@ class TestAnalyticsHookCorrelation:
             branch_id="branch1",
             provider_id="mlx",
             action_id="action1",
-        )
+    )
 
         # Should still be fail-open
         assert shadow_ingest_failures() == initial_failures
@@ -406,7 +406,7 @@ class TestAnalyticsHookCorrelation:
         os.environ["GHOST_DUCKDB_SHADOW"] = "0"
         from hledac.universal.knowledge.analytics_hook import (
             shadow_reset_failures,
-        )
+    )
 
         shadow_reset_failures()
 
@@ -435,7 +435,7 @@ class TestAnalyticsHookCorrelation:
                 },
                 confidence=0.95,
                 correlation=correlation,
-            )
+    )
 
             # Verify _correlation was stored in payload
             assert "_correlation" in event.payload
@@ -462,7 +462,7 @@ class TestCorrelationSchema:
             branch_id="b1",
             provider_id="mlx",
             action_id="a1",
-        )
+    )
         assert corr.run_id == "r1"
         assert corr.branch_id == "b1"
         assert corr.provider_id == "mlx"
@@ -477,7 +477,7 @@ class TestCorrelationSchema:
             branch_id="branch_y",
             provider_id="openai",
             action_id="action_z",
-        )
+    )
         d = corr.to_dict()
 
         assert d["run_id"] == "run_x"

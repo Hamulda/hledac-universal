@@ -54,7 +54,10 @@ logger = logging.getLogger(__name__)
 # R4-12 FIX: mlx.core cached per-call via OnceLock — prevents repeated import
 # overhead in the 500ms memory-pressure polling loop. Python-level equivalent
 # of Rust's std::sync::OnceLock pattern. Never hold the GIL across I/O.
-import threading
+
+# ROADMAP-002 FIX: Use unified MLXInferenceLock instead of local threading.Lock
+# FIX Issue #1: Use module-level singleton functions, NOT new class instances
+from _core.mlx_inference_lock import threading_lock
 from dataclasses import dataclass
 
 
@@ -64,13 +67,38 @@ class _MLXCache:
 
 
 _mlx_cache: _MLXCache = _MLXCache()
-_mlx_lock = threading.Lock()
+# FIX Issue #1: Removed redundant _mlx_inference_lock = MLXInferenceLock()
+# Use module-level threading_lock() function instead for singleton pattern
+
+
+def _clear_mlx_cache() -> None:
+    """
+    Clear MLX core cache and force garbage collection.
+    
+    MODERN-36 PERFORMANCE FIX: Call this to release MLX memory when the
+    bridge is no longer needed or when memory pressure is high.
+    """
+    global _mlx_cache
+    try:
+        mx = _get_mlx()
+        if mx is not None:
+            # Sync GPU queue before clearing
+            mx.eval([])
+            # Clear MLX cache
+            if hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
+                mx.metal.clear_cache()
+    except Exception as e:
+        logger.debug(f"[MLXBridge] Failed to clear MLX cache: {e}")
+    
+    # Reset the cached module reference
+    _mlx_cache.mx = None
 
 
 def _get_mlx() -> Any:
     """Lazily import and cache mlx.core. Thread-safe, import-only once."""
     if _mlx_cache.mx is None:
-        with _mlx_lock:
+        # ROADMAP-002 FIX Issue #1: Use module-level threading_lock() for singleton
+        with threading_lock():
             if _mlx_cache.mx is None:  # Double-check under lock
                 import mlx.core as mx
 
@@ -103,7 +131,7 @@ def _get_mlx_bridge_config() -> dict[str, Any]:
                 stream_buffer_size=8,
                 pressure_warning=0.70,
                 pressure_critical=0.85,
-            )
+    )
             return cfg
     except Exception as e:
         logger.debug("[MLXBridge] Rust backend unavailable: %s", e)
@@ -383,7 +411,7 @@ async def stream_with_prefetch(
         from hledac.universal.utils.asyncx import safe_create_task
         prefetch_task = safe_create_task(
             _prefetch_kv_cache(engine, prefetch_prompt), eager_start=True
-        )
+    )
 
     # Stream current prompt
     async for chunk in generate_stream_adaptive(engine, prompt, **kwargs):
@@ -410,7 +438,7 @@ async def _prefetch_kv_cache(
         # Just compute prefill, don't generate tokens
         prefilled = await asyncio.to_thread(
             _sync_prefetch, engine, prompt
-        )
+    )
         logger.debug("[MLXBridge] Prefetch complete: %s", prefilled[:50])
     except Exception as e:
         logger.debug("[MLXBridge] Prefetch failed: %s", e)
@@ -452,7 +480,7 @@ def _sync_prefetch(engine: DeepHermes3Engine, prompt: str) -> str:
         ]
         formatted = engine._tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
-        )
+    )
 
         # Tokenize the formatted prompt (returns list of token IDs)
         tokens = engine._tokenizer.encode(formatted)
@@ -482,4 +510,6 @@ __all__ = [
     "stream_with_prefetch",
     "_get_mlx_bridge_config",
     "_create_mlx_bridge",
+    # MODERN-36: Memory cleanup
+    "_clear_mlx_cache",
 ]

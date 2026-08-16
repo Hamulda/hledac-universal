@@ -25,7 +25,7 @@ from hledac.universal.runtime.scheduler.core.types import (
     SourceTier,
     _TIER_ORDER,
     _DEFAULT_SOURCE_TIER_MAP,
-)
+    )
 # SprintSchedulerConfig remains in sprint_scheduler.py (cross-module import)
 
 __all__ = [

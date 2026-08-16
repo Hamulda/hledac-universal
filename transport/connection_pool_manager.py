@@ -41,11 +41,7 @@ warnings.warn(
 )
 
 # Re-export from session_pool for backward compatibility
-
-
-
-
-
+from .session_pool import (
     httpx_socks_client,
     close_httpx_socks,
     session_pool,
@@ -56,8 +52,7 @@ warnings.warn(
 )
 
 # Backward-compat class aliases (delegate to session_pool internals)
-
-from _core import aclose_TorConnectionPool: type = SessionPool
+_TorConnectionPool: type = SessionPool
 _I2PConnectionPool: type = SessionPool
 
 __all__ = [

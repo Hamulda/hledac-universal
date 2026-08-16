@@ -157,7 +157,7 @@ class MetalBufferPool:
                 if self._allocated_bytes + byte_size > _MAX_BUFFER_BYTES:
                     logger.warning(
                         f"[MetalBufferPool] Buffer {name} would exceed cap, skipping"
-                    )
+    )
                     continue
 
                 mlx_dtype = mx.float32 if dtype == "float32" else mx.int32
@@ -170,12 +170,12 @@ class MetalBufferPool:
                         logger.debug(
                             f"[MetalBufferPool] SILICON-04: {name} backed by "
                             f"SharedMetalBuffer ({byte_size} bytes)"
-                        )
+    )
                     except Exception as e:
                         logger.debug(
                             f"[MetalBufferPool] SharedMetalBuffer.allocate failed "
                             f"for {name}: {e}, falling back to mx.zeros()"
-                        )
+    )
                         shared_buf = None
 
                 if shared_buf is not None:
@@ -192,12 +192,12 @@ class MetalBufferPool:
                     mx_buffer=mlx_arr,
                     _shared_buf=shared_buf,
                     allocated=True,
-                )
+    )
                 self._allocated_bytes += byte_size
                 logger.debug(
                     f"[MetalBufferPool] ALLOC {name} shape={shape} dtype={dtype} "
                     f"metal_shared={shared_buf is not None}"
-                )
+    )
 
             self._allocated = True
             return True

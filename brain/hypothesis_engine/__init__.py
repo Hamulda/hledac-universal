@@ -55,11 +55,7 @@ from hledac_hypothesis.causal import (
 from hledac_hypothesis.explainer import (
     SimpleNodeAblationExplainer,
 )
-
-
-
-
-
+from hledac_hypothesis.packs import (
     HypothesisPack,
     SourceHint,
 )
@@ -68,8 +64,7 @@ __all__ = [
     "HypothesisType",
     "HypothesisStatus",
     "TestType",
-
-from _core import aclose    "DarkQueryType",
+    "DarkQueryType",
     "Evidence",
     "TestResult",
     "TestDesign",

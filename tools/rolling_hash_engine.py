@@ -188,7 +188,7 @@ class RollingHashEngine:
                 base=DEFAULT_BASE,
                 modulus=DEFAULT_MODULUS,
                 window_size=window_size,
-            )
+    )
             cache[window_size] = engine
             if len(cache) > MAX_RH_ENGINES:
                 # FIFO eviction to keep cache bounded.

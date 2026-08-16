@@ -67,7 +67,7 @@ from hledac.universal.runtime.scheduler_v2._task_registry import (
     TaskScope,
     safe_create_task_tracked,
     safe_create_managed_task,
-)
+    )
 import logging
 import os as _os
 import time as _time
@@ -78,7 +78,7 @@ from hledac.universal.runtime.sidecar_bus import create_sidecar_bus
 from hledac.universal.runtime.sidecar_dispatcher import (
     DispatchOutcome,
     SidecarDispatcher,
-)
+    )
 from hledac.universal.runtime.sidecar_protocol import SchedulerAdvisory
 from _core import aclose
 
@@ -154,11 +154,11 @@ def _get_peak_coordinator():
         from hledac.universal._core.global_co_scheduler import (
             get_co_scheduler,
             Subsystem,
-        )
+    )
         from hledac.universal._core.peak_load_coordinator import (
             ResourceClass,
             TaskPriority,
-        )
+    )
         return get_co_scheduler(), ResourceClass, TaskPriority, Subsystem
     except ImportError:  # noqa: BLE001
         pass
@@ -167,7 +167,7 @@ def _get_peak_coordinator():
             ResourceClass,
             TaskPriority,
             get_peak_coordinator,
-        )
+    )
         return get_peak_coordinator(), ResourceClass, TaskPriority, None
     except ImportError:
         return None, None, None, None
@@ -206,7 +206,7 @@ async def _run_bounded_sidecar(coro, name: str) -> None:
                     priority="low",
                     owner=f"sidecar:{name}",
                     timeout_s=5.0,
-                )
+    )
             else:
                 # Fall back to raw coordinator (backward compat)
                 peak_guard = await coordinator.acquire(
@@ -215,7 +215,7 @@ async def _run_bounded_sidecar(coro, name: str) -> None:
                     priority=TaskPriority.LOW,
                     owner=f"sidecar:{name}",
                     timeout_s=5.0,
-                )
+    )
         except TimeoutError:
             log.debug("[UNIFIED-001] sidecar %s deferred: peak load timeout", name)
             return  # Fail-soft: skip sidecar under memory pressure
@@ -367,7 +367,7 @@ def _get_sprint_advisory_runner():
     if _SPRINT_ADVISORY_RUNNER is None:
         from hledac.universal.runtime.sprint_advisory_runner import (
             SprintAdvisoryRunner as _SAR,  # noqa: N814
-        )
+    )
         _SPRINT_ADVISORY_RUNNER = _SAR
     return _SPRINT_ADVISORY_RUNNER
 
@@ -457,7 +457,7 @@ class SidecarOrchestrator:
         self._dispatcher = SidecarDispatcher(
             bus=self._bus,
             governor=governor,
-        )
+    )
         # ISSUE-005 FIX: Bind this SidecarOrchestrator to ContextVar so that
         # SchedulerBackedSidecarAdapter.run_async() can find sidecar methods.
         # SidecarOrchestrator hosts the _run_*_sidecar() methods, not SprintScheduler.
@@ -516,7 +516,7 @@ class SidecarOrchestrator:
             store,
             query,
             sprint_id,
-        )
+    )
         # Propagate skipped sidecars to result sink if the attribute exists
         if outcome.sidecars_skipped and hasattr(self._result, "sidecars_skipped"):
             existing = getattr(self._result, "sidecars_skipped", set())
@@ -538,7 +538,7 @@ class SidecarOrchestrator:
                     duplicate = any(
                         e.get("family") == entry.get("family") and e.get("lane") == entry.get("lane")
                         for e in existing
-                    )
+    )
                     if not duplicate:
                         existing.append(entry)
                 self._result.source_family_outcomes_list = existing
@@ -583,7 +583,7 @@ class SidecarOrchestrator:
         if self._sidecar_cancel_requested:
             log.warning(
                 "[QoS-Sub] Sidecars cancelled: force-cancel requested by governor QoS subsystem"
-            )
+    )
             # Reset the flag for next run
             self._sidecar_cancel_requested = False
             return
@@ -614,7 +614,7 @@ class SidecarOrchestrator:
                     duckdb_store=getattr(self._scheduler, "_duckdb_store", None),
                     governor=getattr(self._scheduler, "_governor", None),
                     analyst_workbench=getattr(self._scheduler, "_analyst_workbench", None),
-                )
+    )
                 # Sprint F206BK: Gate pivot_executor via acquisition strategy
                 snapshot = getattr(self._scheduler, "_acquisition_plan", None)
                 if snapshot is not None:
@@ -622,7 +622,7 @@ class SidecarOrchestrator:
                         AcquisitionLane,
                         is_lane_enabled,
                         lane_skip_reason,
-                    )
+    )
                     if not is_lane_enabled(snapshot, AcquisitionLane.PIVOT_EXECUTOR):
                         reason = lane_skip_reason(snapshot, AcquisitionLane.PIVOT_EXECUTOR) or "unknown"
                         log.debug("[F206BK] pivot_executor skipped: %s", reason)
@@ -633,13 +633,13 @@ class SidecarOrchestrator:
             _outer_tg.create_task(
                 _run_sprint_advisory_branch(),
                 name="advisory:sprint_advisory_runner",
-            )
+    )
 
             # ── Branch B: CT → PassiveDNS one-hop pivot ───────────────────────
             _outer_tg.create_task(
                 self._run_ct_to_passivedns_pivot_advisory(),
                 name="advisory:ct_passivedns",
-            )
+    )
 
             # ── Branch C: BGP/Wayback/CommonCrawl sidecars ────────────────────
             async def _run_archive_sidecars() -> None:
@@ -647,22 +647,22 @@ class SidecarOrchestrator:
                     _tg.create_task(
                         _run_bounded_sidecar(self._run_bgp_advisory_sidecar(), "bgp_advisory"),
                         name="sprint:bgp_advisory_sidecar",
-                    )
+    )
                     _tg.create_task(
                         _run_bounded_sidecar(self._run_wayback_cdx_deep_sidecar(), "wayback_cdx_deep"),
                         name="sprint:wayback_cdx_sidecar",
-                    )
+    )
                     # F250F: CommonCrawl CDX sidecar (non-blocking, via LaneRegistry)
                     if LANE_REGISTRY.is_enabled("common_crawl"):
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_commoncrawl_sidecar(), "commoncrawl"),
                             name="sprint:commoncrawl_sidecar",
-                        )
+    )
 
             _outer_tg.create_task(
                 _run_archive_sidecars(),
                 name="advisory:archive_sidecars",
-            )
+    )
 
             # ── Branch D: IPFS/Onion/I2P/banner/DHT/Gopher/stego/TI sidecars ─
             _ipfs_enabled = LANE_REGISTRY.is_enabled("ipfs")
@@ -678,64 +678,64 @@ class SidecarOrchestrator:
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_ipfs_discovery_sidecar(), "ipfs_discovery"),
                             name="sprint:ipfs_discovery_sidecar",
-                        )
+    )
                     # F251: Onion discovery sidecar (Tor .onion crawling)
                     _tg.create_task(
                         _run_bounded_sidecar(self._run_onion_discovery_sidecar(), "onion_discovery"),
                         name="sprint:onion_discovery_sidecar",
-                    )
+    )
                     # F2P: I2P discovery sidecar
                     _tg.create_task(
                         _run_bounded_sidecar(self._run_i2p_discovery_sidecar(), "i2p_discovery"),
                         name="sprint:i2p_discovery_sidecar",
-                    )
+    )
                     _tg.create_task(
                         _run_bounded_sidecar(self._run_bgp_enrichment_sidecar(), "bgp_enrichment"),
                         name="sprint:bgp_enrichment_sidecar",
-                    )
+    )
                     _tg.create_task(
                         _run_bounded_sidecar(self._run_banner_grab_sidecar(), "banner_grab"),
                         name="sprint:banner_grab_sidecar",
-                    )
+    )
                     # F214Q: DHT discovery sidecar
                     _tg.create_task(
                         _run_bounded_sidecar(self._run_dht_sidecar(), "dht_discovery"),
                         name="sprint:dht_sidecar",
-                    )
+    )
                     # F214R: Gopher discovery sidecar — gated via LaneRegistry
                     if LANE_REGISTRY.is_enabled("gopher"):
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_gopher_sidecar(), "gopher"),
                             name="sprint:gopher_sidecar",
-                        )
+    )
                     # F3FORENSICS: File forensics sidecars (non-blocking, env-gated, P0 bounded)
                     if LANE_REGISTRY.is_enabled("digital_ghost"):
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_digital_ghost_sidecar(), "digital_ghost"),
                             name="sprint:digital_ghost_sidecar",
-                        )
+    )
                     if LANE_REGISTRY.is_enabled("steganography"):
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_steganography_sidecar(), "steganography"),
                             name="sprint:stego_sidecar",
-                        )
+    )
                     # F252: TI feed advisory sidecar (NVD + CISA KEV, P0 bounded)
                     if LANE_REGISTRY.is_enabled("ti_feeds"):
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_ti_feed_sidecar(), "ti_feed"),
                             name="sprint:ti_feed_sidecar",
-                        )
+    )
                     # ADVERSARY-004: Hermes3 Auto-RE for unknown binary formats
                     if _os.environ.get("HLEDAC_ENABLE_AUTO_RE", "0") in ("1", "true", "yes"):
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_auto_re_sidecar(), "auto_re"),
                             name="sprint:auto_re_sidecar",
-                        )
+    )
 
             _outer_tg.create_task(
                 _run_dark_pivot_sidecars(),
                 name="advisory:dark_pivot_sidecars",
-            )
+    )
 
             # ── Branch E: Plugin sidecars from SidecarRegistry ─────────────────
             # ORPHANED TASK FIX: Use safe_create_managed_task to make this task
@@ -751,7 +751,7 @@ class SidecarOrchestrator:
                     _outer_tg,
                     name="sprint:plugin_sidecars",
                     scope=TaskScope.SIDECAR_PLUGIN,
-                )
+    )
 
     async def run_plugin_sidecars(self, ctx: Any) -> None:
         """
@@ -774,7 +774,7 @@ class SidecarOrchestrator:
                 SidecarContext,
                 SidecarRegistry,
                 ensure_adapters_registered,
-            )
+    )
         except Exception as e:
             log.debug("[F350M-FED] SidecarRegistry import failed: %s", e)
             return
@@ -793,7 +793,7 @@ class SidecarOrchestrator:
                         pressure = float(getattr(snap, "memory_pressure", 0.0) or 0.0)
                         memory_budget_mb = max(
                             10, int(200 * (1.0 - pressure))  # 10..200MB
-                        )
+    )
             except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fall back to default
 
@@ -816,7 +816,7 @@ class SidecarOrchestrator:
                         memory_pressure=float(
                             getattr(ctx, "memory_pressure", 0.0) or 0.0
                         ),
-                    )
+    )
                 except Exception as e:
                     log.debug("[F350M-FED] cannot build SidecarContext: %s", e)
                     return
@@ -835,7 +835,7 @@ class SidecarOrchestrator:
                 _run_bounded_plugin_sidecar(
                     self._dispatch_plugin_sidecar(adapter, sidecar_ctx),
                     adapter.sidecar_id,
-                )
+    )
                 for adapter in available
             ]
             if run_coros:
@@ -848,7 +848,7 @@ class SidecarOrchestrator:
                         log.warning(
                             "[ISSUE #027] plugin sidecar %s unexpected exception (fail-soft): %s: %s",
                             sidecar_id, type(item).__name__, item,
-                        )
+    )
                 except _asyncio.CancelledError:
                     # Propagate cancellation — gather() cancels all child coroutines on CancelledError
                     raise
@@ -856,7 +856,7 @@ class SidecarOrchestrator:
             log.warning(
                 "[F350M-FED] run_plugin_sidecars: fail-soft: %s: %s",
                 type(e).__name__, e,
-            )
+    )
 
     async def _dispatch_plugin_sidecar(
         self, adapter: Any, ctx: Any,
@@ -887,14 +887,14 @@ class SidecarOrchestrator:
                             store=None,
                             query=getattr(ctx, "query", "") or "",
                             sprint_id=getattr(ctx, "sprint_id", "") or "",
-                        )
+    )
                     if total > 50:
                         log.debug(
                             "[F350M-FED] %s: %d findings capped to 50 (dropped %d)",
                             adapter.sidecar_id,
                             total,
                             total - 50,
-                        )
+    )
                 except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # dispatcher may not be available
         except Exception as e:
@@ -902,7 +902,7 @@ class SidecarOrchestrator:
                 "[F350M-FED] plugin sidecar %s raised: %s: %s",
                 getattr(adapter, "sidecar_id", "?"),
                 type(e).__name__, e,
-            )
+    )
 
     def _build_plugin_sidecar_context(self) -> Any | None:
         """
@@ -921,7 +921,7 @@ class SidecarOrchestrator:
                 or getattr(getattr(self._scheduler, "_config", None),
                            "sprint_id", None)
                 or "unknown"
-            )
+    )
             # findings live on the result_sink or are accumulated per-sprint
             findings = []
             try:
@@ -934,7 +934,7 @@ class SidecarOrchestrator:
                 getattr(getattr(self._scheduler, "_config", None),
                         "sprint_mode", None)
                 or "active"
-            )
+    )
             # memory_pressure from governor snapshot
             memory_pressure = 0.0
             try:
@@ -943,7 +943,7 @@ class SidecarOrchestrator:
                     if snap is not None:
                         memory_pressure = float(
                             getattr(snap, "memory_pressure", 0.0) or 0.0
-                        )
+    )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -956,7 +956,7 @@ class SidecarOrchestrator:
                 findings=findings,
                 sprint_mode=sprint_mode,
                 memory_pressure=memory_pressure,
-            )
+    )
         except Exception as e:
             log.debug("[F350M-FED] build context failed: %s", e)
             return None
@@ -1028,7 +1028,7 @@ class SidecarOrchestrator:
                 if not success:
                     log.warning(
                         f"[QoS-Sub] Sidecars failed to comply with QoS change: {reason}"
-                    )
+    )
             
             def _cancel_sidecars() -> None:
                 """
@@ -1047,7 +1047,7 @@ class SidecarOrchestrator:
                 log.warning(
                     f"[QoS-Sub] FORCE-CANCEL triggered for sidecars: "
                     f"setting _sidecar_cancel_requested=True"
-                )
+    )
                 self._sidecar_cancel_requested = True
                 # Note: Actual task cancellation happens via the TaskGroup structure
                 # when the outer task checks _sidecar_cancel_requested and raises CancelledError
@@ -1059,7 +1059,7 @@ class SidecarOrchestrator:
                 ack_callback=_on_qos_change,
                 deadline_s=2.0,
                 cancel_fn=_cancel_sidecars,
-            )
+    )
             self._qos_subscribed = True
             log.debug("[QoS-Sub] Subscribed to sidecars capability with cancel support")
         except Exception as e:
@@ -1142,7 +1142,7 @@ class SidecarOrchestrator:
             MAX_MEMORY_ENTITIES,
             MAX_MEMORY_EXPOSURES,
             MAX_MEMORY_PIVOTS,
-        )
+    )
 
         entity_facets: dict[str, Any] = {}
         for tid, data in entity_data.items():
@@ -1201,13 +1201,13 @@ class SidecarOrchestrator:
             set(entity_facets.keys())
             | set(exposure_facets.keys())
             | set(pivot_facets.keys())
-        )
+    )
 
         try:
             from hledac.universal.intel.target_memory_service import (
                 TargetMemoryService,
                 TargetMemoryUpdate,
-            )
+    )
             if not hasattr(self, "_target_memory_service") or self._target_memory_service is None:
                 self._target_memory_service = TargetMemoryService(store)
             service = self._target_memory_service
@@ -1222,7 +1222,7 @@ class SidecarOrchestrator:
                         exposure_facets=exposure_facets.get(target_id),
                         pivot_facets=pivot_facets.get(target_id),
                         finding_count=finding_counts.get(target_id, 0),
-                    )
+    )
                     await service.update_target_memory(update)
                 except Exception as e:
                     log.debug("[F350M-FED] target memory update failed for %s: %s", target_id, e)
@@ -1299,7 +1299,7 @@ class SidecarOrchestrator:
         try:
             from hledac.universal.intel.bgp_advisor_adapter import (
                 create_bgp_advisor_adapter,
-            )
+    )
             adapter = create_bgp_advisor_adapter()
             _ = adapter.analyze(self._result)
         except (ImportError, ModuleNotFoundError, AttributeError):  # noqa: BLE001
@@ -1310,7 +1310,7 @@ class SidecarOrchestrator:
         try:
             from hledac.universal.intel.wayback_cdx_deep_adapter import (
                 create_wayback_cdx_deep_adapter,
-            )
+    )
             adapter = create_wayback_cdx_deep_adapter()
             _ = await adapter.analyze(self._result)
         except (ImportError, ModuleNotFoundError, AttributeError):  # noqa: BLE001
@@ -1336,7 +1336,7 @@ class SidecarOrchestrator:
             from hledac.universal.transport.capability_registry import (
                 get_capability,
                 TransportCapability,
-            )
+    )
             capability, reason = await get_capability("ipfs")
             if capability != TransportCapability.READY:
                 log.info("[F229] IPFS discovery skipped: %s (%s)", reason, capability.value)
@@ -1351,7 +1351,7 @@ class SidecarOrchestrator:
             "[F229] IPFS discovery: MISSING_IMPLEMENTATION — "
             "full libp2p Kademlia/BitSwap requires rust p2p_harvest. "
             "HTTP gateway-only mode is not IPFS."
-        )
+    )
         return findings
 
     # ── F251: Onion Discovery Sidecar ───────────────────────────────────────
@@ -1374,7 +1374,7 @@ class SidecarOrchestrator:
             from hledac.universal.transport.capability_registry import (
                 get_capability,
                 TransportCapability,
-            )
+    )
             capability, reason = await get_capability("tor")
             if capability != TransportCapability.READY:
                 log.info("[F251] Onion discovery skipped: %s (%s)", reason, capability.value)
@@ -1431,7 +1431,7 @@ class SidecarOrchestrator:
             from hledac.universal.transport.capability_registry import (
                 get_capability,
                 TransportCapability,
-            )
+    )
             capability, reason = await get_capability("i2p")
             if capability != TransportCapability.READY:
                 log.info("[F2P] I2P discovery skipped: %s (%s)", reason, capability.value)
@@ -1494,7 +1494,7 @@ class SidecarOrchestrator:
         log.info(
             "[F250F] CommonCrawl CDX discovery: MISSING_IMPLEMENTATION — "
             "CommonCrawl CDX API not integrated with sidecar orchestrator"
-        )
+    )
         return findings
 
     async def _run_banner_grab_sidecar(self) -> list:
@@ -1510,7 +1510,7 @@ class SidecarOrchestrator:
         log.info(
             "[F229] Banner grab: MISSING_IMPLEMENTATION — "
             "active TCP probing not integrated with sidecar orchestrator"
-        )
+    )
         return findings
 
     # F214Q: DHT discovery sidecar
@@ -1532,7 +1532,7 @@ class SidecarOrchestrator:
             from hledac.universal.transport.capability_registry import (
                 get_capability,
                 TransportCapability,
-            )
+    )
             capability, reason = await get_capability("dht")
             if capability != TransportCapability.READY:
                 if capability == TransportCapability.STUB:
@@ -1550,7 +1550,7 @@ class SidecarOrchestrator:
             "[F214Q] DHT discovery: MISSING_IMPLEMENTATION — "
             "full BitTorrent DHT requires rust p2p_harvest. "
             "Python Kademlia is in simulated mode (no real DHT network)."
-        )
+    )
         return findings
 
     # F214R: Gopher discovery sidecar
@@ -1573,7 +1573,7 @@ class SidecarOrchestrator:
             from hledac.universal.transport.capability_registry import (
                 get_capability,
                 TransportCapability,
-            )
+    )
             capability, reason = await get_capability("gopher")
             if capability != TransportCapability.READY:
                 log.info("[F214R] Gopher discovery skipped: %s (%s)", reason, capability.value)
@@ -1614,7 +1614,7 @@ class SidecarOrchestrator:
         log.info(
             "[F3FORENSICS] Digital ghost detection: MISSING_IMPLEMENTATION — "
             "file artifact forensics not integrated with sidecar orchestrator"
-        )
+    )
         return findings
 
     # F3FORENSICS: Steganography forensics sidecar
@@ -1631,7 +1631,7 @@ class SidecarOrchestrator:
         log.info(
             "[F3FORENSICS] Steganography detection: MISSING_IMPLEMENTATION — "
             "image steganography analysis not integrated with sidecar orchestrator"
-        )
+    )
         return findings
 
     # F252: TI feed advisory sidecar (NVD + CISA KEV)
@@ -1648,7 +1648,7 @@ class SidecarOrchestrator:
         log.info(
             "[F252] TI feed advisory: MISSING_IMPLEMENTATION — "
             "NVD + CISA KEV integration not implemented"
-        )
+    )
         return findings
 
     # ADVERSARY-004: Hermes3 Auto-RE sidecar for unknown binary formats
@@ -1670,7 +1670,7 @@ class SidecarOrchestrator:
         
         from hledac.universal.runtime.sidecars.forensics._auto_re import (
             AutoRESidecarAdapter,
-        )
+    )
         # FIX-5: SidecarContext is in runtime/sidecar_protocol.py, not scheduler_v2/protocol.py
         from hledac.universal.runtime.sidecar_protocol import SidecarContext
 
@@ -1703,7 +1703,7 @@ class SidecarOrchestrator:
                 sprint_id=str(sprint_id),
                 findings=list(findings),
                 sprint_mode=str(sprint_mode),
-            )
+    )
         except Exception as e:
             log.warning("[AUTO-RE] failed to build SidecarContext: %s", e)
             return findings

@@ -52,7 +52,7 @@ class GhostLayer:
         result = await ghost.execute_action(
             action_type=ActionType.SCAN,
             parameters={"url": "https://example.com"}
-        )
+    )
 
         if result.stagnation_detected:
             # Handle stagnation

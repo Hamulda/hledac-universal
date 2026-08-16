@@ -741,7 +741,7 @@ def _parse_feed_xml(xml_text: str, feed_url: str, retrieved_ts: float, _parse_mo
         entries, _ = _try_parse_with_mode(
             strategy_xml, feed_url, retrieved_ts, parser_fn,
             mode, _parse_mode_out, _feed_type_out
-        )
+    )
         if entries is not None:
             return entries
     _report_parse_mode(_parse_mode_out, _ParseMode.FINAL_FAIL)
@@ -793,7 +793,7 @@ def _fetch_feed_content(feed_url: str, timeout_s: float, max_bytes: int) -> tupl
     try:
         result = asyncio.get_event_loop().run_until_complete(
             async_fetch_public_text(feed_url, timeout_s=timeout_s, max_bytes=max_bytes, bypass_circuit_breaker=True)
-        )
+    )
     except Exception:
         # Return None result with error on exception
         return (None, 'fetch_exception', None)
@@ -1063,7 +1063,7 @@ def _build_final_entries(scored: list[tuple], max_entries: int) -> tuple[list[Fe
         reason = _build_selection_reason(
             entry, freshness_score, quality_score, freshness_tier,
             ts_rel, richness_band, usefulness_band, spb, time_signal
-        )
+    )
 
         entries.append(FeedEntryHit(
             feed_url=entry.feed_url,
@@ -1530,7 +1530,7 @@ async def async_fetch_all_runtime_feeds(
                 max_entries=max_entries_per_feed,
                 timeout_s=timeout_s,
                 max_bytes=max_bytes,
-            )
+    )
             return result
         except asyncio.CancelledError:
             raise
@@ -1549,7 +1549,7 @@ async def async_fetch_all_runtime_feeds(
             policy="collect",
             taskgroup=True,
             ctx="rss_atom:fetch_all_runtime",
-        )
+    )
         ok_results = build.ok
     except asyncio.CancelledError:
         raise

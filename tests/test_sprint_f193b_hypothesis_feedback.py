@@ -39,10 +39,10 @@ class TestSprintF193BConfigCaps:
         config = SprintSchedulerConfig()
         assert hasattr(config, "max_hypothesis_depth"), (
             "F193B: SprintSchedulerConfig must have max_hypothesis_depth"
-        )
+    )
         assert config.max_hypothesis_depth == 3, (
             "F193B: default max_hypothesis_depth must be 3"
-        )
+    )
 
     def test_max_hypothesis_queries_config(self):
         """SprintSchedulerConfig.max_hypothesis_queries caps total query count."""
@@ -51,10 +51,10 @@ class TestSprintF193BConfigCaps:
         config = SprintSchedulerConfig()
         assert hasattr(config, "max_hypothesis_queries"), (
             "F193B: SprintSchedulerConfig must have max_hypothesis_queries"
-        )
+    )
         assert config.max_hypothesis_queries == 10, (
             "F193B: default max_hypothesis_queries must be 10"
-        )
+    )
 
 
 class TestSprintF193BStateTracking:
@@ -68,10 +68,10 @@ class TestSprintF193BStateTracking:
         scheduler = SprintScheduler(config)
         assert hasattr(scheduler, "_hypothesis_depth"), (
             "F193B: SprintScheduler must have _hypothesis_depth state"
-        )
+    )
         assert scheduler._hypothesis_depth == 0, (
             "F193B: _hypothesis_depth must initialize to 0"
-        )
+    )
 
     def test_hypothesis_query_count_state_initialized(self):
         """SprintScheduler._hypothesis_query_count initialized to 0."""
@@ -81,10 +81,10 @@ class TestSprintF193BStateTracking:
         scheduler = SprintScheduler(config)
         assert hasattr(scheduler, "_hypothesis_query_count"), (
             "F193B: SprintScheduler must have _hypothesis_query_count state"
-        )
+    )
         assert scheduler._hypothesis_query_count == 0, (
             "F193B: _hypothesis_query_count must initialize to 0"
-        )
+    )
 
 
 class TestSprintF193BEnqueueMethod:
@@ -98,7 +98,7 @@ class TestSprintF193BEnqueueMethod:
         scheduler = SprintScheduler(config)
         assert hasattr(scheduler, "enqueue_hypothesis_pivot"), (
             "F193B: SprintScheduler must have enqueue_hypothesis_pivot method"
-        )
+    )
 
     def test_enqueue_respects_depth_cap(self):
         """Depth > max_hypothesis_depth → pivot dropped (returns False)."""
@@ -113,10 +113,10 @@ class TestSprintF193BEnqueueMethod:
             ioc_type="hypothesis",
             confidence=0.7,
             depth=4,
-        )
+    )
         assert result is False, (
             "F193B: enqueue_hypothesis_pivot must return False when depth exceeds cap"
-        )
+    )
 
     def test_enqueue_respects_query_count_cap(self):
         """Query count >= max_hypothesis_queries → pivot dropped."""
@@ -132,7 +132,7 @@ class TestSprintF193BEnqueueMethod:
                 ioc_type="hypothesis",
                 confidence=0.7,
                 depth=1,
-            )
+    )
             assert result is True, f"F193B: query {i} should succeed"
 
         # 6th query should be dropped
@@ -141,10 +141,10 @@ class TestSprintF193BEnqueueMethod:
             ioc_type="hypothesis",
             confidence=0.7,
             depth=1,
-        )
+    )
         assert result is False, (
             "F193B: enqueue_hypothesis_pivot must return False when query count at cap"
-        )
+    )
 
     def test_enqueue_success_within_bounds(self):
         """Within bounds → pivot enqueued successfully."""
@@ -158,16 +158,16 @@ class TestSprintF193BEnqueueMethod:
             ioc_type="hypothesis",
             confidence=0.7,
             depth=2,
-        )
+    )
         assert result is True, (
             "F193B: enqueue_hypothesis_pivot must return True when within bounds"
-        )
+    )
         assert scheduler._hypothesis_query_count == 1, (
             "F193B: query count must increment on successful enqueue"
-        )
+    )
         assert scheduler._hypothesis_depth == 2, (
             "F193B: depth must be updated on successful enqueue"
-        )
+    )
 
 
 class TestSprintF193BIOCTypeMapping:
@@ -199,14 +199,14 @@ class TestSprintF193BIOCTypeMapping:
             ioc_type="hypothesis",
             confidence=0.7,
             depth=1,
-        )
+    )
 
         assert len(enqueued_tasks) == 1, (
             "F193B: enqueue_hypothesis_pivot must call enqueue_pivot"
-        )
+    )
         assert enqueued_tasks[0]["ioc_type"] == "hypothesis", (
             "F193B: hypothesis pivot must preserve ioc_type"
-        )
+    )
 
 
 class TestSprintF193BPipelineIntegration:
@@ -221,7 +221,7 @@ class TestSprintF193BPipelineIntegration:
 
         assert "enqueue_hypothesis_pivot" in params, (
             "F193B: async_run_live_public_pipeline must have enqueue_hypothesis_pivot param"
-        )
+    )
 
     def test_p12_block_uses_callback(self):
         """P12 block calls enqueue_hypothesis_pivot when ToT produces results."""
@@ -236,7 +236,7 @@ class TestSprintF193BPipelineIntegration:
         p12_block = source[p12_start:p12_start + 6000]  # P1-3G: 5000→6000 to capture guard 5150 chars after P12 comment
         assert "enqueue_hypothesis_pivot" in p12_block, (
             "F193B: P12 block must call enqueue_hypothesis_pivot callback"
-        )
+    )
 
     def test_pipeline_fails_soft_without_callback(self):
         """Pipeline works correctly when enqueue_hypothesis_pivot is None."""
@@ -249,7 +249,7 @@ class TestSprintF193BPipelineIntegration:
         # Must check if callback is not None before calling
         assert "enqueue_hypothesis_pivot is not None" in p12_block or "if enqueue_hypothesis_pivot" in p12_block, (
             "F193B: P12 must check callback is not None before calling"
-        )
+    )
 
 
 class TestSprintF193BNoRunawayLoop:
@@ -270,17 +270,17 @@ class TestSprintF193BNoRunawayLoop:
                 ioc_type="hypothesis",
                 confidence=0.7,
                 depth=depth,
-            )
+    )
             if result:
                 accepted += 1
 
         # Only depths 1, 2, 3 should be accepted (within cap of 3)
         assert accepted == 3, (
             "F193B: depth cap must prevent depth 4 from being enqueued"
-        )
+    )
         assert scheduler._hypothesis_depth == 3, (
             "F193B: max tracked depth must be 3 (the cap)"
-        )
+    )
 
     def test_query_cap_stops_unbounded_growth(self):
         """After max_hypothesis_queries, new pivots are rejected."""
@@ -296,12 +296,12 @@ class TestSprintF193BNoRunawayLoop:
                 ioc_type="hypothesis",
                 confidence=0.7,
                 depth=1,
-            )
+    )
             assert result is True, f"F193B: query {i} should succeed"
 
         assert scheduler._hypothesis_query_count == 3, (
             "F193B: query count must reach cap exactly"
-        )
+    )
 
         # One more should be rejected
         result = scheduler.enqueue_hypothesis_pivot(
@@ -309,10 +309,10 @@ class TestSprintF193BNoRunawayLoop:
             ioc_type="hypothesis",
             confidence=0.7,
             depth=1,
-        )
+    )
         assert result is False, (
             "F193B: exceeding query cap must reject new pivots"
-        )
+    )
 
     def test_hypothesis_probe_already_honors_depth(self):
         """Existing hypothesis_probe task type in scheduler should respect similar bounds."""
@@ -327,12 +327,12 @@ class TestSprintF193BNoRunawayLoop:
             ioc_type="hypothesis",
             ioc_value="test hypothesis probe keywords",
             task_type="hypothesis_probe",
-        )
+    )
 
         # Verify the task is properly structured
         assert task.ioc_type == "hypothesis", (
             "F193B: PivotTask with hypothesis_probe must have ioc_type='hypothesis'"
-        )
+    )
 
 
 class TestSprintF193BSeamInterface:
@@ -346,7 +346,7 @@ class TestSprintF193BSeamInterface:
 
         assert "enqueue_hypothesis_pivot" in source, (
             "F193B: _run_public_discovery_in_cycle must pass enqueue_hypothesis_pivot callback"
-        )
+    )
 
     def test_pipeline_calls_callback_after_tot(self):
         """P12 calls callback after ToT result is stored."""
@@ -360,14 +360,14 @@ class TestSprintF193BSeamInterface:
         # P1-3G: search for call syntax "enqueue_hypothesis_pivot(" to skip comment reference
         assert "enqueue_hypothesis_pivot(" in p12_block, (
             "F193B: callback must be called in P12 block"
-        )
+    )
 
         # The call must be after the tot_finding storage
         tot_finding_pos = p12_block.find("async_ingest_findings_batch")
         callback_pos = p12_block.find("enqueue_hypothesis_pivot(")  # P1-3G: call syntax, not comment
         assert callback_pos > tot_finding_pos > 0, (
             "F193B: callback must be called after storing ToT finding"
-        )
+    )
 
 
 if __name__ == "__main__":

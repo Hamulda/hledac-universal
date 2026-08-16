@@ -252,7 +252,7 @@ def validate_class_slots(
             result.add_warning(
                 f"Field '{field_name}' in .pyi for {class_name} "
                 f"not found in Rust #[pyclass]"
-            )
+    )
         
         # Type compatibility check
         for field_name in rust_slots & pyi_slots_set:
@@ -306,7 +306,7 @@ def validate_function_signatures(
             result.add_warning(
                 f"Parameter count mismatch for {func_name}: "
                 f"manifest={manifest_param_count}, pyi={pyi_param_count}"
-            )
+    )
     
     return result
 
@@ -380,7 +380,7 @@ def validate_ffi_contract(
         result.add_warning(
             f"FFI manifest not found at {MANIFEST_PATH}. "
             "Run ffi_type_manifest.py first."
-        )
+    )
         if strict:
             result.passed = False
         return result

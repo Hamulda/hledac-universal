@@ -37,12 +37,12 @@ class TestToolSchemaValidation:
             name="web_search",
             handler=lambda **kwargs: {"results": []},
             schema=WebSearchArgs
-        )
+    )
         reg.register_with_schema(
             name="entity_extract",
             handler=lambda **kwargs: {"entities": []},
             schema=EntityExtractArgs
-        )
+    )
 
         return reg
 
@@ -111,12 +111,12 @@ class TestToolExecutionFlow:
             name="web_search",
             handler=lambda **kwargs: {"results": ["doc1", "doc2"]},
             schema=WebSearchArgs
-        )
+    )
 
         return FullyAutonomousOrchestrator(
             hermes=hermes,
             tools=registry
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_valid_plan_executes(self, orchestrator):
@@ -163,7 +163,7 @@ class TestSchemaDefinition:
                 },
                 "required": ["query"]
             }
-        )
+    )
 
         assert schema.name == "test_tool"
         assert "query" in schema.parameters["properties"]
@@ -178,7 +178,7 @@ class TestSchemaDefinition:
             handler=handler,
             schema=WebSearchArgs,
             description="Test tool"
-        )
+    )
 
         assert tool_def.name == "test_tool"
         assert tool_def.handler == handler
@@ -208,7 +208,7 @@ class TestSchemaEdgeCases:
             name="all_optional",
             handler=lambda **kwargs: {"ok": True},
             schema=AllOptional
-        )
+    )
 
         # Nemělo by vyhodit výjimku
         reg.validate_args("all_optional", {})
@@ -228,7 +228,7 @@ class TestSchemaEdgeCases:
             name="create_person",
             handler=lambda **kwargs: {"created": True},
             schema=Person
-        )
+    )
 
         # Validní vnořený model
         reg.validate_args("create_person", {
@@ -253,7 +253,7 @@ class TestSchemaEdgeCases:
             name="with_list",
             handler=lambda **kwargs: {"ok": True},
             schema=WithList
-        )
+    )
 
         # Validní
         reg.validate_args("with_list", {"items": ["a", "b"]})
@@ -277,7 +277,7 @@ class TestSchemaEdgeCases:
             name="with_union",
             handler=lambda **kwargs: {"ok": True},
             schema=WithUnion
-        )
+    )
 
         # Validní: string
         reg.validate_args("with_union", {"value": "test"})
@@ -301,14 +301,14 @@ class TestSchemaDocumentation:
                 ...,
                 description="Vyhledávací dotaz",
                 examples=["python tutorial"]
-            )
+    )
 
         reg = ToolRegistry()
         reg.register_with_schema(
             name="documented",
             handler=lambda **kwargs: {"ok": True},
             schema=DocumentedArgs
-        )
+    )
 
         schema = reg.get_schema("documented")
         assert "query" in schema["properties"]

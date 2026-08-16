@@ -130,7 +130,7 @@ class CertstreamWebSocketClient:
         client = CertstreamWebSocketClient(
             watch_domains=['example.com', 'target.org'],
             ioc_graph=ioc_graph_instance,
-        )
+    )
         await client.start()
         # Monitor runs in background
         await client.stop()
@@ -330,7 +330,7 @@ class CertstreamWebSocketClient:
                 not_after=not_after,
                 cert_index=cert_index,
                 seen=current_time,
-            )
+    )
 
             # Filter using Aho-Corasick
             if self._certificate_matches_watchlist(cert):
@@ -362,7 +362,7 @@ class CertstreamWebSocketClient:
                 self._aho_matcher = _rust_backend.aho.AhoCorasickMatcher(
                     self._watch_domains,
                     labels=self._watch_domains,
-                )
+    )
                 logger.info(f'[Certstream] Rust Aho-Corasick initialized with {len(self._watch_domains)} patterns')
                 return
         except Exception as e:

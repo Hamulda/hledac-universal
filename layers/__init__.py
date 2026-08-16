@@ -17,8 +17,7 @@ Issue 6.1: Layer Protocol + LayerStack for IoC cross-cutting concerns.
 """
 
 import functools
-from typing import TypeVar
-from collections.abc import Callable
+from typing import TypeVar, Callable
 
 from .communication_layer import CommunicationLayer
 
@@ -189,11 +188,7 @@ from .ua_rotator import (
     get_random_accept_language,
     get_random_accept_encoding,
 )
-
-
-
-
-
+from .examples.demos import (
     demo_connected_coordination,
     demo_smart_spawned_integration,
     run_all_demos,
@@ -203,8 +198,7 @@ __all__ = [
     "GhostLayer",
     "SystemContext",
     "VMThreatLevel",
-
-from _core import aclose    "ProcessType",
+    "ProcessType",
     "MemoryLayer",
     "RAMDiskManager",
     "RAMDiskConfig",

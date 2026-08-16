@@ -186,7 +186,7 @@ class TestCamoufoxNodriverSharedSemaphore:
             try:
                 await asyncio.wait_for(
                     sem.acquire(), timeout=0.05
-                )
+    )
                 acquired_events.append("nested_acquired")  # BAD — semaphore should be held
                 sem.release()
             except TimeoutError:
@@ -201,7 +201,7 @@ class TestCamoufoxNodriverSharedSemaphore:
         assert acquired_events == ["nested_blocked"], (
             "Camoufox body must be wrapped in _JS_RENDERER_SEMAPHORE; "
             f"observed: {acquired_events}"
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_nodriver_acquires_js_semaphore(self):
@@ -227,7 +227,7 @@ class TestCamoufoxNodriverSharedSemaphore:
                         try:
                             await asyncio.wait_for(
                                 sem.acquire(), timeout=0.05
-                            )
+    )
                             acquired_events.append("nested_acquired")
                             sem.release()
                         except TimeoutError:
@@ -241,7 +241,7 @@ class TestCamoufoxNodriverSharedSemaphore:
         assert acquired_events == ["nested_blocked"], (
             "nodriver body must be wrapped in _JS_RENDERER_SEMAPHORE; "
             f"observed: {acquired_events}"
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +262,7 @@ class TestEffectiveMaxBytes:
             assert (
                 public_fetcher._compute_effective_max_bytes(public_fetcher.MAX_BYTES_HARD)
                 == public_fetcher.MAX_BYTES_HARD
-            )
+    )
 
     def test_critical_halves_cap(self):
         """UMA critical → 5MB ceiling (MAX_BYTES_HARD_PRESSURE)."""
@@ -272,12 +272,12 @@ class TestEffectiveMaxBytes:
             assert (
                 public_fetcher._compute_effective_max_bytes(0)
                 == public_fetcher.MAX_BYTES_HARD_PRESSURE
-            )
+    )
             # Request larger than pressure cap → clamp to pressure cap
             assert (
                 public_fetcher._compute_effective_max_bytes(public_fetcher.MAX_BYTES_HARD)
                 == public_fetcher.MAX_BYTES_HARD_PRESSURE
-            )
+    )
             # Request smaller than pressure cap → honor request
             assert public_fetcher._compute_effective_max_bytes(1_000_000) == 1_000_000
 
@@ -432,7 +432,7 @@ class TestAiohttpPathDelegation:
         o = AiohttpBodyOutcome(
             body=b"", total_read=0, truncated=False,
             chunks_consumed=0, xml_recovered=False, first_chunk_peeked=False,
-        )
+    )
         with pytest.raises((AttributeError, Exception)):
             o.body = b"x"  # type: ignore[misc]
 

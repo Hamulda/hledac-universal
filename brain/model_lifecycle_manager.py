@@ -68,7 +68,7 @@ def _check_rss_before_load(model_key: str, max_rss_gb: float = 6.0) -> float:
             f'[MODEL MEMORY] RSS {current_rss:.2f}GB > threshold {threshold:.2f}GB '
             f'(max_rss_gb={max_rss_gb}, model={model_key}, size~{model_size}GB). '
             f'Skipping model load.'
-        )
+    )
     return current_rss
 
 

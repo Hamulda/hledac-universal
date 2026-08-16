@@ -52,14 +52,14 @@ class TestSourceBaselinesReal:
         assert len(matches) == 0, (
             f"compute_confidence still has local _BASELINES assignments: {matches}. "
             "Must use module-level _SOURCE_BASELINES."
-        )
+    )
 
     def test_source_baselines_keys_match_module_constants(self):
         """Verify _SOURCE_BASELINES keys match module-level constant names."""
         from intelligence.confidence_policy import (
             _SOURCE_BASELINES,
             FEED, PUBLIC, CT, WAYBACK, PASSIVE_DNS, SOCIAL, PLANNER, STEALTH,
-        )
+    )
         expected_keys = {
             "FEED", "PUBLIC", "CT", "WAYBACK",
             "PASSIVE_DNS", "SOCIAL", "PLANNER", "STEALTH",
@@ -71,7 +71,7 @@ class TestSourceBaselinesReal:
         from intelligence.confidence_policy import (
             _SOURCE_BASELINES,
             FEED, PUBLIC, CT, WAYBACK, PASSIVE_DNS, SOCIAL, PLANNER, STEALTH,
-        )
+    )
         assert _SOURCE_BASELINES["FEED"] == FEED
         assert _SOURCE_BASELINES["PUBLIC"] == PUBLIC
         assert _SOURCE_BASELINES["CT"] == CT
@@ -116,7 +116,7 @@ class TestClaimsCoordinatorMigration:
             r'def _derive_confidence\([^)]+\)[^:]*:.*?(?=\n    def |\nclass |\Z)',
             content,
             re.DOTALL,
-        )
+    )
         assert derives_pattern, "_derive_confidence function not found"
         derives_body = derives_pattern.group(0)
         assert "compute_confidence(" in derives_body
@@ -232,7 +232,7 @@ class TestSocialIdentityMinerMigration:
             r'def _compute_confidence\([^)]+\)[^:]*:.*?(?=\n    def |\nclass |\Z)',
             content,
             re.DOTALL,
-        )
+    )
         assert method_match, "_compute_confidence method not found"
         body = method_match.group(0)
         assert "compute_confidence(" in body
@@ -247,7 +247,7 @@ class TestSocialIdentityMinerMigration:
             username="testuser",
             linked_domains=[],
             linked_emails=[],
-        )
+    )
         assert conf_bare >= SOCIAL_MIN_CONFIDENCE
 
     def test_social_facet_with_linked_email_domain_higher_than_bare(self):
@@ -260,13 +260,13 @@ class TestSocialIdentityMinerMigration:
             username="testuser",
             linked_domains=[],
             linked_emails=[],
-        )
+    )
         conf_rich = miner._compute_confidence(
             platform="github",
             username="testuser",
             linked_domains=["example.com", "test.io"],
             linked_emails=["user@example.com"],
-        )
+    )
         assert conf_rich > conf_bare
 
     def test_confidence_upper_bound_095(self):
@@ -280,7 +280,7 @@ class TestSocialIdentityMinerMigration:
             username="testuser12345",
             linked_domains=["a.com", "b.com", "c.com", "d.com"],
             linked_emails=["a@a.com", "b@b.com", "c@c.com"],
-        )
+    )
         assert conf <= MAX_CONFIDENCE
 
     def test_all_outputs_bounded(self):

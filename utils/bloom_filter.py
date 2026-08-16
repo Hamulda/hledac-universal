@@ -127,7 +127,7 @@ class BloomFilter:
             raise ImportError(
                 "xxhash is required for BloomFilter. "
                 "Install with: pip install xxhash"
-            )
+    )
         
         self._hash_cache[item] = positions
         
@@ -433,12 +433,12 @@ class MultiTierRotatingBloomFilter:
                 path=mmap_path,
                 capacity=global_capacity,
                 fp_rate=0.01,
-            )
+    )
         else:
             self._global_filter = BloomFilter(
                 max_elements=global_capacity,
                 error_rate=0.01,
-            )
+    )
         
         # Per-host tiers: {host: (tier, last_access_time)}
         self._host_tiers: dict[str, BloomFilter] = {}
@@ -468,7 +468,7 @@ class MultiTierRotatingBloomFilter:
         tier = BloomFilter(
             max_elements=self._per_host_capacity,
             error_rate=0.01,
-        )
+    )
         self._host_tiers[host] = tier
         self._tier_stats[host] = {
             'created_at': __import__('time').time(),
@@ -506,7 +506,7 @@ class MultiTierRotatingBloomFilter:
         new_tier = BloomFilter(
             max_elements=self._per_host_capacity,
             error_rate=0.01,
-        )
+    )
         self._host_tiers[host] = new_tier
         
         return new_tier

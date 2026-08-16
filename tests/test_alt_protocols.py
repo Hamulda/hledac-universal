@@ -90,7 +90,7 @@ class TestGopherTransport:
             selector="/test.txt",
             host="gopher.example.com",
             port=70,
-        )
+    )
         assert item.item_type == "0"
         assert item.display_string == "Test File"
         assert item.selector == "/test.txt"
@@ -103,7 +103,7 @@ class TestGopherTransport:
             url="gopher://example.com/test",
             item_type="file",
             source_server="example.com",
-        )
+    )
         assert finding.title == "Test"
         assert finding.url.startswith("gopher://")
 
@@ -156,7 +156,7 @@ class TestGeminiTransport:
             body="# Test\nTest content",
             content_type="text/gemini",
             url="gemini://example.com/",
-        )
+    )
         assert resp.status == 20
         assert "text/gemini" in resp.meta
 
@@ -168,7 +168,7 @@ class TestGeminiTransport:
             url="gemini://example.com/",
             content_type="text/gemini",
             source_capsule="example.com",
-        )
+    )
         assert finding.title == "Test Capsule"
         assert finding.url.startswith("gemini://")
 
@@ -305,7 +305,7 @@ class TestAlternativeProtocolFetcher:
             findings_count=5,
             success=True,
             error=None,
-        )
+    )
         assert result.source_type == "ipfs"
         assert result.findings_count == 5
         assert result.success is True
@@ -386,7 +386,7 @@ class TestFediverseAdapter:
             MAX_CONCURRENT_INSTANCES,
             MAX_RESULTS_PER_INSTANCE,
             RATE_LIMIT_DELAY,
-        )
+    )
 
         assert FEDIVERSE_TIMEOUT == 10.0
         assert MAX_RESULTS_PER_INSTANCE == 50
@@ -432,7 +432,7 @@ class TestMatrixAdapter:
             MAX_GUEST_TOKEN_AGE,
             MAX_ROOM_MESSAGES,
             MAX_ROOMS_TO_SEARCH,
-        )
+    )
 
         assert MATRIX_TIMEOUT == 10.0
         assert MAX_ROOM_MESSAGES == 50
@@ -499,7 +499,7 @@ class TestTorrentMetadataFetcher:
             MAX_PEERS_TO_TRY,
             METADATA_PIECE_SIZE,
             UT_METADATA_ID,
-        )
+    )
 
         assert UT_METADATA_ID == 1
         assert METADATA_PIECE_SIZE == 16384
@@ -518,7 +518,7 @@ class TestTorrentMetadataFetcher:
             piece_length=16384,
             pieces=b"",
             trackers=["http://tracker.example.com"],
-        )
+    )
         assert info.name == "test.torrent"
         assert len(info.files) == 1
         assert info.total_size == 1024
@@ -538,7 +538,7 @@ class TestTorrentMetadataFetcher:
             piece_length=16384,
             pieces=b"",
             trackers=["http://tracker.example.com"],
-        )
+    )
 
         findings = fetcher.extract_intel_from_torrent(info, "abc123" * 6 + "abcd")
         assert len(findings) >= 4  # files + size + tracker

@@ -5,10 +5,14 @@ Optimized for M1 8GB with Rust acceleration where available.
 """
 from __future__ import annotations
 
+import functools
+import logging
 import urllib.parse
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from hledac.universal.utils.cache import PyCacheDict
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from hledac.universal._core.rust_backend import rust as _rust_backend
@@ -52,6 +56,7 @@ def classify_url_cached(url: str) -> tuple[str, str]:
     try:
         result = _get_rust_backend().url.classify_url(url)
     except Exception:  # noqa: BLE001 — best-effort fallback; Rust unavailable/non-functional
+        logger.debug("Rust URL classifier unavailable, falling back to Python", exc_info=True)
         result = _python_classify_url(url)
     _classify_url_cache.set(url, result)
     return result
@@ -126,7 +131,7 @@ def batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
         cache = _get_rust_url_cache()
         return cache.classify_batch_cached(urls)
     except Exception:  # noqa: BLE001 — best-effort; batch classification failure is non-fatal
-        pass
+        logger.debug("Rust batch URL cache unavailable, using Python fallback", exc_info=True)
     results: list[tuple[str, str] | None] = [None] * len(urls)  # fully populated before return
     misses: list[tuple[int, str]] = []
     for i, url in enumerate(urls):
@@ -141,6 +146,7 @@ def batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
     try:
         batch_results = _get_rust_backend().url.batch_classify(miss_urls)
     except Exception:  # noqa: BLE001 — best-effort; fallback to Python classifier
+        logger.debug("Rust batch classify unavailable, using Python fallback", exc_info=True)
         batch_results = [_python_classify_url(u) for u in miss_urls]
     batch_updates = dict(zip(miss_urls, batch_results))
     _classify_url_cache.update(batch_updates)
@@ -293,5 +299,4 @@ def looks_like_feed_url(url: str) -> bool:
         return False
 
 
-import functools
 from _core import aclose

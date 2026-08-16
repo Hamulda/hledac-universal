@@ -105,7 +105,7 @@ class SprintDiffEngine:
                 new_findings=current_findings[:cap],
                 disappeared_findings=[],
                 changed_entities=[],
-            )
+    )
 
         # ── SINGLE-PASS index building (was 4 separate loops) ─────────────────
         # Build prev_by_key AND prev_by_val in ONE loop
@@ -181,7 +181,7 @@ class SprintDiffEngine:
             new_findings=new_findings,
             disappeared_findings=disappeared_findings,
             changed_entities=changed,
-        )
+    )
 
     def build_target_profile(
         self,
@@ -228,7 +228,7 @@ class SprintDiffEngine:
                 "fail-soft suppression: build_target_profile (entity_summary): %s",
                 _e,
                 exc_info=True,
-            )
+    )
 
         try:
             entity_summary_json = orjson.dumps(entity_summary).decode()
@@ -264,7 +264,7 @@ class SprintDiffEngine:
             entity_summary_json=entity_summary_json,
             finding_velocity=finding_velocity,
             entity_types=entity_types,
-        )
+    )
 
     # ── private helpers ────────────────────────────────────────────────────────
 

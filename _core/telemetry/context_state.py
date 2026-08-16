@@ -63,7 +63,7 @@ class TelemetryContext(msgspec.Struct, frozen=True, eq=False, gc=False):
             lane_queue_depth=self.lane_queue_depth,
             trace_id=self.trace_id,
             span_id=self.span_id,
-        )
+    )
 
     def with_sprint_id(self, sprint_id: str) -> "TelemetryContext":
         """Return new instance with updated sprint_id."""
@@ -77,7 +77,7 @@ class TelemetryContext(msgspec.Struct, frozen=True, eq=False, gc=False):
             lane_queue_depth=self.lane_queue_depth,
             trace_id=self.trace_id,
             span_id=self.span_id,
-        )
+    )
 
     def with_request_id(self, request_id: str) -> "TelemetryContext":
         """Return new instance with updated request_id."""
@@ -91,7 +91,7 @@ class TelemetryContext(msgspec.Struct, frozen=True, eq=False, gc=False):
             lane_queue_depth=self.lane_queue_depth,
             trace_id=self.trace_id,
             span_id=self.span_id,
-        )
+    )
 
     def with_lane(self, lane: str, latency_ms: float = 0.0, queue_depth: int = 0) -> "TelemetryContext":
         """Return new instance with updated lane metrics."""
@@ -105,7 +105,7 @@ class TelemetryContext(msgspec.Struct, frozen=True, eq=False, gc=False):
             lane_queue_depth=queue_depth,
             trace_id=self.trace_id,
             span_id=self.span_id,
-        )
+    )
 
     def with_trace(self, trace_id: str, span_id: str) -> "TelemetryContext":
         """Return new instance with updated OTel trace context."""
@@ -119,7 +119,7 @@ class TelemetryContext(msgspec.Struct, frozen=True, eq=False, gc=False):
             lane_queue_depth=self.lane_queue_depth,
             trace_id=trace_id,
             span_id=span_id,
-        )
+    )
 
 
 # Module-level singleton — initialized in init_telemetry_context()
@@ -127,7 +127,7 @@ _TELEMETRY_CONTEXT: TelemetryContext = TelemetryContext()
 _CONTEXT_TOKEN: contextvars.Token[TelemetryContext] | None = None
 _telemetry_context_var: contextvars.ContextVar[TelemetryContext] = contextvars.ContextVar(
     "_telemetry_context", default=TelemetryContext()
-)
+    )
 
 
 def init_telemetry_context(
@@ -191,7 +191,7 @@ def _bind_telemetry_to_structlog(ctx: TelemetryContext) -> None:
             lane=ctx.lane,
             trace_id=ctx.trace_id,
             span_id=ctx.span_id,
-        )
+    )
     except Exception:  # noqa: BLE001
         pass  # Fail-safe: logging still works without structlog binding
 
@@ -201,7 +201,7 @@ def _bind_telemetry_to_structlog(ctx: TelemetryContext) -> None:
 # Sprint phase ContextVar — set by SprintScheduler.phase_transition_callback
 _sprint_phase_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "sprint_phase", default=""
-)
+    )
 
 
 def set_sprint_phase(phase: str) -> None:
@@ -219,7 +219,7 @@ def get_sprint_phase() -> str:
 # Stealth layer ContextVar — set by SprintScheduler when stealth is enabled
 _stealth_enabled_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "stealth_enabled", default=False
-)
+    )
 
 
 def set_stealth_enabled(enabled: bool) -> None:
@@ -240,7 +240,7 @@ def is_stealth_enabled() -> bool:
 # Visible to all TaskGroup child tasks via contextvars propagation.
 _blitz_mode_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "blitz_mode", default=False
-)
+    )
 
 
 def set_blitz_mode(enabled: bool) -> None:
@@ -262,7 +262,7 @@ def is_blitz_mode() -> bool:
 # Per-sprint correlation ID — set once at sprint start, visible to all child tasks
 _current_sprint_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "current_sprint_id", default=""
-)
+    )
 
 
 def set_current_sprint_id(sprint_id: str) -> None:
@@ -286,7 +286,7 @@ def generate_sprint_id() -> str:
 # Default is empty; set per-request via set_request_id()
 _request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "request_id", default=""
-)
+    )
 
 
 def set_request_id(request_id: str | None = None) -> str:
@@ -321,7 +321,7 @@ def reset_request_id() -> None:
 _lane_metrics_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
     "lane_metrics",
     default={"lane": "none", "latency_ms": 0.0, "queue_depth": 0},
-)
+    )
 
 
 def set_lane_metrics(

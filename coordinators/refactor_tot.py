@@ -71,7 +71,7 @@ new_code = '''async def _tree_of_thoughts_reasoning(self, query: str) -> dict[st
         result = await _run_tot_search(
             self, query, nodes, leaves, max_depth, branching_factor, beam_width,
             value_predictor, dead_end_detector, query_complexity, checkpointer
-        )
+    )
         
         if checkpointer:
             try:
@@ -92,7 +92,7 @@ async def _init_tot_checkpointer(self, query: str):
             checkpointer = TransactionalToTCheckpointer(
                 sprint_id=self._sprint_id, duckdb_store=self._duckdb_store,
                 interval_s=30.0, query_hash=self._query_hash,
-            )
+    )
             self._checkpointer = checkpointer
             return checkpointer
         except Exception:
@@ -178,7 +178,7 @@ async def _run_tot_search(
             new_leaves = await _expand_branches(
                 self, leaf, depth, branching_factor, value_predictor, query_complexity,
                 nodes, dead_end_detector, checkpointer, pruned_count
-            )
+    )
             leaf.expanded = True
             nodes_since_yield = await _yield_if_needed(nodes_since_yield)
         

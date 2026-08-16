@@ -55,7 +55,7 @@ class BranchManager:
             "scheduler",
             "seen_entities",
             "_spike_net",
-        )
+    )
     )
 
     # ISSUE-037-FIX: bounded collections pro memory safety na long-running systémech
@@ -79,7 +79,7 @@ class BranchManager:
         self._entity_cache_fifo: list[str] = []  # pro LRU eviction
         self._ane_model_path: Path | None = (
             Path(ane_model_path) if ane_model_path else None
-        )
+    )
         self.ane_model: Any = None
         self._n_spike_neurons = n_spike_neurons
         self._spike_net: Any = None  # lazy init v _ensure_spike_net()
@@ -99,7 +99,7 @@ class BranchManager:
             self._spike_net = MLXSpikeNetwork(
                 n_neurons=self._n_spike_neurons,
                 ane_model_path=None,  # ANE model je volitelný
-            )
+    )
         except Exception:
             # Fail-soft: spike boosting disabled
             self._spike_net = None
@@ -116,7 +116,7 @@ class BranchManager:
         try:
             self.ane_model = ct.models.MLModel(  # type: ignore[union-attr]
                 str(self._ane_model_path)
-            )
+    )
             logger.info("Loaded ANE model from %s", self._ane_model_path)
         except Exception as e:
             logger.warning("Failed to load ANE model: %s", e)
@@ -158,7 +158,7 @@ class BranchManager:
                 if hasattr(self.claim_index, "is_contested"):
                     contradiction = (
                         1.0 if self.claim_index.is_contested(entity) else 0.0
-                    )
+    )
             except Exception:
                 contradiction = 0.0
 
@@ -227,12 +227,12 @@ class BranchManager:
                     "source": finding.get("source"),
                 },
                 entity=entity,
-            )
+    )
             logger.info(
                 "Created branch for entity %s with priority %.2f",
                 entity,
                 priority,
-            )
+    )
 
     async def _spike_boost(self, entity: str, prob: float) -> None:
         """
@@ -273,13 +273,13 @@ class BranchManager:
                 },
                 entity=entity,
                 spike_count=spike_count,
-            )
+    )
             logger.debug(
                 "Spike boost submitted for %s (spikes=%d, priority=%.2f)",
                 entity,
                 spike_count,
                 boost_priority,
-            )
+    )
 
     async def _spike_boost_task(
         self, entity: str, spike_count: int
@@ -297,7 +297,7 @@ class BranchManager:
             "Spike boost executed for entity=%s (spike_count=%d)",
             entity,
             spike_count,
-        )
+    )
         return {"entity": entity, "spike_count": spike_count, "boosted": boosted}
 
     async def _explore_entity(self, entity: str) -> None:
@@ -311,7 +311,7 @@ class BranchManager:
                     "Explored entity %s: %d results cached",
                     entity,
                     len(results),
-                )
+    )
         except TimeoutError:
             logger.debug("Entity exploration timed out: %s", entity)
         except Exception as e:
@@ -335,7 +335,7 @@ class BranchManager:
                         "title": doc.title,
                         "score": doc.score,
                     }
-                )
+    )
             if results:
                 return results
         except Exception:  # noqa: BLE001
@@ -354,7 +354,7 @@ class BranchManager:
                         "relation": item.get("relation"),
                         "neighbors": item.get("neighbors", []),
                     }
-                )
+    )
             if results:
                 return results
         except Exception:  # noqa: BLE001

@@ -54,7 +54,7 @@ def _lazy_import_otel_attr(
     except ImportError:
         sys.stderr.write(
             f"[telemetry] opentelemetry not installed; {attr} unavailable\n"
-        )
+    )
         return fallback
 
 
@@ -71,7 +71,7 @@ def _lazy_import_hledac_otel_attr(
     except ImportError:
         sys.stderr.write(
             f"[telemetry] {module_path} unavailable; {attr} unavailable\n"
-        )
+    )
         return fallback
 
 
@@ -79,13 +79,13 @@ def _lazy_import_hledac_otel_attr(
 
 DuckDBSpanExporter = _lazy_import_hledac_otel_attr(
     "hledac.universal.otel._duckdb_exporter", "DuckDBSpanExporter"
-)
+    )
 QueryBuilder = _lazy_import_hledac_otel_attr(
     "hledac.universal.otel._duckdb_exporter", "QueryBuilder"
-)
+    )
 create_otel_spans_table = _lazy_import_hledac_otel_attr(
     "hledac.universal.otel._duckdb_exporter", "create_otel_spans_table"
-)
+    )
 
 # ── _instrumentation ────────────────────────────────────────────────────────
 
@@ -103,10 +103,10 @@ span = _lazy_import_otel_attr("otel._instrumentation", "span")
 
 create_task_with_context = _lazy_import_otel_attr(
     "otel._instrumentation_asyncio", "create_task_with_context"
-)
+    )
 current_otel_context = _lazy_import_otel_attr(
     "otel._instrumentation_asyncio", "current_otel_context"
-)
+    )
 
 # ── _setup ───────────────────────────────────────────────────────────────────
 

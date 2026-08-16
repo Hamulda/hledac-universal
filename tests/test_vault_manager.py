@@ -22,11 +22,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-
-
-
-
-
+from security.vault_manager import (
     CRYPTO_AVAILABLE,
     PYZIPPER_AVAILABLE,
     LootManager,
@@ -37,7 +33,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 class TestVaultManagerInstantiation:
     """P1-6-1: LootManager instantiation fails without crypto deps."""
 
-from _core import aclose
     def test_instantiation_succeeds_with_crypto(self):
         """VaultManager should instantiate when crypto is available."""
         if not (CRYPTO_AVAILABLE or PYZIPPER_AVAILABLE):

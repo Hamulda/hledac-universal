@@ -78,7 +78,7 @@ class TestDeepProbeRunnerIntegration:
                     query="test query",
                     store=mock_store,
                     timeout_s=30.0,
-                )
+    )
 
                 assert isinstance(result, dict)
                 assert "urls_discovered" in result
@@ -107,7 +107,7 @@ class TestDeepProbeRunnerIntegration:
                     query="test query",
                     store=mock_store,
                     timeout_s=30.0,
-                )
+    )
 
                 # All recorded findings should have source_type="deep_probe"
                 for record in call_records:
@@ -128,7 +128,7 @@ class TestDeepProbeRunnerIntegration:
                     query="test query",
                     store=mock_store,
                     timeout_s=30.0,
-                )
+    )
 
                 # Should still return a valid result dict
                 assert isinstance(result, dict)
@@ -160,7 +160,7 @@ class TestDeepProbeRunnerIntegration:
                     query="test query",
                     store=mock_store,
                     timeout_s=test_timeout,
-                )
+    )
                 elapsed = time.monotonic() - start
 
                 # Should complete within reasonable time of timeout
@@ -177,7 +177,7 @@ class TestDeepProbeRunnerIntegration:
             query="test query",
             store=mock_store,
             deep_probe_enabled=False,
-        )
+    )
 
         assert result is None
 
@@ -192,7 +192,7 @@ class TestDeepProbeRunnerIntegration:
                     query="test query",
                     store=mock_store,
                     deep_probe_enabled=True,
-                )
+    )
 
                 assert result is not None
                 assert result["probe_source_type"] == "deep_probe"
@@ -275,7 +275,7 @@ class TestDeepProbeProbeRunnerImports:
             MAX_BUCKET_SCAN,
             MAX_CRAWL_DEPTH,
             MAX_PROBE_DURATION_S,
-        )
+    )
         assert MAX_PROBE_DURATION_S == 120.0
         assert MAX_CRAWL_DEPTH == 3
         assert MAX_BUCKET_SCAN == 50
@@ -289,7 +289,7 @@ class TestDeepProbeProbeRunnerImports:
             scan_deep_web,
             scan_ipfs,
             scan_s3_buckets,
-        )
+    )
         assert callable(DeepProbeScanner)
         assert callable(scan_deep_web)
         assert callable(scan_ipfs)

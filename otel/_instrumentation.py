@@ -182,7 +182,7 @@ class _SpanContextManager:
             # hook the span lifecycle to our __exit__.
             self._acm = self._tracer.start_as_current_span(
                 self._name, attributes=filtered
-            )
+    )
             self._span = self._acm.__enter__()
             return self._span
         except Exception:

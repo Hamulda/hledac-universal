@@ -188,7 +188,7 @@ def try_op(
             "try_op failed: %s",
             error_msg,
             exc_info=e,
-        )
+    )
         return Err(label or "unknown", e)  # type: ignore[return-value]
 
 
@@ -220,7 +220,7 @@ async def try_op_async(
             "try_op_async failed: %s",
             error_msg,
             exc_info=e,
-        )
+    )
         return Err(label or "unknown", e)  # type: ignore[return-value]
 
 

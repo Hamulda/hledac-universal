@@ -33,7 +33,7 @@ from ._models import (
     StreamEvent,
     TorProxyManager,
     get_stealth_headers,
-)
+    )
 
 from .scraper import (
     StealthCrawler,
@@ -41,7 +41,7 @@ from .scraper import (
     create_stealth_crawler,
     get_stealth_web_scraper,
     quick_scrape,
-)
+    )
 
 from .monitor import StreamingMonitor
 from _core import aclose

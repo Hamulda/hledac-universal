@@ -54,6 +54,10 @@ from _core import aclose
 __all__ = [
     "Settings",
     "settings",
+    # Canonical model constants (ISSUE-015: single source of truth)
+    "HERMES_MODEL_DEFAULT",
+    "MODERNBERT_MODEL_DEFAULT",
+    "GLINER_MODEL_DEFAULT",
     # Domain structs
     "FetchSettings",
     "MLXSettings",
@@ -66,6 +70,16 @@ __all__ = [
     "SynthesisSettings",
     "CooldownSettings",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Canonical Model Constants (ISSUE-015: Config Drift Fix)
+# Single source of truth for model identifiers - referenced by all config classes
+# ---------------------------------------------------------------------------
+
+HERMES_MODEL_DEFAULT: str = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
+MODERNBERT_MODEL_DEFAULT: str = "mlx-community/answerdotai-ModernBERT-base-6bit"
+GLINER_MODEL_DEFAULT: str = "knowledgator/gliner-relex-large-v0.5"
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +127,7 @@ class FetchSettings(msgspec.Struct, frozen=True, gc=False):
             retry_attempts=ENV.get_int("HLEDAC_FETCH_RETRY_ATTEMPTS", 3),
             retry_backoff_s=ENV.get_float("HLEDAC_FETCH_RETRY_BACKOFF_S", 1.0),
             browser_mem_threshold_gib=ENV.get_float("HLEDAC_BROWSER_MEM_THRESHOLD_GIB", 1.0),
-        )
+    )
 
 
 class MLXSettings(msgspec.Struct, frozen=True, gc=False):
@@ -123,8 +137,8 @@ class MLXSettings(msgspec.Struct, frozen=True, gc=False):
     kv_bits: int = 4
     max_kv_size: int = 8192
 
-    # Hermes3 model
-    hermes_model: str = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
+    # Hermes3 model (ISSUE-015: uses canonical constant)
+    hermes_model: str = HERMES_MODEL_DEFAULT
     hermes_no_cache: bool = False
     half_precision: bool = True
     paged_kv_cache: bool = False
@@ -155,9 +169,10 @@ class MLXSettings(msgspec.Struct, frozen=True, gc=False):
         return cls(
             kv_bits=ENV.get_int("GHOST_KV_BITS", 4),
             max_kv_size=ENV.get_int("GHOST_KV_SIZE", 8192),
+            # ISSUE-015: Uses canonical constant as default
             hermes_model=os.environ.get(
                 "HLEDAC_HERMES_MODEL",
-                "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
+                HERMES_MODEL_DEFAULT
             ),
             hermes_no_cache=ENV.get_bool("HLEDAC_HERMES_NO_CACHE", False),
             half_precision=ENV.get_bool("HLEDAC_HALF_PRECISION", True),
@@ -176,7 +191,7 @@ class MLXSettings(msgspec.Struct, frozen=True, gc=False):
             batch_timeout_s=ENV.get_float("HLEDAC_BATCH_TIMEOUT_S", 120.0),
             ane_embed_batch_size=ENV.get_int("HLEDAC_ANE_EMBED_BATCH_SIZE", 32),
             ane_dedup_threshold=ENV.get_float("HLEDAC_ANE_DEDUP_THRESHOLD", 0.92),
-        )
+    )
 
 
 class DuckDBSettings(msgspec.Struct, frozen=True, gc=False):
@@ -202,7 +217,7 @@ class DuckDBSettings(msgspec.Struct, frozen=True, gc=False):
             arrow_ingest=ENV.get_bool("HLEDAC_ARROW_INGEST", True),
             memory_limit_gib=min(ENV.get_float("HLEDAC_DUCKDB_MEMORY", 2.0), MISSION_PEAK_RSS_GIB),
             memory_ceiling_gib=ENV.get_float("HLEDAC_DUCKDB_MEMORY_CEILING", MISSION_PEAK_RSS_GIB),
-        )
+    )
 
 
 class DedupSettings(msgspec.Struct, frozen=True, gc=False):
@@ -218,7 +233,7 @@ class DedupSettings(msgspec.Struct, frozen=True, gc=False):
             lmdb_map_size=ENV.get_int("HLEDAC_DEDUP_LMDB_MAP_SIZE", 256 * 1024 * 1024),
             hot_cache_max=ENV.get_int("HLEDAC_DEDUP_HOT_CACHE_MAX", 10_000),
             max_ngrams=ENV.get_int("HLEDAC_DEDUP_MAX_NGRAMS", 5_000),
-        )
+    )
 
 
 class TransportSettings(msgspec.Struct, frozen=True, gc=False):
@@ -253,7 +268,7 @@ class TransportSettings(msgspec.Struct, frozen=True, gc=False):
             dht_enabled=ENV.get_bool("HLEDAC_ENABLE_DHT", False),
             dht_max_peers=ENV.get_int("HLEDAC_DHT_MAX_PEERS", 100),
             dht_rpc_timeout_s=ENV.get_float("HLEDAC_DHT_RPC_TIMEOUT_S", 10.0),
-        )
+    )
 
 
 class MemorySettings(msgspec.Struct, frozen=True, gc=False):
@@ -294,7 +309,7 @@ class MemorySettings(msgspec.Struct, frozen=True, gc=False):
             threshold_critical_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_CRITICAL_GIB", 6.191),
             threshold_emergency_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_EMERGENCY_GIB", 6.25),
             hysteresis_exit_gib=ENV.get_float("HLEDAC_RG_HYSTERESIS_EXIT_GIB", 4.5),
-        )
+    )
 
 
 class SprintSettings(msgspec.Struct, frozen=True, gc=False):
@@ -326,7 +341,7 @@ class SprintSettings(msgspec.Struct, frozen=True, gc=False):
             windup_ratio_quick=ENV.get_float("HLEDAC_WINDUP_RATIO_QUICK", 0.20),
             windup_ratio_short=ENV.get_float("HLEDAC_WINDUP_RATIO_SHORT", 0.25),
             windup_ratio_default=ENV.get_float("HLEDAC_WINDUP_RATIO_DEFAULT", 0.30),
-        )
+    )
 
 
 class GraphSettings(msgspec.Struct, frozen=True, gc=False):
@@ -344,7 +359,7 @@ class GraphSettings(msgspec.Struct, frozen=True, gc=False):
             max_hops=ENV.get_int("HLEDAC_GRAPH_MAX_HOPS", 3),
             max_candidates=ENV.get_int("HLEDAC_GRAPH_MAX_CANDIDATES", 1000),
             hot_cache_max=ENV.get_int("HLEDAC_GRAPH_HOT_CACHE_MAX", 512),
-        )
+    )
 
 
 class SynthesisSettings(msgspec.Struct, frozen=True, gc=False):
@@ -365,7 +380,7 @@ class SynthesisSettings(msgspec.Struct, frozen=True, gc=False):
             hermes_budget_ratio=ENV.get_float("HLEDAC_HERMES_BUDGET_RATIO", 0.35),
             deep_hermes_enabled=ENV.get_bool("HLEDAC_ENABLE_DEEPHERMES", False),
             pydantic_validation=ENV.get_bool("HLEDAC_DEEPHERMES_PYDANTIC_VALIDATION", False),
-        )
+    )
 
 
 class CooldownSettings(msgspec.Struct, frozen=True, gc=False):
@@ -408,7 +423,7 @@ class CooldownSettings(msgspec.Struct, frozen=True, gc=False):
             cooldown_base_s=ENV.get_float("HLEDAC_COOLDOWN_BASE_S", 60.0),
             cooldown_max_s=ENV.get_float("HLEDAC_COOLDOWN_MAX_S", 600.0),
             cooldown_backoff_factor=ENV.get_float("HLEDAC_COOLDOWN_BACKOFF_FACTOR", 1.5),
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +513,7 @@ class FeatureGates(msgspec.Struct, frozen=True, gc=False):
             curl_cffi=ENV.get_bool("HLEDAC_ENABLE_CURL_CFFI"),
             httpx_h2=ENV.get_bool("HLEDAC_ENABLE_HTTPX_H2"),
             httpx_h3=ENV.get_bool("HLEDAC_ENABLE_HTTPX_H3"),
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +572,7 @@ class Settings(msgspec.Struct, frozen=True, gc=False):
             synthesis=SynthesisSettings.from_env(),
             cooldown=CooldownSettings.from_env(),
             features=FeatureGates.from_env(),
-        )
+    )
 
 
 # ---------------------------------------------------------------------------

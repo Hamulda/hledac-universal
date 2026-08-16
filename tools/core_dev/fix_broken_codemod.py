@@ -108,7 +108,7 @@ def fix_broken_file(path: str) -> tuple[bool, str]:
         leftover_match = re.match(
             r"(\s+[A-Za-z_][\w., ]*?return_exceptions\s*=\s*True\s*\))",
             after,
-        )
+    )
         leftover_end = paren_end + 1
         if leftover_match:
             leftover_end += len(leftover_match.group(1))

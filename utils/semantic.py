@@ -293,7 +293,7 @@ class SemanticFilter:
             content="Python is a great programming language",
             query="best programming languages",
             threshnew=0.7
-        )
+    )
         if result.passed:
             # Send to DeepSeek
     """

@@ -136,7 +136,7 @@ class ProvenanceRecord:
             source=data.get("source", ""),
             protocol=protocol,
             raw_source_type=data.get("raw_source_type", ""),
-        )
+    )
 
     @classmethod
     def from_source(cls, source: str, timestamp: float | None = None) -> ProvenanceRecord:
@@ -189,12 +189,12 @@ class IOCEntity:
                     f"IOC type was demoted to 'pending' from '{self.raw_ioc_type}'. "
                     "This indicates provenance information loss. "
                     "Preserve the original type and use 'pending_confidence' field instead."
-                )
+    )
             else:
                 raise ValueError(
                     "IOC type 'pending' is not allowed in SprintDataUnit. "
                     "Use the original type with a separate 'classification_status' field."
-                )
+    )
 
 
 # ─── IOC Relation Record ──────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ class SprintDataUnit:
             ioc_entities=[ioc_entity],
             ioc_relations=[relation],
             provenance=ProvenanceRecord.from_source("https://example.com")
-        )
+    )
     """
     # Core finding data
     finding: dict[str, Any] | None = None
@@ -257,7 +257,7 @@ class SprintDataUnit:
             raise ValueError(
                 "SprintDataUnit requires provenance. "
                 "Every data item must have an immutable provenance record."
-            )
+    )
 
     def validate(self) -> list[str]:
         """
@@ -341,7 +341,7 @@ class SprintTransactionState:
             and self.written_ioc_entities
             and self.written_ioc_relations
             and self.written_target_memory
-        )
+    )
 
 
 # ─── Rollback Registry ────────────────────────────────────────────────────────
@@ -502,7 +502,7 @@ class SprintTransaction:
         self._state.unit = SprintDataUnit(
             raw_bytes=raw_bytes,
             provenance=provenance,
-        )
+    )
 
     def add_finding(self, finding: dict[str, Any]) -> None:
         """
@@ -603,7 +603,7 @@ class SprintTransaction:
             timestamp=ts,
             source=source,
             protocol=protocol or ProvenanceProtocol.UNKNOWN,
-        )
+    )
 
         # ISSUE-FIX: Validate provenance has source for non-memory protocols
         if prov.protocol not in (ProvenanceProtocol.MEMORY, ProvenanceProtocol.UNKNOWN):
@@ -740,7 +740,7 @@ class SprintTransaction:
                         compressed_offset=compressed_offset,
                         compressed_size=compressed_size,
                         warc_url=warc_url,
-                    )
+    )
                     if result:
                         self._state.finding_id = finding_id
                 except Exception:
@@ -749,7 +749,7 @@ class SprintTransaction:
                         store, finding, finding_id, query, source_type,
                         confidence, ts, provenance_json, payload_text, claims_json,
                         warc_record_id, warc_path, compressed_offset, compressed_size, warc_url
-                    )
+    )
                     if finding_id:
                         self._state.finding_id = finding_id
             else:
@@ -759,7 +759,7 @@ class SprintTransaction:
                     store, finding, finding_id, query, source_type,
                     confidence, ts, provenance_json, payload_text, claims_json,
                     warc_record_id, warc_path, compressed_offset, compressed_size, warc_url
-                )
+    )
                 if finding_id:
                     self._state.finding_id = finding_id
 
@@ -819,7 +819,7 @@ class SprintTransaction:
                     payload_text, claims_json, warc_record_id, warc_path,
                     compressed_offset, compressed_size, warc_url
                 ],
-            )
+    )
             return finding_id
         except Exception as e:
             logger.debug(f"[SprintTX] _write_finding_raw failed: {e}")
@@ -864,7 +864,7 @@ class SprintTransaction:
                         observed_at=entity.observed_at,
                         provenance=provenance,
                         classification_status=self._state.unit.classification_status,
-                    )
+    )
                 else:
                     # Fallback: compute stable node_id from value directly
                     node_id = _stable_node_id(entity.value)
@@ -880,7 +880,7 @@ class SprintTransaction:
                     observed_at=entity.observed_at,
                     provenance=provenance,
                     classification_status=self._state.unit.classification_status,
-                )
+    )
 
             # Register rollback
             self._rollback.register(200, lambda: self._rollback_ioc_entities())
@@ -916,7 +916,7 @@ class SprintTransaction:
                     rel_type=rel.rel_type,
                     weight=rel.weight,
                     evidence=rel.evidence,
-                )
+    )
                 # Track written edge for rollback (src_id, dst_id)
                 try:
                     src_id = _stable_node_id(rel.src_value)
@@ -964,7 +964,7 @@ class SprintTransaction:
             conn.execute(
                 "DELETE FROM canonical_findings WHERE id = ?",
                 [self._state.finding_id],
-            )
+    )
         except Exception as e:
             logger.warning(f"[SprintTX] rollback_finding failed: {e}")
 
@@ -999,7 +999,7 @@ class SprintTransaction:
                     src=rel.src_value,
                     dst=rel.dst_value,
                     rel_type=rel.rel_type,
-                )
+    )
 
             # MODERN-35 FIX: Clear hot_edges buffer entries written during this transaction
             # Use the new SprintDenormBuffer API instead of accessing _DENORM_BUFFER directly
@@ -1116,7 +1116,7 @@ class BatchSprintPipeline:
                     txn.set_provenance(
                         source=unit.provenance.source if unit.provenance else "",
                         timestamp=unit.provenance.timestamp if unit.provenance else None,
-                    )
+    )
                     if unit.finding:
                         txn.add_finding(unit.finding)
                     if unit.ioc_entities:

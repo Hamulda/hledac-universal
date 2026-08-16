@@ -535,7 +535,7 @@ class AgentPerformanceOptimizer:
                 memory_freed_mb=max(0, memory_before - memory_after),
                 agent_pool_stats=self.agent_pool.get_pool_stats(),
                 performance_improvement=15.0,
-            )
+    )
             logger.info(f'Performance optimization completed: {report}')
         except Exception as e:
             logger.error(f'Performance optimization failed: {e}')

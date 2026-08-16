@@ -191,7 +191,7 @@ class ArtiNodeClient:
             # Create ArtiNode (sync, but fast)
             self._node = _RUST.arti_bridge.ArtiNode(
                 data_dir=str(self._data_dir)
-            )
+    )
 
             # Bootstrap (blocking, but we run in thread to not block event loop)
             session_id = f'hledac-arti-{uuid.uuid4().hex[:8]}'
@@ -210,7 +210,7 @@ class ArtiNodeClient:
                 logger.info(
                     f'ArtiNode ready: {status.get("bootstrap_status", "unknown")}'
                     f' ({status.get("circuits_prebuilt", 0)} circuits)'
-                )
+    )
                 return True
             else:
                 logger.warning('ArtiNode bootstrap failed')
@@ -524,7 +524,7 @@ class ArtiClient:
         return (
             self._arti_process is not None
             and self._arti_process.returncode is None
-        )
+    )
 
     # ── Arti subprocess management ──────────────────────────────────────────
 
@@ -556,7 +556,7 @@ class ArtiClient:
                 '--log-level', 'warn',
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
-            )
+    )
 
             # Wait for SOCKS port to become available (exponential backoff)
             delay = 0.5
@@ -568,7 +568,7 @@ class ArtiClient:
                     logger.info(
                         f'Arti proxy ready in {total_wait:.1f}s'
                         f' (pid={self._arti_process.pid})'
-                    )
+    )
                     return True
                 delay = min(delay * 2, 4.0)
                 # Check if process died
@@ -578,13 +578,13 @@ class ArtiClient:
                         f'Arti process exited with code'
                         f' {self._arti_process.returncode}:'
                         f' {stderr_data[:200]!r}'
-                    )
+    )
                     return False
             else:
                 logger.warning(
                     f'Arti SOCKS port not ready after'
                     f' {ARTI_STARTUP_TIMEOUT}s'
-                )
+    )
                 return False
         except Exception as e:
             logger.warning(f'Arti subprocess start failed: {e}')
@@ -596,7 +596,7 @@ class ArtiClient:
             async with asyncio.timeout(2.0):
                 _, writer = await asyncio.open_connection(
                     self._host, self._port
-                )
+    )
                 writer.close()
                 try:
                     await writer.wait_closed()
@@ -639,7 +639,7 @@ class ArtiClient:
             async with asyncio.timeout(self._timeout):
                 self._reader, self._writer = await asyncio.open_connection(
                     self._host, self._port
-                )
+    )
             self._connected = True
             logger.debug(f'ArtiClient connected to {self._host}:{self._port}')
             return True
@@ -761,7 +761,7 @@ class ArtiClient:
                 if auth_reply[0] != SOCKS5_VERSION or auth_reply[1] != 0x00:
                     logger.debug(
                         f'Arti SOCKS5 auth rejected: {auth_reply.hex()}'
-                    )
+    )
                     return None
 
                 # SOCKS5 handshake step 3: CONNECT request
@@ -790,7 +790,7 @@ class ArtiClient:
                     logger.debug(
                         f'Arti SOCKS5 connect rejected:'
                         f' REP={reply_header[1]:#04x}'
-                    )
+    )
                     return None
 
                 # Read remaining address bytes based on ATYP
@@ -808,7 +808,7 @@ class ArtiClient:
 
                 logger.debug(
                     f'Arti SOCKS5 connected to {destination}:{port}'
-                )
+    )
                 return (self._reader, self._writer)  # type: ignore[return-value]
 
             except TimeoutError:
@@ -1003,7 +1003,7 @@ class ArtiTransport(Transport):
             port=socks_port,
             control_port=control_port,
             data_dir=data_dir,
-        )
+    )
         self._data_dir = Path(ARTI_DATA_DIR).expanduser() if data_dir is None else Path(data_dir).expanduser()
         self._socks_port = socks_port
         self._control_port = control_port
@@ -1040,7 +1040,7 @@ class ArtiTransport(Transport):
                 try:
                     self._client = ArtiNodeClient(
                         data_dir=str(self._data_dir),
-                    )
+    )
                     ok = await self._client.connect()
                     if ok:
                         self._client_mode = self.MODE_EMBEDDED
@@ -1049,7 +1049,7 @@ class ArtiTransport(Transport):
                         logger.info(
                             'NEXTGEN-06: ArtiTransport ready (embedded mode)'
                             f' data_dir={self._data_dir}'
-                        )
+    )
                         return True
                     else:
                         logger.warning('NEXTGEN-06: Rust ArtiNode bootstrap failed, trying subprocess...')
@@ -1063,7 +1063,7 @@ class ArtiTransport(Transport):
                 port=self._socks_port,
                 control_port=self._control_port,
                 data_dir=str(self._data_dir),
-            )
+    )
             ok = await self._client.connect()
             if ok:
                 # M1 FIX: Register Arti subprocess with resource ledger
@@ -1076,7 +1076,7 @@ class ArtiTransport(Transport):
                 logger.info(
                     f'ArtiTransport ready (subprocess mode)'
                     f' socks={self._socks_port}'
-                )
+    )
                 return True
             else:
                 logger.warning('ArtiTransport start failed — Arti unavailable')
@@ -1138,11 +1138,11 @@ class ArtiTransport(Transport):
                         logger.info(
                             '[Arti/embedded] Phase-boundary circuit rotation:'
                             ' %s → %s', old_phase, new_phase
-                        )
+    )
                     else:
                         logger.warning(
                             '[Arti/embedded] Phase-boundary circuit rotation failed'
-                        )
+    )
                 else:
                     # Fallback to destroy+create
                     await self._client.destroy_session()
@@ -1155,12 +1155,12 @@ class ArtiTransport(Transport):
                 logger.info(
                     '[Arti/subprocess] Phase-boundary session refresh:'
                     ' %s → %s', old_phase, new_phase
-                )
+    )
         except Exception as e:
             logger.warning(
                 '[Arti] Phase-boundary refresh failed:'
                 ' %s → %s: %s', old_phase, new_phase, e
-            )
+    )
 
     async def fetch(self, config: TransportConfig) -> TransportResult:
         """
@@ -1178,7 +1178,7 @@ class ArtiTransport(Transport):
                 error='arti_unavailable',
                 failure_stage='arti_check',
                 selected_transport='arti',
-            )
+    )
 
         from urllib.parse import urlparse
 
@@ -1194,7 +1194,7 @@ class ArtiTransport(Transport):
                 error='arti_url_parse_failed',
                 failure_stage='arti_parse',
                 selected_transport='arti',
-            )
+    )
 
         timeout = getattr(config, 'timeout_s', 30) or 30
         transport_mode = 'arti_embedded' if self._client_mode == self.MODE_EMBEDDED else 'arti_subprocess'
@@ -1206,7 +1206,7 @@ class ArtiTransport(Transport):
                 path=path,
                 port=443 if parsed.scheme == 'https' else 80,
                 timeout=timeout,
-            )
+    )
             if result:
                 status_code, body = result
                 return TransportResult(
@@ -1214,11 +1214,11 @@ class ArtiTransport(Transport):
                     text=body,
                     status_code=status_code,
                     selected_transport=transport_mode,
-                )
+    )
         except Exception as e:
             logger.debug(
                 f'Arti fetch failed for {config.url[:60]}: {e}'
-            )
+    )
 
         # Fallback: try a new connection
         try:
@@ -1231,7 +1231,7 @@ class ArtiTransport(Transport):
                 path=path,
                 port=443 if parsed.scheme == 'https' else 80,
                 timeout=timeout,
-            )
+    )
             if result:
                 status_code, body = result
                 return TransportResult(
@@ -1239,7 +1239,7 @@ class ArtiTransport(Transport):
                     text=body,
                     status_code=status_code,
                     selected_transport=f'{transport_mode}_retry',
-                )
+    )
         except Exception as e:
             logger.debug(f'Arti retry fetch failed: {e}')
 
@@ -1248,7 +1248,7 @@ class ArtiTransport(Transport):
             error='arti_fetch_failed',
             failure_stage='arti_fetch',
             selected_transport='arti',
-        )
+    )
 
 
 # ── Module-level helpers ────────────────────────────────────────────────────

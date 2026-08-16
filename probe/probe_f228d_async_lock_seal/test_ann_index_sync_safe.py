@@ -26,7 +26,7 @@ class TestANNIndexLockSafety:
         assert method is not None, f"{method_name!r} not found"
         assert not inspect.iscoroutinefunction(method), (
             f"{method_name}() should be sync def"
-        )
+    )
 
     @staticmethod
     def _assert_no_await_in_lock(class_or_module, method_name: str) -> None:
@@ -57,14 +57,14 @@ class TestANNIndexLockSafety:
         idx = _ANNIndex(Path("/tmp/test_ann"))
         assert isinstance(idx._lock, threading.Lock), (
             "_ANNIndex._lock should be threading.Lock — guards LanceDB ops in sync context"
-        )
+    )
 
     def test_module_lock_is_threading_lock(self):
         """Module-level _ann_index_lock must be threading.Lock."""
         from knowledge import ann_index
         assert isinstance(ann_index._ann_index_lock, threading.Lock), (
             "_ann_index_lock should be threading.Lock"
-        )
+    )
 
     def test_ann_search_is_sync_def(self):
         """ann_search() is sync def — no async def."""

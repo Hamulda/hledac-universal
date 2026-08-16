@@ -174,7 +174,7 @@ class TestCrossModuleBoundaries:
             "hybrid_retrieve" in rag_api and
             "search_similar" in rag_api and
             "add_entity" in rag_api
-        )
+    )
         assert not hybrid_and_entity, "RAGEngine má všechny 3 API — boundaries rozmazané!"
 
     def test_rag_engine_not_lancedb_schema(self):
@@ -185,7 +185,7 @@ class TestCrossModuleBoundaries:
         lancedb_identity_fields = {"aliases", "first_seen", "last_seen", "embedding"}
         assert len(rag_api_lower & lancedb_identity_fields) == 0, (
             f"RAGEngine má identity fields: {rag_api_lower & lancedb_identity_fields}"
-        )
+    )
 
     def test_assertions_module_usable(self):
         """assertions.py je importovatelný a má správné funkce."""
@@ -194,7 +194,7 @@ class TestCrossModuleBoundaries:
             assert_lancedb_is_not_grounding_authority,
             assert_pq_index_is_compression_only,
             assert_rag_engine_is_not_identity_store,
-        )
+    )
         # Všechny funkce existují a jsou callable
         assert callable(assert_rag_engine_is_not_identity_store)
         assert callable(assert_lancedb_is_not_grounding_authority)

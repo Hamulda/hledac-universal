@@ -35,7 +35,7 @@ from hledac.universal.coordinators.memory._core import (
     CacheEntry,
     CacheLocation,
     CacheType,
-)
+    )
 from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
@@ -174,7 +174,7 @@ class MultiLevelContextCache:
                 connectivity=self._hnsw_m,
                 expansion_add=min(self._hnsw_ef_construction, 100),
                 expansion_search=self._hnsw_ef_search,
-            )
+    )
             logger.debug('USearch index initialized')
         except Exception as e:
             logger.warning(f'USearch index initialization failed: {e}')
@@ -215,7 +215,7 @@ class MultiLevelContextCache:
                     logger.warning(
                         'L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh',
                         len(cache_bytes) // (1024 * 1024),
-                    )
+    )
                     self.l2_cache = {}
                 else:
                     self.l2_cache = self._deserialize_from_json(cache_bytes)
@@ -227,7 +227,7 @@ class MultiLevelContextCache:
                     logger.warning(
                         'L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh',
                         len(cache_bytes) // (1024 * 1024),
-                    )
+    )
                     self.l2_cache = {}
                 else:
                     self.l2_cache = self._deserialize_from_json(cache_bytes)
@@ -439,7 +439,7 @@ class MultiLevelContextCache:
             size_bytes=sys.getsizeof(content),
             cache_type=cache_type,
             metadata={},
-        )
+    )
         async with await self._get_lock():
             if embedding is not None and self.faiss_available:
                 try:
@@ -527,7 +527,7 @@ class MultiLevelContextCache:
                     oldest_id = min(
                         self.l2_cache.keys(),
                         key=lambda k: self.l2_cache[k].last_accessed,
-                    )
+    )
                     del self.l2_cache[oldest_id]
                     self._l2_freq.pop(oldest_id, None)
                 self.stats['evictions'] += 1

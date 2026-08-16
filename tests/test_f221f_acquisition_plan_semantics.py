@@ -16,7 +16,7 @@ No runtime behavior changes — report-only fields.
 from hledac.universal.runtime.acquisition_strategy import (
     ACQUISITION_REPORT_SCHEMA_VERSION,
     build_acquisition_report,
-)
+    )
 
 
 class TestF221F_PlanSemanticsSplit:  # noqa: N801
@@ -41,7 +41,7 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
             plan=None,
             terminality=terminality,
             source_family_outcomes=source_family_outcomes,
-        )
+    )
 
         assert report["prelude_plan"] == []
         assert report["required_lane_plan"] == ["PUBLIC"]
@@ -65,7 +65,7 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
             plan=None,
             terminality=terminality,
             source_family_outcomes=source_family_outcomes,
-        )
+    )
 
         attempted = report["runtime_attempted_lanes"]
         assert "public" in attempted
@@ -85,7 +85,7 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
             plan=None,
             terminality=terminality,
             source_family_outcomes=source_family_outcomes,
-        )
+    )
 
         assert report["plan_semantics"] == "effective_runtime"
 
@@ -103,7 +103,7 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
             plan=None,
             terminality=terminality,
             source_family_outcomes=source_family_outcomes,
-        )
+    )
 
         assert report["plan_semantics"] == "prelude_only"
         assert "public" not in report["runtime_attempted_lanes"]
@@ -117,7 +117,7 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
             AcquisitionLane,
             AcquisitionLanePlan,
             AcquisitionStrategySnapshot,
-        )
+    )
 
         plan_snapshot = AcquisitionStrategySnapshot(plans=[
             AcquisitionLanePlan(
@@ -149,7 +149,7 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
             plan=plan_snapshot,
             terminality=terminality,
             source_family_outcomes=source_family_outcomes,
-        )
+    )
 
         # prelude_plan should contain the original plan dicts
         assert len(report["prelude_plan"]) == 2
@@ -166,7 +166,7 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
             plan=None,
             terminality={"required_lanes": [], "checked": [], "satisfied": []},
             source_family_outcomes=[],
-        )
+    )
 
         # Must have all new F221F fields
         assert "prelude_plan" in report
@@ -197,7 +197,7 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
             plan=None,
             terminality=terminality,
             source_family_outcomes=source_family_outcomes,
-        )
+    )
 
         effective = report["effective_acquisition_plan"]
         # CT from required_lane_plan
@@ -222,7 +222,7 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
             plan=None,
             terminality=terminality,
             source_family_outcomes=[],
-        )
+    )
 
         required = report["required_lane_plan"]
         assert "PUBLIC" in required
@@ -239,7 +239,7 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
             plan=None,
             terminality=terminality,
             source_family_outcomes=None,
-        )
+    )
 
         assert report["plan_semantics"] == "prelude_only"
         assert report["runtime_attempted_lanes"] == []
@@ -288,7 +288,7 @@ def _build_plan_cache_key(
             acquisition_profile,
             _fd_sorted,
             _syn_sorted,
-        )
+    )
     )
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
@@ -327,7 +327,7 @@ class TestFix5_AcquisitionPlanCache:
             acquisition_profile="default",
             feed_domain_seeds=(),
             synthetic_domains=(),
-        )
+    )
         key2 = _build_plan_cache_key(
             query="test query",
             duration_s=300.0,
@@ -339,7 +339,7 @@ class TestFix5_AcquisitionPlanCache:
             acquisition_profile="default",
             feed_domain_seeds=(),
             synthetic_domains=(),
-        )
+    )
         assert key1 == key2
 
     def test_different_query_produces_different_key(self):
@@ -349,13 +349,13 @@ class TestFix5_AcquisitionPlanCache:
             uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
             branch_timeout_count=0, acquisition_profile="default",
             feed_domain_seeds=(), synthetic_domains=(),
-        )
+    )
         key2 = _build_plan_cache_key(
             query="query B", duration_s=300, aggressive_mode=False,
             uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
             branch_timeout_count=0, acquisition_profile="default",
             feed_domain_seeds=(), synthetic_domains=(),
-        )
+    )
         assert key1 != key2
 
     def test_feed_domain_seeds_order_independent(self):
@@ -366,14 +366,14 @@ class TestFix5_AcquisitionPlanCache:
             branch_timeout_count=0, acquisition_profile="default",
             feed_domain_seeds=("a.com", "b.com", "c.com"),
             synthetic_domains=(),
-        )
+    )
         key2 = _build_plan_cache_key(
             query="q", duration_s=300, aggressive_mode=False,
             uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
             branch_timeout_count=0, acquisition_profile="default",
             feed_domain_seeds=("c.com", "a.com", "b.com"),
             synthetic_domains=(),
-        )
+    )
         assert key1 == key2, "Feed domain seeds order must be normalized"
 
     def test_lru_eviction_at_capacity(self):
@@ -409,14 +409,14 @@ class TestFix5_AcquisitionPlanCache:
             uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
             branch_timeout_count=0, acquisition_profile="default",
             feed_domain_seeds=(), synthetic_domains=(),
-        )
+    )
         key_with_seeds = _build_plan_cache_key(
             query="q", duration_s=300, aggressive_mode=False,
             uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
             branch_timeout_count=0, acquisition_profile="default",
             feed_domain_seeds=("example.com",),
             synthetic_domains=(),
-        )
+    )
         assert key_no_seeds != key_with_seeds
 
     def test_cache_key_with_synthetic_domains(self):
@@ -426,13 +426,13 @@ class TestFix5_AcquisitionPlanCache:
             uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
             branch_timeout_count=0, acquisition_profile="default",
             feed_domain_seeds=(), synthetic_domains=(),
-        )
+    )
         key_with_syn = _build_plan_cache_key(
             query="q", duration_s=300, aggressive_mode=False,
             uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
             branch_timeout_count=0, acquisition_profile="default",
             feed_domain_seeds=(), synthetic_domains=("synthetic.ai",),
-        )
+    )
         assert key_no_syn != key_with_syn
 
     def test_different_aggressive_mode_produces_different_key(self):
@@ -442,11 +442,11 @@ class TestFix5_AcquisitionPlanCache:
             uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
             branch_timeout_count=0, acquisition_profile="default",
             feed_domain_seeds=(), synthetic_domains=(),
-        )
+    )
         key_aggressive = _build_plan_cache_key(
             query="q", duration_s=300, aggressive_mode=True,
             uma_state="ok", swap_detected=False, accepted_findings_so_far=0,
             branch_timeout_count=0, acquisition_profile="default",
             feed_domain_seeds=(), synthetic_domains=(),
-        )
+    )
         assert key_normal != key_aggressive

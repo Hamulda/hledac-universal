@@ -221,7 +221,7 @@ def scrub_secrets(text: str) -> str:
         for pattern_name, pattern in _get_compiled_patterns():
             result = pattern.sub(
                 f"{_REDACTED_PREFIX}{pattern_name}{_REDACTED_SUFFIX}", result
-            )
+    )
         return result
     except Exception as e:
         # Fail-safe: return original text on any error
@@ -276,7 +276,7 @@ def scrub_dict_recursive(
         elif isinstance(data, tuple):
             return tuple(
                 scrub_dict_recursive(v, depth + 1, max_depth) for v in data
-            )
+    )
         elif isinstance(data, set):
             return {
                 scrub_dict_recursive(v, depth + 1, max_depth) for v in data
@@ -491,14 +491,14 @@ def safe_error_log(logger: logging.Logger, message: str, *args: Any) -> None:
                     redact_greynoise_key(
                         redact_censys_credentials(
                             redact_shodan_key(arg) if isinstance(arg, str) else arg
-                        )
+    )
                     )
-                )
+    )
             )
             if isinstance(arg, str)
             else arg
             for arg in args
-        )
+    )
 
         logger.warning(safe_msg, *safe_args)
     except Exception as e:

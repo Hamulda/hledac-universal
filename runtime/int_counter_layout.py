@@ -122,11 +122,11 @@ if _FORCE_RUST:
         _RUST_AVAILABLE = True
         logger.debug(
             "[IntCounterLayout] Rust backend FORCED via HLEDAC_FORCE_RUST=1"
-        )
+    )
     else:
         logger.warning(
             "[IntCounterLayout] HLEDAC_FORCE_RUST=1 but Rust extension unavailable"
-        )
+    )
         _RUST_AVAILABLE = False
 elif _FORCE_PYTHON:
     # Force Python fallback: skip Rust loading entirely
@@ -140,11 +140,11 @@ else:
         _RUST_AVAILABLE = True
         logger.debug(
             "[IntCounterLayout] Rust backend available (hledac_rust_extensions)"
-        )
+    )
     else:
         logger.debug(
             "[IntCounterLayout] Rust backend unavailable; using Python fallback"
-        )
+    )
 
 
 class IntCounterLayout:
@@ -205,11 +205,11 @@ class IntCounterLayout:
                 raise ValueError(
                     f"IntCounterLayout: counter names must be non-empty strings, "
                     f"got {n!r}"
-                )
+    )
             if n in seen:
                 raise ValueError(
                     f"IntCounterLayout: duplicate counter name {n!r}"
-                )
+    )
             seen.add(n)
 
         # Immutable index map: name -> slot.
@@ -228,7 +228,7 @@ class IntCounterLayout:
             logger.warning(
                 "[IntCounterLayout] array alloc failed (%s); bumps become no-ops",
                 e,
-            )
+    )
             buf = None
         object.__setattr__(self, "_array", buf)
         object.__setattr__(self, "_initialized", buf is not None)
@@ -366,7 +366,7 @@ class IntCounterLayout:
         return (
             f"IntCounterLayout(count={len(self._names)}, "
             f"buffer={len(self._names) * 8}B)"
-        )
+    )
 
     def __len__(self) -> int:
         """Number of counter slots. Convenience for `len(layout)`."""

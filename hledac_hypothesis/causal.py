@@ -230,7 +230,7 @@ class CausalReasoner:
                 idx_array = np.array(
                     [self._entity_id_to_idx[e] for e in entity_ids],
                     dtype=np.int32
-                )
+    )
                 if len(idx_array) < 2:
                     continue
                 # Outer-product increment: all pairs (e1, e2) within same finding

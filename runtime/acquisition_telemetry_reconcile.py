@@ -146,7 +146,7 @@ def _complete_doh_outcome(sfo_list: list[dict], result: dict) -> list[dict]:
             timeout=_doh_stage == "timeout",
             error=_err,
             skip_reason="doh_not_attempted" if _skip else None,
-        )
+    )
 
     # Case 2: planned/scheduled but never attempted
     if _doh_planned or _doh_scheduled:
@@ -160,7 +160,7 @@ def _complete_doh_outcome(sfo_list: list[dict], result: dict) -> list[dict]:
             accepted_count=0,
             terminal_state="",
             skip_reason="planned_not_attempted",
-        )
+    )
 
     return sfo_list
 
@@ -193,7 +193,7 @@ def _complete_wayback_outcome(sfo_list: list[dict], result: dict) -> list[dict]:
             accepted_count=_wb_accepted,
             terminal_state=_wb_stage,
             error=_err,
-        )
+    )
 
     if _wb_planned or _wb_scheduled:
         if _family_exists(sfo_list, "wayback"):
@@ -206,7 +206,7 @@ def _complete_wayback_outcome(sfo_list: list[dict], result: dict) -> list[dict]:
             accepted_count=0,
             terminal_state="",
             skip_reason="planned_not_attempted",
-        )
+    )
 
     return sfo_list
 
@@ -237,7 +237,7 @@ def _complete_passive_dns_outcome(sfo_list: list[dict], result: dict) -> list[di
             accepted_count=_pdns_accepted,
             terminal_state=_pdns_stage,
             error=_err,
-        )
+    )
 
     if _pdns_planned or _pdns_scheduled:
         if _family_exists(sfo_list, "passive_dns"):
@@ -250,7 +250,7 @@ def _complete_passive_dns_outcome(sfo_list: list[dict], result: dict) -> list[di
             accepted_count=0,
             terminal_state="",
             skip_reason="planned_not_attempted",
-        )
+    )
 
     return sfo_list
 
@@ -500,7 +500,7 @@ def complete_source_family_outcomes_from_prelude(report: dict) -> dict:
             terminal_lanes=terminal,
             error_by_lane=errors,
             accepted_by_lane=accepted,
-        )
+    )
 
     result["source_family_outcomes"] = sfo_list
     return result

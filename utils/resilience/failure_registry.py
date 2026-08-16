@@ -43,11 +43,7 @@ from collections.abc import AsyncGenerator
 
 from hledac.universal.utils.asyncx import safe_create_task
 
-
-
-
-
-
+from hledac.universal.utils.resilience.degradation_modes import (
     DegradationState,
     DegradedMode,
     DegradationThresholds,
@@ -61,7 +57,6 @@ logger = logging.getLogger(__name__)
 
 # Note: FailureSeverity is imported from degradation_modes and re-exported via module
 
-from _core import aclose
 
 @dataclass(frozen=True)
 class FailureEntry:

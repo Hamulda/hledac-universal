@@ -142,6 +142,7 @@ class GopherCrawler:
         if not items:
             return result
         directory_items: list[tuple[GopherItem, int]] = []
+        text_items: list[tuple[GopherCrawlItem, str]] = []  # (crawl_item, selector) for text extraction
         for item in items:
             if self._is_host_exhausted(host):
                 break
@@ -150,8 +151,18 @@ class GopherCrawler:
             self._inc_count(host)
             if crawl_item.is_directory and depth < self._max_depth:
                 directory_items.append((item, depth + 1))
-            elif crawl_item.is_file and crawl_item.text_content is not None:
-                pass
+            elif crawl_item.is_file and crawl_item.item_type == '0' and crawl_item.selector:
+                # Collect text items for concurrent extraction
+                text_items.append((crawl_item, crawl_item.selector))
+        # Fetch text content concurrently for text files
+        if text_items:
+            text_results = await parallel_ok(
+                *[self._extract_text_preview(host, port, sel) for _, sel in text_items],
+                label='gopher_crawler:text_preview',
+            )
+            for (crawl_item, _), text in zip(text_items, text_results):
+                if isinstance(text, str):
+                    crawl_item.text_content = text
         if directory_items:
             await self._crawl_directories_concurrent(directory_items, host, port, result, depth)
         return result
@@ -174,20 +185,31 @@ class GopherCrawler:
                 result.errors.extend(sub_result.errors)
 
     def _make_crawl_item(self, item: GopherItem, host: str, port: int, depth: int) -> GopherCrawlItem:
-        """Convert GopherItem to GopherCrawlItem with inline text extraction for files."""
-        crawl = GopherCrawlItem(host=host, port=port, selector=item.selector, item_type=item.item_type, display_string=item.display_string, depth=depth, source_url=f'gopher://{host}:{port}{item.selector}')
-        if item.item_type == '0' and item.selector:
-            crawl.text_content = self._extract_text_preview(host, port, item.selector)
-        return crawl
+        """Convert GopherItem to GopherCrawlItem. Text extraction is done separately via _extract_text_preview."""
+        return GopherCrawlItem(
+            host=host,
+            port=port,
+            selector=item.selector,
+            item_type=item.item_type,
+            display_string=item.display_string,
+            depth=depth,
+            source_url=f'gopher://{host}:{port}{item.selector}',
+        )
 
-    def _extract_text_preview(self, host: str, port: int, selector: str) -> str | None:
+    async def _extract_text_preview(self, host: str, port: int, selector: str) -> str | None:
         """
         Fetch text content from a type-0 gopher URL and return preview.
-        Runs synchronously in executor to avoid blocking.
+        Runs on thread pool to avoid blocking the event loop.
         """
         try:
-            loop = asyncio.get_running_loop()
-            text = loop.run_until_complete(self._transport.fetch_text(f'gopher://{host}:{port}{selector}', timeout_s=self._timeout_s, max_bytes=self._max_text_size))
+            # Use to_thread to run the async transport call in a thread pool.
+            # This avoids blocking the event loop while waiting for I/O.
+            text = await asyncio.to_thread(
+                self._transport.fetch_text,
+                f'gopher://{host}:{port}{selector}',
+                timeout_s=self._timeout_s,
+                max_bytes=self._max_text_size,
+            )
             return text
         except Exception:
             return None

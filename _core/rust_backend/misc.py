@@ -108,7 +108,7 @@ class _RustGraphDomain:
             "Rust batch_graph_traverse has incompatible signature — Python fallback always wins",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         self._ext = ext
 
     def batch_graph_traverse(
@@ -655,7 +655,7 @@ class _RustXmlDomain:
             "Rust sanitize_xml may be absent on older builds — Python fallback preferred",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         self._ext = ext
 
     def sanitize_xml(self, raw: str) -> str:
@@ -732,7 +732,7 @@ class _RustSimdDomain:
             "Rust batch_cosine_scores has incompatible signature — Python fallback always wins",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         self._ext = ext
 
     def cosine_similarity(self, a: list[float], b: list[float]) -> float:
@@ -821,7 +821,7 @@ class _RustFeedDominanceGuard:
         d = self._ext.compute_feed_dominance(
             total_accepted, feed_accepted, nonfeed_accepted,
             self._threshold, self._min_nonfeed,
-        )
+    )
         # Rust may have different threshold semantics — compute guard_triggered using Python logic
         ratio = d["feed_dominance_ratio"]
         guard_triggered = ratio >= self._threshold and nonfeed_accepted < self._min_nonfeed
@@ -834,7 +834,7 @@ class _RustFeedDominanceGuard:
             guard_triggered=guard_triggered,
             block_early_exit=block_early_exit,
             reason=d["reason"],
-        )
+    )
 
     def compute_simple(self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int) -> _FeedDominanceResult:
         return self.compute(total_accepted, feed_accepted, nonfeed_accepted)
@@ -1039,7 +1039,7 @@ class _PythonMetalDomainInner:
         self._ipv4_re = re.compile(
             r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
             r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
-        )
+    )
         self._ipv6_re = re.compile(
             r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|"
             r"(?:[0-9a-fA-F]{1,4}:){1,7}:|"
@@ -1052,14 +1052,14 @@ class _PythonMetalDomainInner:
             r":(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)|"
             r"::(?:[fF]{4}:)?(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
             r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
-        )
+    )
         self._url_re = re.compile(r"https?://[^\s<>\"\']+")
         self._email_re = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
         # MD5, SHA1, SHA256, SHA512
         self._hash_re = re.compile(
             r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|"
             r"\b[a-fA-F0-9]{64}\b|\b[a-fA-F0-9]{128}\b"
-        )
+    )
 
     def batch_keyword_scan(self, texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
         # Returns (text_idx, start, end, keyword_idx) for each match
@@ -1212,7 +1212,7 @@ from hledac.universal._core.duckdb_pool import (
     duckdb_ro_pool,
     get_pool_stats,
     close_all_pools,
-)
+    )
 
 # Backward compatibility aliases
 _POOL_MAX_SIZE: int = 4  # Deprecated: use duckdb_ro_pool.max_size
@@ -1360,16 +1360,16 @@ class PythonFeedDominanceGuard:
         # should_recommend: feed dominance AND insufficient nonfeed AND NOT timed out
         should_recommend = (
             ratio >= self._threshold and nonfeed_accepted < self._min_nonfeed and not nonfeed_diagnostic_timed_out
-        )
+    )
         guard_triggered = ratio >= self._threshold and nonfeed_accepted < self._min_nonfeed
         block_early_exit = self._strict and guard_triggered
         reason = (
             f"feed_dominance={ratio:.2%} (threshold={self._threshold}), "
             f"nonfeed={nonfeed_accepted} (min={self._min_nonfeed})"
-        )
+    )
         return PythonFeedDominanceGuardResult(
             ratio, nonfeed_accepted, cls, should_recommend, guard_triggered, block_early_exit, reason
-        )
+    )
 
     def compute_simple(
         self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int

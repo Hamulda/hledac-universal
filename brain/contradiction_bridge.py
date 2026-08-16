@@ -190,7 +190,7 @@ class ContradictionBridge:
             logger.info(
                 "[ContradictionBridge] META-008 retract callback registered: %s",
                 getattr(callback, "__name__", repr(callback)),
-            )
+    )
 
     def _extract_ioc_from_contradiction(
         self,
@@ -290,7 +290,7 @@ class ContradictionBridge:
                     supporting_sources=true_sources,
                     severity=float(getattr(contradiction, "severity", 0.7)),
                     contradiction_type=getattr(contradiction, "contradiction_type", "factual"),
-                )
+    )
             elif len(true_sources) == 1 and len(false_sources) == 2:
                 return TriSourceContrd(
                     affected_ioc=ioc_value,
@@ -298,7 +298,7 @@ class ContradictionBridge:
                     supporting_sources=false_sources,
                     severity=float(getattr(contradiction, "severity", 0.7)),
                     contradiction_type=getattr(contradiction, "contradiction_type", "factual"),
-                )
+    )
 
         except Exception as e:
             logger.debug("[ContradictionBridge] Tri-source detection failed: %s", e)
@@ -324,7 +324,7 @@ class ContradictionBridge:
         if self._retract_callback is None:
             logger.debug(
                 "[ContradictionBridge] META-008: No retract callback — skipping auto-retraction"
-            )
+    )
             return []
 
         retracted: list[str] = []
@@ -334,7 +334,7 @@ class ContradictionBridge:
             # Count how many times this source was the sole dissenter
             sole_dissenter_count = sum(
                 1 for e in events if e.dissenter_source == source_id
-            )
+    )
             if sole_dissenter_count >= cutoff:
                 try:
                     result = await self._retract_callback(source_id)
@@ -356,12 +356,12 @@ class ContradictionBridge:
                             sole_dissenter_count,
                             cutoff,
                             facts_retracted,
-                        )
+    )
                 except Exception as e:
                     logger.debug(
                         "[ContradictionBridge] META-008 retract '%s' failed: %s",
                         source_id, e,
-                    )
+    )
 
         # Clear index after processing (per-sprint reset)
         self._tri_source_index.clear()
@@ -452,7 +452,7 @@ class ContradictionBridge:
                 },
                 # [META]-011: Track the dissenter source for tri-source auto-retraction
                 contradiction_source_id=tri.dissenter_source if tri else None,
-            )
+    )
             alerts.append(alert)
             self._stats.alerts_emitted += 1
 
@@ -464,7 +464,7 @@ class ContradictionBridge:
                 "across %d potential dissenters",
                 len(tri_source_events),
                 len(self._tri_source_index),
-            )
+    )
 
         self._stats.emit_count += 1
         self._stats.last_emit_ts = time.time()

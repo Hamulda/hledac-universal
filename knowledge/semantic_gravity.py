@@ -170,7 +170,7 @@ class SemanticGravityField:
                 connectivity=_HNSW_CONNECTIVITY,
                 expansion_add=_HNSW_EXPANSION_ADD,
                 expansion_search=_HNSW_EXPANSION_SEARCH,
-            )
+    )
             # Re-add existing embeddings to the new index
             for i in range(self._count):
                 idx = (self._write_pos - self._count + i) % self._max_embeddings
@@ -178,7 +178,7 @@ class SemanticGravityField:
             logger.debug(
                 '[gravity] USearch index initialized: dim=%d connectivity=%d max=%d',
                 self._dim, _HNSW_CONNECTIVITY, self._max_embeddings,
-            )
+    )
             return True
         except ImportError:
             logger.debug('[gravity] usearch not available — gravity field disabled')
@@ -358,7 +358,7 @@ class SemanticGravityField:
                 '[gravity] find_voids: scanned=%d found=%d top_radius=%.3f',
                 sample_size, len(voids),
                 voids[0].radius if voids else 0.0,
-            )
+    )
             return voids
 
         except Exception as e:
@@ -395,7 +395,7 @@ class SemanticGravityField:
                 hint = (
                     f'Explore region semantically distant from "{void.nearest_entity_id[:60]}" '
                     f'(gap radius: {void.radius:.2f})'
-                )
+    )
             else:
                 hint = f'Explore semantic void region (radius: {void.radius:.2f})'
 

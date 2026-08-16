@@ -85,7 +85,7 @@ from hledac.universal._core.isolated_executors import (
     get_duckdb_executor,
     get_mlx_executor,
     is_pep734_available,
-)
+    )
 from hledac.universal.runtime.lmdb_pool import get_lmdb_pool
 from hledac.universal.utils.asyncx import safe_wait_for
 
@@ -248,24 +248,24 @@ class RoleBasedPools:
             self._hash_executor = ThreadPoolExecutor(
                 max_workers=_HASH_WORKERS,
                 thread_name_prefix="hledac-hash",
-            )
+    )
             self._regex_executor = ThreadPoolExecutor(
                 max_workers=_REGEX_WORKERS,
                 thread_name_prefix="hledac-regex",
-            )
+    )
             self._async_io_executor = ThreadPoolExecutor(
                 max_workers=_ASYNC_IO_WORKERS,
                 thread_name_prefix="hledac-async-io",
-            )
+    )
             # P2-1: Dedicated pools replacing unbounded asyncio.to_thread defaults
             self._duckdb_fallback_executor = ThreadPoolExecutor(
                 max_workers=_DUCKDB_FALLBACK_WORKERS,
                 thread_name_prefix="hledac-duckdb-fb",
-            )
+    )
             self._embed_fallback_executor = ThreadPoolExecutor(
                 max_workers=_EMBED_FALLBACK_WORKERS,
                 thread_name_prefix="hledac-embed-fb",
-            )
+    )
 
             # PEP 734 executors (Python 3.14+, memory-isolated)
             if is_pep734_available():
@@ -420,7 +420,7 @@ class RoleBasedPools:
             self._hash_executor,  # type: ignore[arg-type]
             "hash",
             fn, *args, timeout=timeout, **kwargs
-        )
+    )
 
     def run_hash_sync[T](
         self,
@@ -467,11 +467,11 @@ class RoleBasedPools:
                 if timeout is not None:
                     coro = loop.run_in_executor(
                         self._embed_fallback_executor, lambda: fn(*args, **kwargs)
-                    )
+    )
                     return await safe_wait_for(coro, timeout=timeout, label="role_pool:embed")
                 return await loop.run_in_executor(
                     self._embed_fallback_executor, lambda: fn(*args, **kwargs)
-                )
+    )
             except Exception:
                 return None
 
@@ -508,7 +508,7 @@ class RoleBasedPools:
                 "deferring embedding work",
                 RuntimeWarning,
                 stacklevel=2,
-            )
+    )
             gc.collect()
             if not self._check_embed_ram_budget():
                 return None  # Still over budget after GC
@@ -559,11 +559,11 @@ class RoleBasedPools:
                 if timeout is not None:
                     coro = loop.run_in_executor(
                         self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
-                    )
+    )
                     return await safe_wait_for(coro, timeout=timeout, label=label)
                 return await loop.run_in_executor(
                     self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
-                )
+    )
             except Exception:
                 return None
 
@@ -600,7 +600,7 @@ class RoleBasedPools:
                 "deferring DB work",
                 RuntimeWarning,
                 stacklevel=2,
-            )
+    )
             return None
 
         assert self._db_semaphore is not None
@@ -609,7 +609,7 @@ class RoleBasedPools:
             async with await self._get_db_lock():
                 return await self._run_db_impl(
                     fn, *args, timeout=timeout, label="role_pool:db", **kwargs
-                )
+    )
 
     async def run_db_write(
         self,
@@ -644,7 +644,7 @@ class RoleBasedPools:
                 "deferring DB write work",
                 RuntimeWarning,
                 stacklevel=2,
-            )
+    )
             return None
 
         assert self._db_semaphore is not None
@@ -653,7 +653,7 @@ class RoleBasedPools:
             async with await self._get_db_lock():
                 return await self._run_db_impl(
                     fn, *args, timeout=timeout, label="role_pool:db_write", **kwargs
-                )
+    )
 
     # ------------------------------------------------------------------|
     # Role: REGEX — Pattern matching (CPU-bound)                       |
@@ -690,7 +690,7 @@ class RoleBasedPools:
             self._regex_executor,  # type: ignore[arg-type]
             "regex",
             fn, *args, timeout=timeout, **kwargs
-        )
+    )
 
     def run_regex_sync[T](
         self,
@@ -735,7 +735,7 @@ class RoleBasedPools:
             self._async_io_executor,  # type: ignore[arg-type]
             "async_io",
             fn, *args, timeout=timeout, **kwargs
-        )
+    )
 
     # ------------------------------------------------------------------|
     # Role: LMDB — Key-value store I/O (I/O-bound, 1 writer)          |
@@ -820,7 +820,7 @@ class RoleBasedPools:
             [wrap(item) for item in items],  # type: ignore[arg-type]
             concurrency=concurrency,
             ctx=f"role_pool:{role}_batch",
-        )
+    )
         return [r for r in result.ok if r is not None]
 
     async def run_hash_batch[T, R](

@@ -12,7 +12,7 @@ from tools.codehealth_guard import (
     GuardVerdict,
     _scan_imports_for_symbol,
     run_guard,
-)
+    )
 
 
 def _parse(source: str) -> ast.Module:
@@ -68,7 +68,7 @@ OWNER_IMPORTED_FIXTURE = '''
 from benchmarks.live_measurement_next_action import (
     NextActionInput,
     _derive_next_action,
-)
+    )
 
 def other_helper():
     pass

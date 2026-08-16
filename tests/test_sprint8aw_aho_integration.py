@@ -28,19 +28,14 @@ sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
 from hledac.universal.recon.document_intelligence import (
     PDFAnalyzer,
 )
-
-
-
-
-
+from hledac.universal.utils.aho_extractor import (
     PILOT_PATTERNS,
     get_suspicious_keywords_automaton,
     scan_suspicious_keywords_list,
 )
 
 # ---------------------------------------------------------------------------
-
-from _core import aclose# Test 1: classification is explicit
+# Test 1: classification is explicit
 # ---------------------------------------------------------------------------
 
 class TestClassification:

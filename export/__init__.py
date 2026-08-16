@@ -9,49 +9,49 @@ from hledac.universal.report.renderers import (
     HTMLRenderer,
     SVGRenderer,
     PDFRenderer,
-)
+    )
 
 # Keep existing legacy exports (unchanged — they still work)
 from hledac.universal.export.export_manager import (
     ExportManager,
     get_export_manager,
-)
+    )
 from hledac.universal.export.jsonld_exporter import (
     normalize_export_input as normalize_export_input,
-)
+    )
 from hledac.universal.export.jsonld_exporter import (
     render_jsonld,
     render_jsonld_str,
     render_jsonld_to_path,
-)
+    )
 from hledac.universal.export.markdown_reporter import (
     normalize_report_input,
     render_diagnostic_markdown,
     render_diagnostic_markdown_to_path,
-)
+    )
 from hledac.universal.export.stix_exporter import (
     render_cti_stix_bundle_to_path,
     render_stix_bundle,
     render_stix_bundle_json,
     render_stix_bundle_to_path,
-)
+    )
 from hledac.universal.export.parquet_writer import (
     ParquetExporter,
     export_findings_parquet,
     export_parquet_to_path,
-)
+    )
 
 # Re-export sprint export functions (moved from formatters.py to break circular import)
 from hledac.universal.export.sprint_exporter import (
     export_partial_sprint,
     export_sprint,
-)
+    )
 
 # ISSUE [META]-009: WASMDashboardBuilder — standalone investigator dashboard
 from hledac.universal.export.dashboard_builder import (
     WASMDashboardBuilder,
     build_wasm_dashboard,
-)
+    )
 
 # ISSUE [APEX]-1010: Sprint bundle format
 from hledac.universal.export.sprint_bundler import (
@@ -59,10 +59,10 @@ from hledac.universal.export.sprint_bundler import (
     bundle_and_index_sprint,
     verify_bundle,
     BUNDLE_FORMAT_VERSION,
-)
+    )
 from hledac.universal.export.sprint_viewer import (
     view_bundle,
-)
+    )
 from _core import aclose
 
 __all__ = [

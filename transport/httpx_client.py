@@ -137,7 +137,7 @@ async def async_get_httpx_client() -> httpx.AsyncClient:
     if not _check_httpx_h2_capability():
         raise RuntimeError(
             f"HTTPX HTTP/2 not available: {_httpx_import_error or 'unknown'}"
-        )
+    )
 
     # F4.3: Use session_pool for unified httpx singleton
     from .session_pool import session_pool as _pool

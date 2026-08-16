@@ -155,7 +155,7 @@ def validate(stix_json: str) -> ValidationResult:
                     is_valid=parsed.get("is_valid", False),
                     errors=parsed.get("errors", []),
                     object_count=parsed.get("object_count"),
-                )
+    )
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[stix] Rust validate_json failed: {exc}, falling back to Python")
 
@@ -289,14 +289,14 @@ def _py_validate(stix_json: str) -> ValidationResult:
             is_valid=False,
             errors=[{"path": "", "message": f"JSON parse error: {exc}", "value_preview": None}],
             object_count=None,
-        )
+    )
 
     if not isinstance(obj, dict):
         return ValidationResult(
             is_valid=False,
             errors=[{"path": "", "message": "STIX object must be a JSON object", "value_preview": None}],
             object_count=None,
-        )
+    )
 
     obj_type = obj.get("type")
     if obj_type == "bundle":
@@ -306,7 +306,7 @@ def _py_validate(stix_json: str) -> ValidationResult:
                 is_valid=False,
                 errors=[{"path": "objects", "message": "'objects' must be an array", "value_preview": None}],
                 object_count=None,
-            )
+    )
 
         errors = []
         ids_seen: set[str] = set()
@@ -323,12 +323,12 @@ def _py_validate(stix_json: str) -> ValidationResult:
                 if item_id in ids_seen:
                     errors.append(
                         {"path": f"objects[{i}].id", "message": f"Duplicate STIX ID '{item_id}'", "value_preview": None}
-                    )
+    )
                 ids_seen.add(item_id)
             else:
                 errors.append(
                     {"path": f"objects[{i}].id", "message": f"Missing required field 'id'", "value_preview": None}
-                )
+    )
 
             is_sco = item_type in ("ipv4-addr", "ipv6-addr", "domain-name", "url", "file-hash", "email-addr")
             if not is_sco and "spec_version" not in item:
@@ -338,7 +338,7 @@ def _py_validate(stix_json: str) -> ValidationResult:
                         "message": f"SDO '{item_type}' missing 'spec_version'",
                         "value_preview": None,
                     }
-                )
+    )
 
         return ValidationResult(is_valid=len(errors) == 0, errors=errors, object_count=len(objects))
 
@@ -347,7 +347,7 @@ def _py_validate(stix_json: str) -> ValidationResult:
             is_valid=False,
             errors=[{"path": "", "message": "STIX object missing required 'id' or 'type'", "value_preview": None}],
             object_count=None,
-        )
+    )
 
     return ValidationResult(is_valid=True, errors=[], object_count=1)
 

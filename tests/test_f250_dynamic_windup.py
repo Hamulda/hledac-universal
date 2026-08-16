@@ -88,7 +88,7 @@ class TestF278ADynamicWindup(unittest.TestCase):
             self.assertEqual(
                 cfg.effective_windup_lead_s, 30.0,
                 f"F278A floor broken at dur={dur}s",
-            )
+    )
 
     def test_f278a_ceiling_at_180s_never_above(self):
         """F278A ceiling is 180s. Any duration >= 600s caps at 180s."""
@@ -97,7 +97,7 @@ class TestF278ADynamicWindup(unittest.TestCase):
             self.assertEqual(
                 cfg.effective_windup_lead_s, 180.0,
                 f"F278A ceiling broken at dur={dur}s",
-            )
+    )
 
     def test_100s_sprint_windup_30s(self):
         """100s sprint -> windup=30s (30% = 30, exactly at floor)."""

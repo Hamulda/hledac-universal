@@ -225,7 +225,7 @@ class DuckDBArrowBuilder:
                     "provenance_json": pa.array(provenances, type=pa.string()),
                     "payload_text": pa.array(payloads, type=pa.string()),
                 }
-            )
+    )
             
             return table
         except Exception as e:

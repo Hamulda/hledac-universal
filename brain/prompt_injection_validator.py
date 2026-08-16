@@ -40,11 +40,7 @@ from typing import Any
 import msgspec
 
 # ISSUE [ULTIMATE]-005: Unicode fingerprint extraction before stripping
-
-
-
-
-
+from hledac.universal._core.rust_backend.unicode_fingerprint import (
     get_unicode_fingerprint_domain,
     ENABLE_UNICODE_ATTRIBUTION,
 )
@@ -52,8 +48,7 @@ _unicode_domain = None  # Lazy initialization
 
 __all__ = [
     'PromptInjectionValidationResult',
-
-from _core import aclose    'sanitize_prompt_injection_patterns',
+    'sanitize_prompt_injection_patterns',
     'sanitize_for_llm',
     'PromptInjectionValidator',
 ]

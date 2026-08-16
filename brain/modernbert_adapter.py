@@ -97,7 +97,7 @@ class ModernBertModelAdapter:
             "[ModernBertModelAdapter] generate() called but ModernBERT is "
             "extractive-only; returning empty string. "
             "Use generate_report() or synthesize() for summarization."
-        )
+    )
         return ""
 
     async def generate_structured(
@@ -122,7 +122,7 @@ class ModernBertModelAdapter:
             "cannot do grammar-constrained generation. "
             "Returning default-constructed response_model. "
             "Use Hermes3Engine for actual structured output."
-        )
+    )
         try:
             return response_model()
         except Exception:

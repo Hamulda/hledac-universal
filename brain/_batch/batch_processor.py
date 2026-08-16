@@ -132,7 +132,7 @@ class BatchProcessor:
             last_flush_at=self._stats.last_flush_at,
             retried_count=self._stats.retried_count,
             sharded_count=self._stats.sharded_count,
-        )
+    )
 
     def compute_length_bin(self, prompt: str) -> str:
         """
@@ -260,7 +260,7 @@ class BatchProcessor:
         results = await self._process_batch_with_shard_retry(items)
         processed = sum(
             1 for _, result in results if not isinstance(result, Exception)
-        )
+    )
         return processed
 
     async def _worker(self) -> None:
@@ -328,7 +328,7 @@ class BatchProcessor:
                         item_result = await safe_wait_for(
                             self._process_single(item),
                             timeout=item.timeout,
-                        )
+    )
                         self._stats.processed_count += 1
                         break  # Success, exit retry loop
                     except Exception as item_error:
@@ -338,13 +338,13 @@ class BatchProcessor:
                             self._stats.retried_count += 1
                             logger.debug(
                                 f'[BatchProcessor] Item {item.id} retry {attempt + 1}/{self._config.max_item_retries}'
-                            )
+    )
                         else:
                             # Exhausted retries
                             self._stats.failed_count += 1
                             logger.warning(
                                 f'[BatchProcessor] Item {item.id} exhausted retries: {item_error}'
-                            )
+    )
                 results.append((item, item_result))
             return results
 

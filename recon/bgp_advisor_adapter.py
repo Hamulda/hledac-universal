@@ -72,7 +72,7 @@ class BGPAdvisorAdapter:
                 _sync_enrich_ips,
                 adapter,
                 ips_to_query,
-            )
+    )
             self._adapter = adapter
         except Exception:  # noqa: BLE001
             # fail-soft: overall failure doesn't crash the sprint
@@ -100,7 +100,7 @@ def _sync_enrich_ips(adapter: BGPAdapter, ips: list[str]) -> None:
                         result.asn,
                         result.prefix or "unknown",
                         result.org_name or "unknown",
-                    )
+    )
         except Exception:  # noqa: BLE001
             pass  # fail-soft on batch operation
     except Exception:  # noqa: BLE001

@@ -38,7 +38,7 @@ from typing import (
     Protocol,
     TypeAlias,
     runtime_checkable,
-)
+    )
 
 import lmdb
 
@@ -123,7 +123,7 @@ from _core import aclose
 # Weak-key dictionary: object -> {Protocol -> bool}
 _PROTOCOL_CACHE: weakref.WeakKeyDictionary[object, dict[type, bool]] = (
     weakref.WeakKeyDictionary()
-)
+    )
 
 
 def is_protocol_compatible_cached(

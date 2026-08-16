@@ -88,14 +88,14 @@ class ModelState:
             not self.inference_active
             and self.batch_queue_depth == 0
             and self.pending_futures == 0
-        )
+    )
 
     def __repr__(self) -> str:
         return (
             f"ModelState(id={self.model_id!r}, state={self.load_state.value}, "
             f"idle={self.idle_seconds:.1f}s, kv_mb={self.kv_cache_memory_mb:.1f}, "
             f"queue={self.batch_queue_depth}, pending={self.pending_futures})"
-        )
+    )
 
 
 # ---------------------------------------------------------------------------

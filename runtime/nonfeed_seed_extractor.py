@@ -161,7 +161,7 @@ def _make_ioc_extractor(
                     source='body',
                     confidence=confidence,
                     reason=f'{reason_prefix}_in_body',
-                )
+    )
             if len(seen) >= max_seeds:
                 return
     extractor.__doc__ = f"Extract {kind.upper()} IOCs. Early-return when max_seeds reached."
@@ -170,18 +170,18 @@ def _make_ioc_extractor(
 # Concrete extractors (generated from factory)
 _extract_urls = _make_ioc_extractor(
     pattern=_URL_RE, kind='url', confidence=0.9, reason_prefix='url',
-)
+    )
 _extract_emails = _make_ioc_extractor(
     pattern=_EMAIL_RE, kind='email', confidence=0.85, reason_prefix='email',
     extract_value=lambda m, _: m.group(1).lower(),
-)
+    )
 _extract_ips = _make_ioc_extractor(
     pattern=_IP_RE, kind='ip', confidence=0.95, reason_prefix='ip',
-)
+    )
 _extract_cves = _make_ioc_extractor(
     pattern=_CVE_RE, kind='cve', confidence=0.9, reason_prefix='cve',
     extract_value=lambda m, _: m.group(1).upper(),
-)
+    )
 
 def _extract_hashes(cleaned: str, seen: dict, max_seeds: int) -> None:
     """Extract hashes (MD5/SHA1/SHA256). Early-return when max_seeds reached."""

@@ -169,7 +169,7 @@ class TestPublicFetcherWiring:
         from hledac.universal.transport.policy import (
             get_tier_for_lane,
             get_transport_policy,
-        )
+    )
 
         assert get_transport_policy is not None
         assert get_tier_for_lane("curl_cffi_stealth") == "T0_curl_cffi"

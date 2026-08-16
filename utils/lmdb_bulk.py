@@ -83,11 +83,11 @@ def _normalise_items(items: Sequence[LMDBPair]) -> list[tuple[bytes, bytes]]:
                 continue
             raise TypeError(
                 f"putmulti mapping must have exactly 1 entry, got {len(item)}"
-            )
+    )
         raise TypeError(
             f"putmulti item must be (key, value) tuple or 1-entry mapping, "
             f"got {type(item).__name__}"
-        )
+    )
     return out
 
 
@@ -166,12 +166,12 @@ def putmulti_bounded(
                 logger.warning(
                     f"putmulti_bounded: chunk failed at item {total_written}"
                     f"/{len(normalised)}: {exc}"
-                )
+    )
                 return total_written
     except Exception as exc:
         logger.warning(
             f"putmulti_bounded: outer loop failed at item {total_written}: {exc}"
-        )
+    )
         return total_written
 
     return total_written

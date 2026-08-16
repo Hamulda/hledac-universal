@@ -288,14 +288,14 @@ class _ANNIndex:
         # Sprint F264D: IVF-PQ vector quantization (opt-in, M1 8GB friendly).
         self._ivfpq_enabled: bool = (
             os.environ.get("HLEDAC_LANCEDB_QUANTIZE", "0") == "1"
-        )
+    )
         # OPTIMIZED: Tuned for 256d vectors (256/8=32d per sub-vector)
         self._ivfpq_num_partitions: int = max(
             8, min(256, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS", str(_IVF_PQ_PARTITIONS))))
-        )
+    )
         self._ivfpq_num_sub_vectors: int = max(
             4, min(64, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS", str(_IVF_PQ_SUB_VECTORS))))
-        )
+    )
         self._ivfpq_trained: bool = False
 
         # Sprint F264E: adaptive auto-tuner
@@ -307,7 +307,7 @@ class _ANNIndex:
                 num_sub_vectors=self._ivfpq_num_sub_vectors,
                 vector_column="vector",
                 key_column="finding_key",
-            )
+    )
         except Exception:
             self._autotune = None
 
@@ -384,7 +384,7 @@ class _ANNIndex:
                 ])
                 self._table_multilingual = self._db.create_table(
                     self._multilingual_table_name, schema=schema_multi
-                )
+    )
                 logger.info(f"[ANN] Created multilingual table at {self._db_path}")
 
             # MRL-2: Initialize MRL truncator for multilingual embeddings
@@ -395,7 +395,7 @@ class _ANNIndex:
                     source_dim=self._mrl_source_dim,
                     target_dim=self._mrl_target_dim,
                     normalize=True
-                )
+    )
                 logger.info(f"[ANN] MRL truncator initialized: {self._mrl_source_dim}d → {self._mrl_target_dim}d")
             except ImportError:
                 self._mrl_truncator = None
@@ -465,7 +465,7 @@ class _ANNIndex:
                 from hledac.universal.knowledge.metal_hnsw import (
                     METAL_HNSW_ENABLED,
                     build_usearch_from_lancedb,
-                )
+    )
             except ImportError:
                 METAL_HNSW_ENABLED = False
                 build_usearch_from_lancedb = None  # type: ignore[assignment]
@@ -478,7 +478,7 @@ class _ANNIndex:
                         M=_USEARCH_CONNECTIVITY,
                         ef_construction=_USEARCH_EXPANSION_ADD,
                         max_elements=_MAX_ENTRIES,
-                    )
+    )
                     if gpu_index is not None and gpu_labels:
                         if is_multilingual:
                             self._usearch_index_multilingual = gpu_index
@@ -491,7 +491,7 @@ class _ANNIndex:
                             f"[ANN] Metal GPU HNSW built ({'multilingual' if is_multilingual else 'english'}): "
                             f"{len(gpu_labels)} vectors in {gpu_stats.get('build_time_s', 0):.2f}s "
                             f"(gpu_batches={gpu_stats.get('gpu_batches', 0)})"
-                        )
+    )
                 except Exception as e:
                     logger.debug(f"[ANN] Metal GPU HNSW build failed ({'multilingual' if is_multilingual else 'english'}): {e}")
 
@@ -516,7 +516,7 @@ class _ANNIndex:
                 connectivity=_USEARCH_CONNECTIVITY,
                 expansion_add=_USEARCH_EXPANSION_ADD,
                 expansion_search=_USEARCH_EXPANSION_SEARCH,
-            )
+    )
 
             # Build label mapping
             usearch_labels = []
@@ -536,7 +536,7 @@ class _ANNIndex:
             logger.info(
                 f"[ANN] USEARCH index built (CPU, {'multilingual' if is_multilingual else 'english'}): "
                 f"{len(vectors)} vectors, connectivity={_USEARCH_CONNECTIVITY}"
-            )
+    )
         except ImportError:
             logger.debug(f"[ANN] USEARCH not available ({'multilingual' if is_multilingual else 'english'}), using LanceDB brute-force only")
         except Exception as e:
@@ -620,7 +620,7 @@ class _ANNIndex:
                 connectivity=_USEARCH_BINARY_CONNECTIVITY,
                 expansion_add=_USEARCH_BINARY_EXPANSION_ADD,
                 expansion_search=_USEARCH_BINARY_EXPANSION_SEARCH,
-            )
+    )
 
             usearch_binary_labels = []
             for i, (fk, bqv) in enumerate(zip(data['finding_key'], data['bqv'])):
@@ -658,7 +658,7 @@ class _ANNIndex:
             logger.info(
                 f"[ANN] Binary index built ({'multilingual' if is_multilingual else 'english'}): "
                 f"{len(usearch_binary_labels)} vectors, metric=ham, dtype=b1"
-            )
+    )
         except ImportError:
             logger.debug(f"[ANN] USEARCH not available for binary index")
         except Exception as e:
@@ -681,7 +681,7 @@ class _ANNIndex:
             logger.info(
                 f"[ANN] lancedb.table_opened table=semantic_dedup_v1 "
                 f"rows={row_count} size_mb={size_mb:.2f} path={self._db_path}"
-            )
+    )
         except Exception as e:
             logger.debug(f"[ANN] lancedb.table_opened log failed: {e}")
 
@@ -740,7 +740,7 @@ class _ANNIndex:
                 if row_count < 256:
                     logger.debug(
                         f"[ANN] IVF-PQ skipped: only {row_count} rows"
-                    )
+    )
                     self._ivfpq_trained = True
                     return
 
@@ -751,12 +751,12 @@ class _ANNIndex:
                     num_sub_vectors=getattr(self, "_ivfpq_num_sub_vectors", _IVF_PQ_SUB_VECTORS),
                     vector_column_name="vector",
                     max_iterations=_M1_MAX_ITERATIONS,
-                )
+    )
                 self._ivfpq_trained = True
                 logger.info(
                     f"[ANN] IVF-PQ trained: partitions={getattr(self, '_ivfpq_num_partitions', _IVF_PQ_PARTITIONS)} "
                     f"sub_vectors={getattr(self, '_ivfpq_num_sub_vectors', _IVF_PQ_SUB_VECTORS)}"
-                )
+    )
             except Exception as e:
                 self._ivfpq_trained = True
                 logger.warning(f"[ANN] IVF-PQ training failed: {e}")
@@ -929,7 +929,7 @@ class _ANNIndex:
                     .nprobes(_IVF_PQ_NPROBES_DEFAULT)
                     .limit(fetch_limit)
                     .to_list()
-                )
+    )
             except TypeError:
                 # Fallback for LanceDB versions without nprobes on builder
                 results = (
@@ -937,7 +937,7 @@ class _ANNIndex:
                     .metric("cosine")
                     .limit(fetch_limit)
                     .to_list()
-                )
+    )
 
         candidates: dict[str, tuple[list[float], str, float]] = {}
         for r in results:
@@ -1042,7 +1042,7 @@ class _ANNIndex:
                     .nprobes(_IVF_PQ_NPROBES_DEFAULT)
                     .limit(fetch_limit)
                     .to_list()
-                )
+    )
             except TypeError:
                 # Fallback for LanceDB versions without nprobes on builder
                 results = (
@@ -1050,7 +1050,7 @@ class _ANNIndex:
                     .metric("cosine")
                     .limit(fetch_limit)
                     .to_list()
-                )
+    )
 
         candidates: dict[str, tuple[list[float], str, float]] = {}
         for r in results:
@@ -1225,7 +1225,7 @@ class _ANNIndex:
                 len(embeddings),
                 finding_keys,
                 text_hashes
-            )
+    )
 
             self._binary_raw_n_entries = n_entries
             self._binary_raw_finding_keys = finding_keys
@@ -1281,7 +1281,7 @@ class _ANNIndex:
                 top_k,
                 min_similarity,
                 use_ml=True
-            )
+    )
 
             if not results:
                 return {}
@@ -1396,7 +1396,7 @@ class _ANNIndex:
             if search_english and self._binary_raw_loaded:
                 neon_candidates = self._collect_binary_neon_candidates(
                     query_np, top_k * 4, _BINARY_MIN_SCORE
-                )
+    )
                 if neon_candidates:
                     candidates.update(neon_candidates)
                     logger.debug(f"[ANN] NEON binary search: {len(neon_candidates)} candidates")
@@ -1454,7 +1454,7 @@ class _ANNIndex:
                     hamming_scores = batch_hamming_similarity(
                         np.array(emb_norm, dtype=np.float32),
                         candidates_np
-                    )
+    )
                     
                     # Combine with USEARCH binary scores
                     combined = []
@@ -1480,7 +1480,7 @@ class _ANNIndex:
                 top_vectors.append(
                     np.array(v, dtype=np.float32) if v
                     else np.zeros(self._embed_dim, dtype=np.float32)
-                )
+    )
             
             # MLX re-rank only top-K for final precision
             final_reranked = self._mlx_rerank(np.array(emb_norm, dtype=np.float32), top_indices, top_vectors)
@@ -1618,14 +1618,14 @@ class _ANNIndex:
                         current_num_partitions=self._ivfpq_num_partitions,
                         current_num_sub_vectors=self._ivfpq_num_sub_vectors,
                         inserts_delta=1,
-                    )
+    )
                     if result.changed():
                         self._ivfpq_num_partitions = result.new_partitions
                         self._ivfpq_num_sub_vectors = result.new_num_sub_vectors
                         logger.info(
                             f"[ANN] auto-tune: partitions={result.old_partitions}->{result.new_partitions} "
                             f"sub_vectors={result.old_num_sub_vectors}->{result.new_num_sub_vectors}"
-                        )
+    )
                 except Exception:  # noqa: BLE001
                     pass
 

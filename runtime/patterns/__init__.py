@@ -16,4 +16,4 @@ __all__: list[str] = []
 __getattr__ = __import__("hledac.universal.utils._patterns", fromlist=["lazy_module_getter"]).lazy_module_getter(
     "hledac.universal.runtime.patterns.discovery",
     {"discovery": "discovery"},
-)
+    )

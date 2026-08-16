@@ -130,7 +130,7 @@ class EmbeddingDedupIndex:
                 connectivity=USEARCH_CONNECTIVITY,
                 expansion_add=USEARCH_EXPANSION_ADD,
                 expansion_search=USEARCH_EXPANSION_SEARCH,
-            )
+    )
         self._index = idx
 
         self._texts: dict[str, str] = {}  # finding_id → truncated text
@@ -246,7 +246,7 @@ class EmbeddingDedupIndex:
                 nearest_id=None,
                 nearest_text=None,
                 confidence=0.0,
-            )
+    )
 
         try:
             embedding = await self._embed_text(text)
@@ -257,7 +257,7 @@ class EmbeddingDedupIndex:
                     nearest_id=None,
                     nearest_text=None,
                     confidence=0.0,
-                )
+    )
 
             async with self._lock:
                 count = len(self._finding_ids)
@@ -269,7 +269,7 @@ class EmbeddingDedupIndex:
                         nearest_id=None,
                         nearest_text=None,
                         confidence=1.0,
-                    )
+    )
 
                 try:
                     if self._index is None:
@@ -278,7 +278,7 @@ class EmbeddingDedupIndex:
                     results = self._index.search(
                         embedding.astype(np.float32),
                         count=min(HNSW_SEARCH_K, count),
-                    )
+    )
                 except Exception as exc:
                     logger.debug("EmbeddingDedupIndex: USearch search error: %s", exc)
                     self._stats["usearch_errors"] += 1
@@ -289,7 +289,7 @@ class EmbeddingDedupIndex:
                         nearest_id=None,
                         nearest_text=None,
                         confidence=0.0,
-                    )
+    )
 
                 if not results:
                     await self._add_to_index(finding_id, text, embedding)
@@ -299,7 +299,7 @@ class EmbeddingDedupIndex:
                         nearest_id=None,
                         nearest_text=None,
                         confidence=0.0,
-                    )
+    )
 
                 # Best neighbor: results sorted by distance ascending
                 # usearch returns Match|Matches; access via getattr for type safety
@@ -322,7 +322,7 @@ class EmbeddingDedupIndex:
                         nearest_id=best_original_id,
                         nearest_text=best_text,
                         confidence=similarity,
-                    )
+    )
 
                 await self._add_to_index(finding_id, text, embedding)
                 return DedupResult(
@@ -331,7 +331,7 @@ class EmbeddingDedupIndex:
                     nearest_id=best_original_id,
                     nearest_text=best_text,
                     confidence=similarity,
-                )
+    )
 
         except Exception as exc:
             logger.debug("EmbeddingDedupIndex: check_duplicate error: %s", exc)
@@ -341,7 +341,7 @@ class EmbeddingDedupIndex:
                 nearest_id=None,
                 nearest_text=None,
                 confidence=0.0,
-            )
+    )
 
     async def _add_to_index(
         self,
@@ -368,7 +368,7 @@ class EmbeddingDedupIndex:
             self._index.add(
                 int_id,
                 embedding.astype(np.float32),
-            )
+    )
             self._texts[finding_id] = text[:MAX_TEXT_EMBED_BYTES]
             self._int_to_id[int_id] = finding_id
             self._finding_ids.append(finding_id)
@@ -390,7 +390,7 @@ class EmbeddingDedupIndex:
             *[self.check_duplicate(finding_id, text, metadata) for finding_id, text, metadata in items],
             policy="log",
             concurrency=8,
-        )
+    )
         results: list[DedupResult] = cast(list[DedupResult], _raw)
         return list(results)
 
@@ -411,7 +411,7 @@ class EmbeddingDedupIndex:
                 connectivity=USEARCH_CONNECTIVITY,
                 expansion_add=USEARCH_EXPANSION_ADD,
                 expansion_search=USEARCH_EXPANSION_SEARCH,
-            )
+    )
         self._index = idx
         self._texts.clear()
         self._finding_ids.clear()

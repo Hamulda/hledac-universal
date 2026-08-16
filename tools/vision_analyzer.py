@@ -66,7 +66,7 @@ class VisionAnalyzer:
             # Create image request handler
             handler = Vision.VNImageRequestHandler.alloc().initWithData_options_(
                 ns_data, None
-            )
+    )
 
             # Create request objects
             text_request = Vision.VNRecognizeTextRequest.new()
@@ -86,7 +86,7 @@ class VisionAnalyzer:
             await loop.run_in_executor(
                 None,
                 lambda: handler.performRequests_error_(requests, None)
-            )
+    )
 
             # Extract text results
             text_results = text_request.results() or []

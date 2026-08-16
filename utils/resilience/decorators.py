@@ -33,7 +33,7 @@ from hledac.universal.utils.resilience.circuit_breaker import (
     CircuitBreakerOpen,
     CircuitBreakers,
     CircuitState,
-)
+    )
 from hledac.universal.utils.resilience.degradation_modes import FailureSeverity
 from hledac.universal.utils.sync_bridge import run_sync_async
 from _core import aclose
@@ -128,7 +128,7 @@ def with_circuit_breaker(
                         failure_count=0,
                         last_failure="circuit_open",
                         recovery_timeout=circuit.config.recovery_timeout,
-                    )
+    )
 
                 circuit._metrics.total_calls += 1
 
@@ -169,7 +169,7 @@ def with_circuit_breaker(
                         failure_count=0,
                         last_failure="circuit_open",
                         recovery_timeout=circuit.config.recovery_timeout,
-                    )
+    )
 
                 circuit._metrics.total_calls += 1
 
@@ -209,7 +209,7 @@ def _record_failure(component: str, severity: FailureSeverity, error: Exception)
                 error=error,
             ),
             name=f"resilience:record_failure:{component}",
-        )
+    )
     except Exception:
         pass
 
@@ -227,7 +227,7 @@ def _record_rejection(component: str, severity: FailureSeverity) -> None:
                 error=rejection_error,
             ),
             name=f"resilience:record_rejection:{component}",
-        )
+    )
     except Exception:
         pass
 

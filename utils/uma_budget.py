@@ -437,7 +437,7 @@ class UmaBudget:
         breakdown['total_tracked']['utilization_pct'] = (
             breakdown['total_tracked']['current_mib'] / breakdown['total_tracked']['budget_mib'] * 100
             if breakdown['total_tracked']['budget_mib'] > 0 else 0
-        )
+    )
         
         return breakdown
 
@@ -467,7 +467,7 @@ class UmaBudget:
             lines.append(
                 f"  {name:15} │ {data['current_mib']:8.1f} / {data['budget_mib']:8.1f} MiB "
                 f"│ {util:5.1f}% │ [{bar}]"
-            )
+    )
         
         lines.extend([
             '-' * 60,
@@ -561,7 +561,7 @@ class SwapTiers(NamedTuple):
             CLEAN=round(mission_peak * 0.60, 2),  # 3.3 GiB
             DIAGNOSTIC=round(mission_peak * 0.85, 2),  # 4.675 GiB
             HARD_BLOCK=round(mission_peak * 0.95, 2),  # 5.225 GiB
-        )
+    )
 
 
 # SSOT SWAP_TIERS instance — import this, don't define locally
@@ -638,7 +638,7 @@ _RATIOS_USED: tuple[float, float, float, float] = (
     UmaBudget.THRESHOLD_WARN_GIB / UmaBudget.TOTAL_GIB,  # 5.938/6.25 = 0.95
     UmaBudget.THRESHOLD_CRITICAL_GIB / UmaBudget.TOTAL_GIB,  # 6.191/6.25 = 0.99
     UmaBudget.THRESHOLD_EMERGENCY_GIB / UmaBudget.TOTAL_GIB,  # 6.25/6.25 = 1.00
-)
+    )
 _DETECTED_TOTAL_GIB: float = _UMA_TOTAL_MB / 1024
 
 # MODERN-44 FIX: Sync Rust memory.rs thresholds with UmaBudget SSOT.
@@ -1126,7 +1126,7 @@ class PowerStatusMonitor:
                 capture_output=True,
                 text=True,
                 timeout=2.0,
-            )
+    )
             if result.returncode != 0:
                 return {"on_battery": False, "ac_attached": False, "battery_level": None, "charging": False}
 

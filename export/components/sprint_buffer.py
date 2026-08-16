@@ -138,7 +138,7 @@ class SprintExportBuffer:
 
         self._flush_task = asyncio.create_task(
             self._flush_loop(), name=f'sprint_buffer_flush_{self._sprint_id}'
-        )
+    )
 
     async def append(self, data: bytes) -> None:
         """Append serialized finding bytes to the buffer.
@@ -241,7 +241,7 @@ class SprintExportBuffer:
                 self._flush_task.cancel()
                 await asyncio.wait_for(
                     asyncio.shield(self._flush_task), timeout=3.0
-                )
+    )
             except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
                 pass
             self._flush_task = None
@@ -309,7 +309,7 @@ class SprintExportBuffer:
                 self._flush_task.cancel()
                 await asyncio.wait_for(
                     asyncio.shield(self._flush_task), timeout=2.0
-                )
+    )
             except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
                 pass
             self._flush_task = None

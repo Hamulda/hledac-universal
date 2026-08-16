@@ -56,7 +56,7 @@ DEFAULT_RETRYABLE: tuple[type[Exception], ...] = (
     ConnectionError,
     OSError,
     asyncio.CancelledError,
-)
+    )
 
 
 def is_retryable(exc: Exception, retryable: type[Exception] | tuple[type[Exception], ...] | None = None) -> bool:
@@ -115,7 +115,7 @@ async def retry_async(
                 max_attempts=3,
                 base_delay=1.0,
                 on_retry=lambda att, dly, exc: telemetry.retry_inc(),
-            )
+    )
     """
     attempt = 0
     last_exception: Exception | None = None
@@ -156,7 +156,7 @@ async def retry_async(
             max_attempts,
             delay,
             last_exception,
-        )
+    )
 
         try:
             await asyncio.sleep(delay)

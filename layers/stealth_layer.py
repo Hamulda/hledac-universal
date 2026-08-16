@@ -338,7 +338,7 @@ from .evasion_pipeline import (  # noqa: E402
     ProfileGenerator,
     _EvasionScriptGenerator,
     compute_detection_score,
-)
+    )
 
 # BrowserProfile = backward-compat alias
 BrowserProfile = FingerprintProfile
@@ -596,7 +596,7 @@ class FingerprintRandomizer:
             randomize_screen=self.config.randomize_screen,
             randomize_timezone=self.config.randomize_timezone,
             randomize_plugins=self.config.randomize_plugins,
-        )
+    )
         self._current_profile: FingerprintProfile | None = None
 
     def _generate_canvas_noise(self) -> tuple[int, int, int]:
@@ -1092,7 +1092,7 @@ class StealthLayer:
                     emulate_human_events=True, patch_detection_libs=True,
                     randomize_globals=True, spoof_chrome_runtime=True,
                     add_chrome_plugins=True,
-                )
+    )
 
                 # Get profile from FingerprintRandomizer if available
                 profile = None
@@ -1103,7 +1103,7 @@ class StealthLayer:
                 logger.info(
                     '✅ JavaScriptEvasion initialized (unified pipeline, '
                     '17 categories, CSPRNG+Gaussian)'
-                )
+    )
             except Exception as e:
                 logger.warning(f'⚠️ JavaScriptEvasion initialization failed: {e}')
                 self._js_evasion = None

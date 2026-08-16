@@ -34,7 +34,7 @@ from hledac.universal.runtime.sidecars import (  # noqa: F401
     TIFeedSidecarAdapter,
     DigitalGhostSidecarAdapter,
     SteganographySidecarAdapter,
-)
+    )
 
 # Backward-compatibility shim: bind_scheduler delegates to the new location
 from hledac.universal.runtime.sidecars._base import bind_scheduler as _bind_scheduler

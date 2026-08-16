@@ -540,7 +540,7 @@ class _JARMFingerprinter:
             cursor = conn.execute(
                 "SELECT hash, ts FROM jarm_cache WHERE domain = ?",
                 (domain,)
-            )
+    )
             row = cursor.fetchone()
             if row:
                 jarm_hash, ts = row
@@ -558,7 +558,7 @@ class _JARMFingerprinter:
             conn.execute(
                 "INSERT OR REPLACE INTO jarm_cache (domain, hash, ts) VALUES (?, ?, ?)",
                 (domain, jarm_hash, int(time.time()))
-            )
+    )
             conn.commit()
         except Exception as e:
             logger.debug(f"[JARM] Cache write failed: {e}")

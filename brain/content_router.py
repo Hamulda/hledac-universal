@@ -44,7 +44,7 @@ _CODE_PATTERNS = (
     r'async\s+def',
     r'@\w+\s*\(',
     r'```\w*',
-)
+    )
 
 # SQL patterns
 _SQL_PATTERNS = (
@@ -57,35 +57,35 @@ _SQL_PATTERNS = (
     r'DROP\s+TABLE',
     r'JOIN\s+\w+\s+ON',
     r'WHERE\s+\w+',
-)
+    )
 
 # Translation patterns
 _TRANSLATION_PATTERNS = (
     r'\b(translate|translation|Übersetzung|traduction|traducción)\b',
     r'\b(from\s+\w+\s+to\s+\w+)\b',
     r'\b(english|german|french|spanish|chinese|japanese|korean)\s+(to|into|ins?)\b',
-)
+    )
 
 # Embedding keywords
 _EMBEDDING_KEYWORDS = (
     "embed", "similarity", "semantic", "vector", "embedding",
     "compare", "rank", "search", "find related", "most similar",
-)
+    )
 
 # Classification keywords
 _CLASSIFICATION_KEYWORDS = (
     r'\b(classify|categorize|osint|threat|indicator|type\s+of|what\s+kind)\b',
-)
+    )
 
 # Relevance keywords
 _RELEVANCE_KEYWORDS = (
     r'\b(relevant|irrelevant|skip|ignore|filter|priorit.y|important)\b',
-)
+    )
 
 # Synthesis keywords
 _SYNTHESIS_KEYWORDS = (
     r'\b(write|summarize|explain|describe|generate|create|compose)\b',
-)
+    )
 
 
 # =============================================================================

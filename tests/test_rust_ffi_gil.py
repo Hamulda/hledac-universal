@@ -54,7 +54,7 @@ class TestRustFFIGILRelease:
         results = await asyncio.gather(
             python_task_during_ffi(),
             ffi_like_computation(),
-        )
+    )
         
         # Python task MUST have run (GIL was released during Rust call)
         assert progress["python_task_ran"], \
@@ -93,7 +93,7 @@ class TestRustFFIGILRelease:
         # Run 10 concurrent calls
         results = await asyncio.gather(
             *[mock_ffi_call(i) for i in range(10)]
-        )
+    )
         
         elapsed = time.monotonic() - start
         

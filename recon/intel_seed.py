@@ -70,7 +70,7 @@ def _load_yaml() -> dict[str, list[tuple[str, float]]]:
         log.warning(
             "intel_seed: apt_onion_mapping.yaml not found at %s — using empty mapping",
             yaml_path,
-        )
+    )
         return {}
 
     try:
@@ -100,7 +100,7 @@ def _load_yaml() -> dict[str, list[tuple[str, float]]]:
             "intel_seed: loaded %d APT actors from %s",
             len(result),
             yaml_path,
-        )
+    )
         return result
 
     except Exception as e:

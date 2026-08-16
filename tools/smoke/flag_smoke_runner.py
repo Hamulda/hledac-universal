@@ -79,7 +79,7 @@ _SKIP_PATH_FRAGMENTS = (
     "/__pycache__/",
     "/site-packages/",
     "/.hledac/",
-)
+    )
 
 
 class FlagReport(msgspec.Struct, gc=False):
@@ -182,14 +182,14 @@ def _check_flag(flag: str) -> FlagReport:
             report.detail = (
                 f"set in env ({os.environ.get(flag)!r}) but "
                 f"is_flag_active returned False"
-            )
+    )
         else:
             in_registry = " (in FLAG_REGISTRY)" if spec is not None else " (no spec)"
             report.status = "PASS"
             report.detail = (
                 f"flag visible in {len(report.referenced_in)} files"
                 f"{in_registry}"
-            )
+    )
     except Exception as exc:  # pragma: no cover — defensive
         report.status = "IMPORT_FAIL"
         report.detail = f"{type(exc).__name__}: {exc}"

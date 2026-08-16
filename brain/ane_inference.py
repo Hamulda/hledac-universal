@@ -222,7 +222,7 @@ class _ModelCache:
         model = _CachedModel(
             key=key, path=path, dim=dim, max_seq_len=max_seq_len,
             compiled_at=time_module.monotonic(),
-        )
+    )
         self._models[key] = model
         self._access_order.append(key)
         return model
@@ -292,14 +292,14 @@ def _compile_hf_model_to_coreml(
         inputs = tokenizer(
             dummy_text, return_tensors="pt", padding=True,
             truncation=True, max_length=max_seq_len,
-        )
+    )
 
         # Trace
         with torch.no_grad():
             traced = torch.jit.trace(
                 model,
                 (inputs["input_ids"], inputs["attention_mask"]),
-            )
+    )
 
         # Convert to CoreML
         input_shape = ct.Shape((1, ct.RangeDim(1, max_seq_len)))
@@ -314,7 +314,7 @@ def _compile_hf_model_to_coreml(
             ],
             compute_units=ct.ComputeUnit.NEURAL_ENGINE,
             minimum_deployment_target=ct.target.iOS18,
-        )
+    )
 
         # Save
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -392,7 +392,7 @@ def _compile_mlx_model_to_coreml(
         logger.warning(
             "[ANE:compile-mlx] Full MIL builder not yet implemented — "
             "use _compile_hf_model_to_coreml() for now"
-        )
+    )
         return False
 
     except Exception as e:
@@ -480,7 +480,7 @@ class ANEInferenceEngine:
                     self._loaded_models[model_key] = mlmodel
                     meta = self._cache.put(
                         model_key, compiled_path, config["dim"], config["max_seq_len"]
-                    )
+    )
                     self._model_metadata[model_key] = meta
                     logger.info("[ANE] Loaded pre-compiled: %s", model_key)
                     return True
@@ -503,7 +503,7 @@ class ANEInferenceEngine:
                     compiled_path,
                     config["dim"],
                     config["max_seq_len"],
-                )
+    )
                 if not success:
                     logger.warning("[ANE] Compilation failed for: %s", model_key)
                     return False
@@ -513,7 +513,7 @@ class ANEInferenceEngine:
                     self._loaded_models[model_key] = mlmodel
                     meta = self._cache.put(
                         model_key, compiled_path, config["dim"], config["max_seq_len"]
-                    )
+    )
                     self._model_metadata[model_key] = meta
                     logger.info("[ANE] Compiled and loaded: %s", model_key)
                     return True
@@ -588,7 +588,7 @@ class ANEInferenceEngine:
                         padding="max_length",
                         truncation=True,
                         max_length=meta.max_seq_len,
-                    )
+    )
                     input_ids = inputs["input_ids"].astype(np.int32)
                     attention_mask = inputs["attention_mask"].astype(np.int32)
 
@@ -636,7 +636,7 @@ class ANEInferenceEngine:
             from transformers import AutoTokenizer
             tokenizer = await asyncio.to_thread(
                 AutoTokenizer.from_pretrained, hf_id
-            )
+    )
             self._tokenizer_cache[hf_id] = tokenizer
             return tokenizer
         except ImportError:

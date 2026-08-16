@@ -69,14 +69,14 @@ class FetchFeedStage:
         try:
             from hledac.universal.discovery.rss_atom_adapter import (
                 async_fetch_feed_entries,
-            )
+    )
 
             batch = await async_fetch_feed_entries(
                 feed_url=input_feed_url,
                 max_entries=20,  # default
                 timeout_s=self._timeout_s,
                 max_bytes=self._max_bytes,
-            )
+    )
 
             # Convert to FeedEntryBatch
             entry_urls = [e.get("url", "") for e in batch]
@@ -95,7 +95,7 @@ class FetchFeedStage:
                 entry_published_dates=entry_published_dates,
                 feed_url=input_feed_url,
                 entry_hashes=entry_hashes,
-            )
+    )
 
             return feed_batch, telemetry
 
@@ -112,4 +112,4 @@ class FetchFeedStage:
             entry_published_dates=[],
             feed_url="",
             entry_hashes=[],
-        )
+    )

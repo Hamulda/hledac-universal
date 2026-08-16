@@ -38,7 +38,7 @@ from _core.isolated_executors import (
     close_all_pools,
     get_interpreter_stats,
     is_pep734_available,
-)
+    )
 
 _cleanup_done: bool = False
 _cleanup_lock: threading.Lock = threading.Lock()
@@ -171,7 +171,7 @@ sys.exit(0 if result == 1764 else 1)
             [sys.executable, "-c", code],
             capture_output=True,
             timeout=30,
-        )
+    )
         assert proc.returncode == 0, f"Subprocess isolation failed: {proc.stderr.decode()}"
 
 

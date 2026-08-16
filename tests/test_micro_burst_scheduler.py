@@ -54,7 +54,7 @@ class TestMicroBurstScheduler:
         from hledac.universal._core.micro_burst_scheduler import (
             BurstPhase,
             MicroBurstScheduler,
-        )
+    )
 
         scheduler = MicroBurstScheduler()
         
@@ -88,7 +88,7 @@ class TestMicroBurstScheduler:
         from hledac.universal._core.micro_burst_scheduler import (
             BurstPhase,
             MicroBurstScheduler,
-        )
+    )
 
         scheduler = MicroBurstScheduler()
         scheduler.start()
@@ -102,7 +102,7 @@ class TestMicroBurstScheduler:
             BurstPhase,
             MicroBurstScheduler,
             _BURST_GPU_MS,
-        )
+    )
 
         scheduler = MicroBurstScheduler()
         scheduler.start()
@@ -125,7 +125,7 @@ class TestMicroBurstScheduler:
             MicroBurstScheduler,
             _BURST_GPU_MS,
             _BURST_IO_MS,
-        )
+    )
 
         scheduler = MicroBurstScheduler()
         scheduler.start()
@@ -150,7 +150,7 @@ class TestMicroBurstScheduler:
             MicroBurstScheduler,
             _BURST_GPU_MS,
             _BURST_IO_MS,
-        )
+    )
 
         scheduler = MicroBurstScheduler()
         scheduler.start()
@@ -171,7 +171,7 @@ class TestMicroBurstScheduler:
         from hledac.universal._core.micro_burst_scheduler import (
             MicroBurstScheduler,
             _PHASE_CHECK_INTERVAL_S,
-        )
+    )
 
         scheduler = MicroBurstScheduler()
         scheduler.start()
@@ -188,7 +188,7 @@ class TestMicroBurstScheduler:
         from hledac.universal._core.micro_burst_scheduler import (
             BurstPhase,
             MicroBurstScheduler,
-        )
+    )
 
         scheduler = MicroBurstScheduler()
         scheduler.start()
@@ -264,7 +264,7 @@ class TestConstants:
             _BURST_IO_MS,
             _BURST_CYCLE_MS,
             _BURST_GPU_FRACTION,
-        )
+    )
 
         # GPU window: 200ms
         assert _BURST_GPU_MS == 200.0
@@ -293,7 +293,7 @@ class TestSingletonPattern:
         from hledac.universal._core.micro_burst_scheduler import (
             get_scheduler,
             MicroBurstScheduler,
-        )
+    )
 
         # Import the function
         from hledac.universal.utils._patterns import module_singleton_creator

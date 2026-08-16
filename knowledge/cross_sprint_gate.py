@@ -62,7 +62,7 @@ _MIN_SOURCES_FOR_DELTA_INDEX: int = 2  # Use DuckDB fast path if >=2 sources
 _ENABLE_CROSS_SPRINT_GATE: bool = (
     os.environ.get("HLEDAC_ENABLE_CROSS_SPRINT_GATE", "1").lower()
     in ("1", "true", "yes", "on")
-)
+    )
 
 
 @dataclass
@@ -155,10 +155,10 @@ class CrossSprintGate:
             try:
                 from hledac.universal.knowledge.sprint_delta_index import (
                     get_sprint_delta_index,
-                )
+    )
                 self._delta_index = await get_sprint_delta_index(
                     duckdb_store=self._duckdb_store,
-                )
+    )
             except Exception as e:
                 logger.debug("[CrossSprintGate] SprintDeltaIndex init failed: %s", e)
                 self._delta_index = None
@@ -169,7 +169,7 @@ class CrossSprintGate:
             try:
                 from hledac.universal.knowledge.sprint_delta_index import (
                     get_mmap_delta_index,
-                )
+    )
                 self._mmap_delta_index = get_mmap_delta_index()
             except Exception as e:
                 logger.debug("[CrossSprintGate] MmapDeltaIndex init failed: %s", e)
@@ -226,7 +226,7 @@ class CrossSprintGate:
                 sprint_ids=[entry.get("_sprint_id", "")],
                 should_skip=True,
                 skip_reason="delta_bundle_confirmed",
-            )
+    )
             all_freshness.append(freshness)
         
         # TIER 2: In-memory skip cache for previously evaluated entities
@@ -246,7 +246,7 @@ class CrossSprintGate:
         # Evaluate remaining entities and build freshness list
         tier2_4_freshness = await self._evaluate_entities(
             skip_set, uncached, freshness_map, delta_index_results, now,
-        )
+    )
         all_freshness.extend(tier2_4_freshness)
         
         await self._evict_stale_cache(now)
@@ -312,7 +312,7 @@ class CrossSprintGate:
                 logger.debug(
                     "[CrossSprintGate] MmapDeltaIndex tier 1: %d/%d entities skipped (fresh)",
                     len(skip_set), len(entities),
-                )
+    )
             
         except Exception as e:
             logger.debug("[CrossSprintGate] MmapDeltaIndex tier 1 failed: %s", e)
@@ -420,7 +420,7 @@ class CrossSprintGate:
                 f"confirmed by {freshness.distinct_sources} sources "
                 f"across {freshness.distinct_sprints} sprints "
                 f"(avg confidence={freshness.avg_confidence:.2f})"
-            )
+    )
             skip_set.add(ev)
             self._stats["skipped"] += 1
         else:
@@ -465,7 +465,7 @@ class CrossSprintGate:
                 try:
                     obs = await store.async_get_entity_observations_by_entity(
                         ev, limit=MAX_OBSERVATIONS_PER_ENTITY
-                    )
+    )
                 except Exception:
                     continue
 
@@ -477,7 +477,7 @@ class CrossSprintGate:
                 for o in obs:
                     source_confidences[o.get("source_type", "unknown")].append(
                         o.get("confidence", 0.0)
-                    )
+    )
 
                 if len(source_confidences) < 2:
                     continue
@@ -504,7 +504,7 @@ class CrossSprintGate:
                                 f"Confidence gap {gap:.2f} between {max_src} "
                                 f"({max_conf:.2f}) and {min_src} ({min_conf:.2f})"
                             ),
-                        )
+    )
                     )
 
         except Exception as e:
@@ -538,7 +538,7 @@ class CrossSprintGate:
             try:
                 observations = await store.async_get_entity_observations_by_entity(
                     ev, limit=MAX_OBSERVATIONS_PER_ENTITY
-                )
+    )
             except Exception:
                 continue
 
@@ -546,7 +546,7 @@ class CrossSprintGate:
                 freshness_map[ev] = EntityFreshness(
                     entity_value=ev,
                     freshness="novel",
-                )
+    )
                 continue
 
             # Compute aggregate metrics
@@ -604,7 +604,7 @@ class CrossSprintGate:
                 observations_count=len(observations),
                 source_types=source_types,
                 sprint_ids=list(sprints),
-            )
+    )
 
         return freshness_map
 

@@ -39,7 +39,7 @@ sys.modules['hledac.universal'] = _hledac_universal_stub
 from hledac.universal.runtime.acquisition_strategy import (  # noqa: E402
     build_acquisition_plan,
     normalize_acquisition_profile,
-)
+    )
 from _core import aclose
 
 __all__ = ["run_preflight"]
@@ -203,7 +203,7 @@ def check_research_quality_replay_fixture() -> tuple[bool, str]:
             f"  quality_gate={gate!r} (expected QUALITY_FAIL_FEED_ONLY)  "
             f"feed_findings={feed_count} (expected 4464)  "
             f"replay_match={ok}"
-        )
+    )
     except Exception as e:
         ok = False
         detail = f"  FAILED: {type(e).__name__}: {e}"

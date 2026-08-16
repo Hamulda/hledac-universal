@@ -335,13 +335,13 @@ class TestAsyncioRunAudit:
                                 line_no,
                                 f"session_event_loop.run_until_complete() inside async def "
                                 f"({qualname or '?'}) — nested event loop, M1 Metal crash",
-                            )
+    )
                         )
         assert not violations, (
             "CLAUDE.md invariant violated: session_event_loop.run_until_complete() inside async def.\n"
             + "\n".join(
                 f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations
-            )
+    )
         )
 
     def test_no_asyncio_run_in_threadpoolexecutor(self, session_event_loop: asyncio.AbstractEventLoop):
@@ -387,14 +387,14 @@ class TestAsyncioRunAudit:
                                 f"a function in a module that imports "
                                 f"ThreadPoolExecutor ({qualname or '?'}) — "
                                 f"M1 Metal crash if submitted to executor",
-                            )
+    )
                         )
         assert not violations, (
             "CLAUDE.md invariant #4 violated: session_event_loop.run_until_complete() in ThreadPoolExecutor-submitted "
             "callable.\n"
             + "\n".join(
                 f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations
-            )
+    )
         )
 
     def test_no_new_event_loop_in_async_context(self, session_event_loop: asyncio.AbstractEventLoop):
@@ -420,13 +420,13 @@ class TestAsyncioRunAudit:
                     and isinstance(func.value, ast.Name)
                     and func.value.id == "asyncio"
                     and func.attr == "new_event_loop"
-                )
+    )
                 is_run_until_complete = (
                     isinstance(func, ast.Attribute)
                     and isinstance(func.value, ast.Name)
                     and func.value.id in ("loop", "_loop")
                     and func.attr == "run_until_complete"
-                )
+    )
                 if not (is_new_event_loop or is_run_until_complete):
                     continue
 
@@ -442,7 +442,7 @@ class TestAsyncioRunAudit:
                 has_m1_safe = any(
                     marker in context
                     for marker in ["M1-SAFE", "C7-FIX", "get_running_loop", "RuntimeError", "asyncio.Runner"]
-                )
+    )
                 if has_m1_safe:
                     continue
 
@@ -454,14 +454,14 @@ class TestAsyncioRunAudit:
                             node.lineno,
                             f"asyncio.new_event_loop() or loop.run_until_complete() inside async def "
                             f"({qualname or '?'}) — nested event loop risk",
-                        )
+    )
                     )
 
         assert not violations, (
             "C7 invariant violated: asyncio.new_event_loop()/run_until_complete() in async context.\n"
             + "\n".join(
                 f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations
-            )
+    )
         )
 
     def test_known_safe_sites_remain_safe(self, session_event_loop: asyncio.AbstractEventLoop):
@@ -476,4 +476,4 @@ class TestAsyncioRunAudit:
         text = opt_path.read_text()
         assert "F206L" in text or "M1-SAFE" in text, (
             "execution_optimizer M1-SAFE marker missing — verify F196C fix"
-        )
+    )

@@ -150,7 +150,7 @@ class PQIndex:
             dist = mx.sum(
                 (subvectors[:, i, :][:, None, :] - self.centroids[i][None, :, :]) ** 2,
                 axis=2
-            )
+    )
             codes.append(mx.argmin(dist, axis=1).astype(mx.uint8))
 
         return mx.stack(codes, axis=1)
@@ -210,7 +210,7 @@ class PQIndex:
             d = mx.sum(
                 (q_sub[0, i][None, :] - self.centroids[i]) ** 2,
                 axis=1
-            )
+    )
             dist_table[i] = d
 
         # Compute L2 distances using codes: (n,)
@@ -257,7 +257,7 @@ class PQIndex:
             codes=self.codes,
             perm=self.perm,
             ids=self.ids
-        )
+    )
         logger.info(f"PQ index saved to {path}")
 
     def load(self, path: str) -> None:

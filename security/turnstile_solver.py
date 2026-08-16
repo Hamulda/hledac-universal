@@ -291,7 +291,7 @@ async def get_clearance_for_domain(
             "[CLEARANCE] Stored %d clearance cookies for %s",
             len(clearance_cookies),
             domain,
-        )
+    )
 
     except Exception:  # noqa: BLE001 — fail-soft
         pass
@@ -325,7 +325,7 @@ def inject_clearance_cookies(
         # to avoid duplicating the entire existing string as one pair
         result["Cookie"] = existing_cookie + "; " + "; ".join(
             f"{k}={v}" for k, v in cookies.items() if v
-        )
+    )
     else:
         result["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items() if v)
     return result

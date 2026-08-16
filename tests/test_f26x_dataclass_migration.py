@@ -103,7 +103,7 @@ class TestHypothesisEngineTypes:
             temporal_consistency=True,
             overall_confidence=0.7,
             devil_advocate_score=0.3,
-        )
+    )
         assert len(ar.supporting_evidence) == 1
         assert ar.overall_confidence == 0.7
 
@@ -177,7 +177,7 @@ class TestAcquisitionStrategyTypes:
             has_long_duration=True, is_nonfeed_diagnostic=False,
             transport_degraded=False, stealth_ready=False,
             base_concurrency=2, is_academic=False,
-        )
+    )
         assert ctx._feed_max_items == 50
         assert ctx._feed_cap_reason is None
 
@@ -191,6 +191,6 @@ class TestAcquisitionStrategyTypes:
         fdb = FeedDominanceBudget(
             max_feed_accepted_before_nonfeed_terminal=100,
             max_feed_per_source=50,
-        )
+    )
         assert fdb.is_active()
         assert not fdb.is_sentinel()

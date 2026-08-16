@@ -59,7 +59,7 @@ class TestNormalizePayloadMsgspecStruct:
             aggressive_mode=True,
             feed_results=(True, 10),
             public_results=(True, 20, 2),
-        )
+    )
         payload = {"cycle_result": result, "plain_field": "hello", "count": 42}
 
         normalized_old = _normalize_value_old(payload["cycle_result"])
@@ -102,7 +102,7 @@ class TestNormalizePayloadMsgspecStruct:
             aimd_window=0.5,
             aimd_successes=50,
             aimd_failures=5,
-        )
+    )
 
         d1 = msgspec.to_builtins(result)
         d2 = msgspec.to_builtins(result)
@@ -124,7 +124,7 @@ class TestNormalizePayloadMsgspecStruct:
             aimd_successes=200,
             aimd_failures=50,
             error="timeout",
-        )
+    )
 
         d = msgspec.to_builtins(result)
 

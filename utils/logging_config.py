@@ -51,7 +51,7 @@ def _get_structlog() -> Any:
 
 _SPRINT_CONTEXT: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
     "_SPRINT_CONTEXT", default={}
-)
+    )
 
 
 def _get_trace_context() -> dict[str, Any]:
@@ -239,7 +239,7 @@ def configure_logging() -> None:
             context_class=dict,
             logger_factory=sl.stdlib.LoggerFactory(),
             cache_logger_on_first_use=True,
-        )
+    )
 
         # Suppress noisy third-party loggers
         noisy = ["urllib3", "httpx", "httpcore", "curl_cffi", "charset_normalizer", "aiosqlite"]

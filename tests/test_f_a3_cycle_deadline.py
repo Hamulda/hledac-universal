@@ -65,7 +65,7 @@ class TestSprintFA3InstanceCounter:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-        )
+    )
         cfg = SprintSchedulerConfig(cycle_budget_s=60.0)
         sched = SprintScheduler(cfg, ct_log_client=None)
         assert hasattr(sched, "_cycle_timeout_count")
@@ -75,7 +75,7 @@ class TestSprintFA3InstanceCounter:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-        )
+    )
         cfg = SprintSchedulerConfig()
         sched = SprintScheduler(cfg, ct_log_client=None)
         assert isinstance(sched._cycle_timeout_count, int)
@@ -97,7 +97,7 @@ class TestSprintFA3Wrapper:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-        )
+    )
         cfg = SprintSchedulerConfig(cycle_budget_s=2.0)
         sched = SprintScheduler(cfg, ct_log_client=None)
 
@@ -125,7 +125,7 @@ class TestSprintFA3Wrapper:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-        )
+    )
         cfg = SprintSchedulerConfig(cycle_budget_s=0.1)  # very tight budget
         sched = SprintScheduler(cfg, ct_log_client=None)
         # Reset result's empty counter to a known state
@@ -152,7 +152,7 @@ class TestSprintFA3Wrapper:
             ):
                 sched._result.max_consecutive_empty_cycles = (
                     sched._result.consecutive_empty_cycles
-                )
+    )
             cycle_ok = True
 
         assert cycle_ok is True
@@ -166,7 +166,7 @@ class TestSprintFA3Wrapper:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-        )
+    )
         cfg = SprintSchedulerConfig(cycle_budget_s=0.05)
         sched = SprintScheduler(cfg, ct_log_client=None)
         sched._result.consecutive_empty_cycles = 0
@@ -186,7 +186,7 @@ class TestSprintFA3Wrapper:
                 ):
                     sched._result.max_consecutive_empty_cycles = (
                         sched._result.consecutive_empty_cycles
-                    )
+    )
                 cycle_ok = True
 
         assert sched._cycle_timeout_count == 3
@@ -242,7 +242,7 @@ class TestSprintFA3Logging:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-        )
+    )
         cfg = SprintSchedulerConfig(cycle_budget_s=0.05)
         sched = SprintScheduler(cfg, ct_log_client=None)
         # Need a logger that matches the wrapper's logger
@@ -260,11 +260,11 @@ class TestSprintFA3Logging:
                 ss_mod.log.warning(
                     "[F-A3] cycle exceeded %.1fs budget (count=%d) -- counting as empty",
                     cfg.cycle_budget_s, sched._cycle_timeout_count,
-                )
+    )
                 cycle_ok = True
 
         # Warning record present in caplog
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert any("[F-A3]" in r.getMessage() for r in warning_records), (
             f"expected F-A3 warning, got: {[r.getMessage() for r in warning_records]}"
-        )
+    )

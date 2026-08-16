@@ -24,14 +24,14 @@ class TestSemanticCacheAsyncLock:
         assert isinstance(semantic_cache._lock, asyncio.Lock), (
             f"Expected asyncio.Lock, got {type(semantic_cache._lock).__name__}. "
             "All callers are async; threading.RLock would block the event loop."
-        )
+    )
 
     def test_no_threading_lock_in_semantic_cache(self, semantic_cache):
         """Ensure no threading.Lock leaks into _lock."""
         import threading
         assert not isinstance(semantic_cache._lock, threading.Lock), (
             "threading.Lock found — would block event loop when held in async context"
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_get_stats_no_lock_contention(self, semantic_cache):
@@ -118,10 +118,10 @@ class TestSyncBoundaryMethodsRetainThreadLock:
         source = inspect.getsource(coordinator.allocate)
         assert "with self.lock:" in source, (
             "allocate() should use self.lock (threading.Lock), not self._lock"
-        )
+    )
         assert "with self._lock:" not in source, (
             "allocate() must not use self._lock (asyncio.Lock)"
-        )
+    )
 
     def test_free_uses_threading_lock(self, coordinator):
         """free() uses self.lock (threading.Lock)."""

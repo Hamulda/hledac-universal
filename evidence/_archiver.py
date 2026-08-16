@@ -138,7 +138,7 @@ class WARCWriter:
                     f"WARC-Identified-Payload-Type: application/http;msgtype=response\r\n"
                     f"WARC-Filename: {self._path.name}\r\n"
                     f"\r\n"
-                )
+    )
 
                 request_header = (
                     f"{self.WARC_VERSION}\r\n"
@@ -149,7 +149,7 @@ class WARCWriter:
                     f"Content-Length: {len(http_request)}\r\n"
                     f"Content-Type: application/http;msgtype=request\r\n"
                     f"\r\n"
-                )
+    )
 
                 request_block = request_header.encode('utf-8', errors='replace') + http_request + b"\r\n"
                 self._file.write(request_block)
@@ -173,7 +173,7 @@ class WARCWriter:
                     byte_offset=byte_offset, byte_length=byte_length, warc_path=_current_warc_path,
                     warc_type='response', payload_digest=payload_digest, status=_http_status,
                     success=True, compressed_offset=compressed_offset, compressed_size=compressed_size,
-                )
+    )
         except Exception as e:
             self._logger.debug("warc_write_failed", url=url, error=str(e))
             return None
@@ -215,7 +215,7 @@ class WARCWriter:
                     f"WARC-Payload-Digest: {payload_digest}\r\n"
                     f"WARC-Filename: {self._path.name}\r\n"
                     f"\r\n"
-                )
+    )
 
                 block = header.encode('utf-8', errors='replace') + http_response + b"\r\n"
                 self._file.write(block)
@@ -231,7 +231,7 @@ class WARCWriter:
                     byte_offset=byte_offset, byte_length=len(block), warc_path=_current_warc_path,
                     warc_type='response', payload_digest=payload_digest, status=0,
                     success=True, compressed_offset=compressed_offset, compressed_size=compressed_size,
-                )
+    )
         except Exception as e:
             self._logger.debug("warc_write_raw_failed", url=url, error=str(e))
             return None

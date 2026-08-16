@@ -159,7 +159,7 @@ def write_cassette(
             f"{CASSETTE_MAX_BYTES} bytes (actual={len(line)})",
             max_bytes=CASSETTE_MAX_BYTES,
             actual_bytes=len(line),
-        )
+    )
     path = cassette_path(adapter, key)
     tmp_path: _pathlib.Path | None = None
     try:

@@ -124,7 +124,7 @@ class NamedPool:
             self._executor = ThreadPoolExecutor(
                 max_workers=self._max_workers,
                 thread_name_prefix=f"hledac-{self._name}",
-            )
+    )
         return self._executor
 
     async def run(self, func: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
@@ -133,7 +133,7 @@ class NamedPool:
         return await loop.run_in_executor(
             self._get_executor(),
             functools.partial(func, *args, **kwargs),
-        )
+    )
 
     def shutdown(self) -> None:
         if self._executor is not None:

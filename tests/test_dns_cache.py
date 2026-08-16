@@ -42,7 +42,7 @@ class TestDnsCacheBasics:
             max_size=256,
             ttl_s=30.0,
             prefetch_max_urls=100,
-        )
+    )
         
         assert cache._max_size == 256
         assert cache._ttl_s == 30.0
@@ -136,7 +136,7 @@ class TestSingleFlight:
                 result1, result2 = await asyncio.gather(
                     cache.resolve("example.com"),
                     cache.resolve("example.com"),
-                )
+    )
                 
                 # Both should get same result
                 assert result1 == result2 == ["1.2.3.4"]

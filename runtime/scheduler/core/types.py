@@ -10,7 +10,6 @@ All types here are independent — no circular deps with sprint_scheduler.py.
 Canonical source for these types remains sprint_scheduler.py until fully migrated.
 """
 from __future__ import annotations
-from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Literal
 import msgspec
@@ -73,7 +72,7 @@ class LaneBudgetAllocation(msgspec.Struct, gc=False):
 
 class LaneBudgetPool(msgspec.Struct, gc=False):
     """Per-lane timeout accounting pool."""
-    _allocations: dict = field(default_factory=dict)
+    _allocations: dict = msgspec.field(default_factory=dict)
     _total_budget_s: float = 0.0
 
     def allocate(self, lane_name: LaneName, budget_s: float) -> None:

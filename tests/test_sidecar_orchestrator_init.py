@@ -103,7 +103,7 @@ class TestSidecarOrchestratorInitFlow:
             result_sink=mock_result,
             governor=mock_governor,
             scheduler=mock_scheduler,
-        )
+    )
 
         assert orch._result is mock_result
         assert orch._governor is mock_governor
@@ -131,12 +131,12 @@ class TestSidecarOrchestratorInitFlow:
                 result_sink=mock_result,
                 governor=mock_governor,
                 scheduler=mock_scheduler,
-            )
+    )
         except TypeError as e:
             pytest.fail(
                 f"SidecarOrchestrator() raised TypeError — constructor kwargs don't match "
                 f"what scheduler.py:304 passes: {e}"
-            )
+    )
 
         assert orch._result is mock_result
         assert orch._governor is mock_governor

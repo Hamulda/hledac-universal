@@ -300,7 +300,7 @@ class GraphCoordinator(UniversalCoordinator):
                 edge_count += _process_fingerprint_hash(
                     favicon_hash, domain, MAX_EDGES - edge_count,
                     self._favicon_index, add_edge
-                )
+    )
 
             # Process JARM hash (uses same index for unified infra matching)
             jarm_hash = metadata.get('jarm_hash')
@@ -308,7 +308,7 @@ class GraphCoordinator(UniversalCoordinator):
                 edge_count += _process_fingerprint_hash(
                     jarm_hash, domain, MAX_EDGES - edge_count,
                     self._favicon_index, add_edge
-                )
+    )
 
             logger.debug(f'[GRAPH] consume_fingerprint_metadata: {edge_count} edges added for {url}')
         except Exception as e:

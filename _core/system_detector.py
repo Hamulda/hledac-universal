@@ -292,7 +292,7 @@ class SystemDetector:
             is_jit_available=is_jit_available,
             is_jit_active=is_jit_active,
             jit_reason=jit_reason
-        )
+    )
 
     @property
     def capabilities(self) -> HardwareCapabilities:

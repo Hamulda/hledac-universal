@@ -70,7 +70,7 @@ SKIP_PREFIXES: tuple[str, ...] = (
     "hledac/",
     "tools/migrate/",
     "tools/audit/",
-)
+    )
 
 
 def _is_allowed_path(path: Path) -> bool:
@@ -306,7 +306,7 @@ def _generate_migration(site: ImportSite) -> tuple[str, list[str]]:
         return (
             "from hledac.universal._core.rust_backend import rust",
             [f"rust raw access via rust.raw (replaces: {alias})"]
-        )
+    )
     
     else:
         # from hledac_rust_extensions import X, Y [as alias]

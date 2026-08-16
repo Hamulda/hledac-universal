@@ -233,8 +233,8 @@ def compare_aho_vs_regex(
     Both lists are sorted by start position.
     """
     automaton = get_suspicious_keywords_automaton()
-    aho_matches = sorted(aho_scan_text(automaton, text), key=itemgetter("""))
-    regex_matches = sorted(regex_scan_suspicious_keywords(text), key=itemgetter("""))
+    aho_matches = sorted(aho_scan_text(automaton, text), key=itemgetter("start"))
+    regex_matches = sorted(regex_scan_suspicious_keywords(text), key=itemgetter("start"))
 
     # Compare as sets of (start, end, match) tuples
     aho_set = {(m["start"], m["end"], m["match"]) for m in aho_matches}

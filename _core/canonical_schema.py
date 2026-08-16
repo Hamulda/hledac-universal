@@ -77,7 +77,7 @@ CANONICAL_FINDINGS_COLUMNS: tuple[str, ...] = (
     "compressed_offset",
     "compressed_size",
     "warc_url",
-)
+    )
 
 # Number of columns (13)
 CANONICAL_FINDINGS_ARITY: int = len(CANONICAL_FINDINGS_COLUMNS)
@@ -196,7 +196,7 @@ CANONICAL_FINDINGS_RUST_FIELDS: tuple[tuple[str, str], ...] = (
     ("compressed_offset", "int64"),
     ("compressed_size", "int64"),
     ("warc_url", "utf8"),
-)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +239,7 @@ def get_column_index(column_name: str) -> int:
         raise ValueError(
             f"Unknown column '{column_name}'. "
             f"Valid columns: {list(CANONICAL_FINDINGS_COLUMNS)}"
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +284,7 @@ CANONICAL_FINDINGS_INSERT_SQL: str = (
     "(id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json) "
     "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
     "ON CONFLICT (id) DO NOTHING"
-)
+    )
 
 # MERGE statement for Arrow bulk insert
 # ISSUE F5-FIX: Extended to 13 columns for WARC provenance

@@ -34,7 +34,7 @@ from ._models import (
     _mark_surface_patched,
     _crawler_domain_allowed,
     _get_crawl_bloom,
-)
+    )
 
 from hledac.universal.utils.asyncx import safe_create_task, parallel
 from _core import aclose
@@ -136,7 +136,7 @@ class StealthCrawler:
                     tasks,
                     policy="first",
                     ctx="stealth_search:all",
-                )
+    )
                 return result if result else []
 
             # Single provider with sequential fallback (legacy behavior preserved)
@@ -198,7 +198,7 @@ class StealthCrawler:
             raise TypeError(
                 "StealthCrawler.search() uses run_sync_async internally and cannot "
                 "be called from an async context. Use search_async() instead."
-            )
+    )
         try:
             # SCAVENGER-FIX: Replace asyncio.run() with run_sync_async()
             # run_sync_async() uses asyncio.Runner() (PEP 654) for Python 3.11+
@@ -308,7 +308,7 @@ class StealthCrawler:
                             snippet="",
                             source="brave",
                             rank=len(results),
-                        )
+    )
                     )
         return results
 
@@ -327,7 +327,7 @@ class StealthCrawler:
             if not TorProxyManager.is_running():
                 raise TorUnavailableError(
                     f"Cannot fetch .onion URL without Tor: {url}"
-                )
+    )
         allowed, reason = _crawler_domain_allowed(url, "_fetch_html")
         if not allowed:
             logger.debug(f"[_fetch_html] domain blocked: {reason}")
@@ -354,7 +354,7 @@ class StealthCrawler:
                 headers=headers,
                 impersonate="chrome136",
                 timeout=30,
-            )
+    )
             response.raise_for_status()
             return response.text
         except Exception as e:
@@ -404,7 +404,7 @@ class StealthCrawler:
                             snippet=snippet.strip(),
                             source="duckduckgo",
                             rank=i,
-                        )
+    )
                     )
         return results
 
@@ -433,7 +433,7 @@ class StealthCrawler:
                             snippet="",
                             source="google",
                             rank=i,
-                        )
+    )
                     )
         return results
 
@@ -463,7 +463,7 @@ class StealthWebScraper:
             "_session",
             "_fingerprint_profiles",
             "_proxy_config",
-        )
+    )
     )
 
     def __init__(
@@ -542,12 +542,12 @@ class StealthWebScraper:
         if ".onion" in url:
             from hledac.universal.transport.tor_transport import (
                 TorUnavailableError,
-            )
+    )
 
             if not TorProxyManager.is_running():
                 raise TorUnavailableError(
                     f"Cannot fetch .onion URL without Tor: {url}"
-                )
+    )
         allowed, reason = _crawler_domain_allowed(url, "StealthWebScraper.scrape")
         if not allowed:
             logger.debug(f"[StealthWebScraper.scrape] blocked: {reason}")
@@ -556,40 +556,40 @@ class StealthWebScraper:
                 url=url,
                 success=False,
                 error=f"Domain blocked: {reason}",
-            )
+    )
         _mark_surface_patched("StealthWebScraper.scrape")
         try:
             # F-FIX: wrap blocking HTTP calls with asyncio.to_thread
             protection_type = await asyncio.to_thread(
                 self._detect_protection, url
-            )
+    )
             if protection_type:
                 logger.info(
                     f"Protection detected: {protection_type.value} on {url}"
-                )
+    )
             content = await asyncio.to_thread(
                 self._fetch_content, url, protection_type, **kwargs
-            )
+    )
             if content:
                 return ScrapingResult(
                     url=url,
                     success=True,
                     content=content,
                     protection_type=protection_type,
-                )
+    )
             return ScrapingResult(
                 url=url,
                 success=False,
                 error="No content returned",
                 protection_type=protection_type,
-            )
+    )
         except Exception as e:
             logger.error(f"Scraping failed for {url}: {e}")
             return ScrapingResult(
                 url=url,
                 success=False,
                 error=str(e),
-            )
+    )
 
     def _detect_protection_impl(
         self, url: str
@@ -609,7 +609,7 @@ class StealthWebScraper:
 
             response = curl_requests.get(
                 url, headers=headers, impersonate="chrome136", timeout=10
-            )
+    )
             return response.text, response.headers
         with httpx.Client(timeout=10.0) as client:
             response = client.get(url, headers=headers)
@@ -679,7 +679,7 @@ class StealthWebScraper:
                 headers=headers,
                 impersonate="chrome136",
                 timeout=30,
-            )
+    )
             response.raise_for_status()
             return response.text
         except Exception as e:
@@ -749,7 +749,7 @@ def quick_scrape(url: str, **kwargs) -> ScrapingResult:
             "quick_scrape() uses asyncio.run() internally and cannot be called "
             "from an async context. Use 'scraper = StealthWebScraper(); "
             "await scraper.scrape(url)' instead."
-        )
+    )
     scraper = StealthWebScraper()
     # SCAVENGER-FIX: Replace asyncio.run() with run_sync_async()
     # run_sync_async() uses asyncio.Runner() (PEP 654) for Python 3.11+

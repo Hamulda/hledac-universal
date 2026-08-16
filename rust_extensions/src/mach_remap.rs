@@ -638,7 +638,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
             if n < 0 {
                 unsafe { libc::close(fd) };
                 let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-                return Err(PyRuntimeError::new_err(""read failed" (read_failed)"));
+                return Err(PyRuntimeError::new_err("read failed (read_failed)"));
             }
             remaining -= n as usize;
             offset += n as isize;
@@ -651,7 +651,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
     let mut pipe_fds: [i32; 2] = [0, 0];
     if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
         let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyRuntimeError::new_err(""pipe() failed" (pipe_failed)"));
+        return Err(PyRuntimeError::new_err("pipe() failed (pipe_failed)"));
     }
     let pipe_read = pipe_fds[0];
     let pipe_write = pipe_fds[1];
@@ -663,7 +663,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
         unsafe { libc::close(pipe_read) };
         unsafe { libc::close(pipe_write) };
         let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyRuntimeError::new_err(""fork() failed" (fork_failed)"));
+        return Err(PyRuntimeError::new_err("fork() failed (fork_failed)"));
     }
 
     if pid == 0 {
@@ -778,7 +778,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
     unsafe { libc::close(pipe_write) };
     if n < 0 {
         unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyRuntimeError::new_err(""pipe write failed" (pipe_write_failed)"));
+        return Err(PyRuntimeError::new_err("pipe write failed (pipe_write_failed)"));
     }
 
     // Update telemetry
@@ -820,12 +820,12 @@ pub fn vm_remap_and_exec(
 ) -> PyResult<(u32, usize, usize)> {
     // Feature gate check
     if std::env::var("HLEDAC_ENABLE_MACH_REMAP").as_deref() != Ok("1") {
-        return Err(PyRuntimeError::new_err(""HLEDAC_ENABLE_MACH_REMAP=1 not set" (not_enabled)"));
+        return Err(PyRuntimeError::new_err("HLEDAC_ENABLE_MACH_REMAP=1 not set (not_enabled)"));
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        return Err(PyRuntimeError::new_err(""Only supported on macOS" (unsupported_platform)"));
+        return Err(PyRuntimeError::new_err("Only supported on macOS (unsupported_platform)"));
     }
 
     // Memory guard
@@ -843,7 +843,7 @@ pub fn vm_remap_and_exec(
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_ok()
     {
-        return Err(PyRuntimeError::new_err(""another remap is already in progress" (concurrent_remap)"));
+        return Err(PyRuntimeError::new_err("another remap is already in progress (concurrent_remap)"));
     }
 
     struct SemGuard;
@@ -902,7 +902,7 @@ pub fn vm_remap_and_exec(
             if n < 0 {
                 unsafe { libc::close(fd) };
                 let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-                return Err(PyRuntimeError::new_err(""read failed" (read_failed)"));
+                return Err(PyRuntimeError::new_err("read failed (read_failed)"));
             }
             remaining -= n as usize;
             offset += n as isize;
@@ -915,7 +915,7 @@ pub fn vm_remap_and_exec(
     let mut pipe_fds: [i32; 2] = [0; 2];
     if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
         let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyRuntimeError::new_err(""pipe() failed" (pipe_failed)"));
+        return Err(PyRuntimeError::new_err("pipe() failed (pipe_failed)"));
     }
     let pipe_read = pipe_fds[0];
     let pipe_write = pipe_fds[1];
@@ -927,7 +927,7 @@ pub fn vm_remap_and_exec(
         unsafe { libc::close(pipe_read) };
         unsafe { libc::close(pipe_write) };
         let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyRuntimeError::new_err(""fork() failed" (fork_failed)"));
+        return Err(PyRuntimeError::new_err("fork() failed (fork_failed)"));
     }
 
     if pid == 0 {
@@ -1030,7 +1030,7 @@ pub fn vm_remap_and_exec(
     unsafe { libc::close(pipe_write) };
     if n < 0 {
         unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyRuntimeError::new_err(""pipe write failed" (pipe_write_failed)"));
+        return Err(PyRuntimeError::new_err("pipe write failed (pipe_write_failed)"));
     }
 
     // Update telemetry

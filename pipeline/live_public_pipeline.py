@@ -43,15 +43,15 @@ if TYPE_CHECKING:
 from hledac.universal.discovery.duckduckgo_adapter import (  # noqa: E402
     DiscoveryHit,
     classify_discovery_error,
-)
+    )
 from hledac.universal.discovery.duckduckgo_adapter import (
     search_multi_engine as _search_multi_engine_bootstrap,
-)
+    )
 
 # F206AC: fetch error taxonomy helper
 from hledac.universal.fetching.public_fetcher import (  # noqa: E402
     classify_fetch_error,
-)
+    )
 from hledac.universal.utils.asyncx import parallel, safe_create_task  # noqa: E402, safe_wait_for
 from hledac.universal.utils.config_introspection import safe_attr_get  # noqa: E402
 from hledac.universal.pipeline.public_patterns import _make_finding_id  # noqa: E402, F401
@@ -191,7 +191,7 @@ class DiscoveryEngine(Struct):
             public_candidates_rejected=0,
             stage_failure=None,
             stage_failure_reason=None,
-        )
+    )
 
         # Empty hits case - return minimal result
         if not hits:
@@ -210,7 +210,7 @@ class DiscoveryEngine(Struct):
                 pastebin_findings_count=0,
                 github_secrets_count=0,
                 keyword_seed_fallback_triggered=bs["keyword_fallback_triggered"],
-            )
+    )
 
         # Run augmentation phases
         augmented_result = await self._run_augmentation_phases(hits)
@@ -234,7 +234,7 @@ class DiscoveryEngine(Struct):
             pastebin_findings_count=augmented_result["pastebin_findings_count"],
             github_secrets_count=augmented_result["github_secrets_count"],
             keyword_seed_fallback_triggered=bs["keyword_fallback_triggered"],
-        )
+    )
 
     async def _run_augmentation_phases(self, hits: tuple) -> dict:
         """Run all augmentation phases: academic, CT, CC, Pastebin, GitHub.
@@ -247,7 +247,7 @@ class DiscoveryEngine(Struct):
         # CT + CC + Pastebin/GitHub in parallel
         ct_augmented, cc_augmented, p20_counts = await _run_phase1_augmentation(
             hits, self.query, self.store
-        )
+    )
         ct_injected = len(ct_augmented) - len(hits)
         cc_injected = len(cc_augmented) - len(hits)
         pastebin_findings_count, github_secrets_count = p20_counts
@@ -337,7 +337,7 @@ class DiscoveryEngine(Struct):
                 try:
                     seed_urls = generate_seed_context_bootstrap_urls(
                         self.seed_context, max_candidates=_MAX_SEED_CONTEXT_BOOTSTRAP
-                    )
+    )
                     candidates_count = len(seed_urls)
                     for idx, url in enumerate(seed_urls):
                         bootstrap_hits.append(DiscoveryHit(
@@ -402,7 +402,7 @@ class DiscoveryEngine(Struct):
             discovery_result = await safe_wait_for(
                 _ASYNC_DISCOVERY_SEARCH(self.query, self.max_results),
                 timeout=35.0, label="live_public_discovery",
-            )
+    )
             discovery_elapsed_s = time.monotonic() - _discovery_start
 
             cache_hit = int(safe_attr_get(discovery_result, "cache_hit", False))
@@ -413,7 +413,7 @@ class DiscoveryEngine(Struct):
                 provider_stub, provider_errors,
                 provider_timeout_count, provider_import_error_count,
                 discovery_empty_reason,
-            )
+    )
 
             # Extract hits from discovery result
             if hasattr(discovery_result, "hits"):
@@ -444,14 +444,14 @@ class DiscoveryEngine(Struct):
                 elapsed_s=discovery_elapsed_s,
                 timeout_s=35.0,
                 hits_count=len(hits),
-            )
+    )
         except asyncio.CancelledError:
             discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
             discovery_error_type = classify_discovery_error(
                 asyncio.CancelledError("cancelled"),
                 elapsed_s=discovery_elapsed_s,
                 hits_count=0,
-            )
+    )
             raise
         except Exception as exc:
             discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
@@ -460,7 +460,7 @@ class DiscoveryEngine(Struct):
                 discovery_error,
                 elapsed_s=discovery_elapsed_s,
                 hits_count=0,
-            )
+    )
             hits = ()
 
         return {
@@ -499,7 +499,7 @@ class DiscoveryEngine(Struct):
             keyword_hits = await generate_keyword_bootstrap_urls(
                 self.query,
                 max_urls=_MAX_KEYWORD_BOOTSTRAP_URLS,
-            )
+    )
             candidates_count = len(keyword_hits)
             if keyword_hits:
                 hits = tuple(keyword_hits)
@@ -834,7 +834,7 @@ _CT_QUERY_IS_DOMAIN_RE: re.Pattern = re.compile(r"^(?:\*\.)?[a-zA-Z0-9][a-zA-Z0-
 _CC_QUERY_IS_DOMAIN_RE: re.Pattern = re.compile(
     r"^(?:\*\.)?[a-zA-Z0-9][a-zA-Z0-9.*-]*\.[a-zA-Z]{2,}$"
     r"|^(?:site|domain):"
-)
+    )
 """Regex for CommonCrawl CDX lookup — supports wildcards and site:/domain: operators."""
 """Regex to detect domain-like query strings suitable for CT subdomain lookup."""
 
@@ -899,7 +899,7 @@ _SHOPPING_NOISE_DOMAINS: tuple[str, ...] = (
     "gittigidiyor.com",
     "cimri.com",
     "akakce.com",
-)
+    )
 
 # Blocked URL path patterns for e-commerce/shopping/category pages
 # Used for non-threat queries (domain-only blocking for threat queries)
@@ -921,7 +921,7 @@ _SHOPPING_NOISE_PATHS: tuple[str, ...] = (
     "/offers/",
     "/home-improvement",
     "/home-and-garden",
-)
+    )
 
 # Strict subset: only unambiguous e-commerce checkout/transaction paths
 # Used for threat queries to avoid over-filtering legitimate CTI content
@@ -932,7 +932,7 @@ _SHOPPING_NOISE_PATHS_STRICT: tuple[str, ...] = (
     "/buy/",
     "/sale/",
     "/offers/",
-)
+    )
 
 # CTI/news domains that are always allowed (override noise filter for threat queries)
 _CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
@@ -960,7 +960,7 @@ _CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
     "thecyberwire.com",
     "bleepinguid.com",
     "ransomware.live",
-)
+    )
 
 
 def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
@@ -1295,7 +1295,7 @@ async def generate_keyword_bootstrap_urls(
             raw_results = await _search_multi_engine_bootstrap(
                 query,
                 max_results=max_urls,
-            )
+    )
             if not raw_results:
                 continue
 
@@ -1825,7 +1825,7 @@ class Phase1_Initialization:
             from hledac.universal.layers import (
                 is_temporal_store_enabled,
                 load_temporal_signal_snapshot,
-            )
+    )
             persistence_enabled = is_temporal_store_enabled()
             if persistence_enabled:
                 persistence_restored = load_temporal_signal_snapshot()
@@ -1879,7 +1879,7 @@ class Phase2_ResourceGovernance:
             UMA_STATE_CRITICAL,
             UMA_STATE_EMERGENCY,
             UMA_STATE_OK,
-        )
+    )
 
         uma_state = UMA_STATE_OK
         try:
@@ -1926,7 +1926,7 @@ class Phase3_DiscoveryRunner:
                               "hits": discovery_info.hits,
                               "discovery_telemetry": discovery_info.discovery_telemetry}),
             discovery_info,
-        )
+    )
 
 
 # =============================================================================
@@ -2028,7 +2028,7 @@ class Phase4_FetchOrchestrator:
                     graph=ctx.graph,
                 ),
                 name="fetch:public_page",
-            )
+    )
             tasks.append(task)
 
         # Execute parallel fetch
@@ -2329,7 +2329,7 @@ class Phase5_TelemetryAggregator:
         error_ratio = error_count / len(results) if results else 0.0
         proof = self._proof.run(
             basic["total_stored"], fetched, value["noise_fetch_ratio"], error_ratio
-        )
+    )
 
         # Ledger from fetched pages
         ledger = self._ledger.run(results, fetched)
@@ -2421,7 +2421,7 @@ class Phase6_ReportGenerator:
                     store=ctx.store,
                     hermes_engine=ctx.hermes_engine,
                     vector_store=ctx.vector_store,
-                )
+    )
             except Exception:
                 generated_report = ""
 
@@ -2431,7 +2431,7 @@ class Phase6_ReportGenerator:
                 rl_result = await _run_rl_loop(
                     ctx=ctx,
                     all_page_results=all_page_results,
-                )
+    )
                 tot_solution_count = rl_result.get("tot_solution_count", 0)
             except Exception as e:
                 logger.warning(f"[P17] RL loop failed: {e}")
@@ -2442,7 +2442,7 @@ class Phase6_ReportGenerator:
                 tot_result = await _run_hypothesis_tot(
                     ctx=ctx,
                     all_page_results=all_page_results,
-                )
+    )
                 tot_solution_count = tot_result.get("tot_solution_count", 0)
             except Exception:
                 pass  # Fail-soft
@@ -2493,7 +2493,7 @@ async def _run_rl_loop(ctx: PipelineContext, all_page_results: list) -> dict:
                     hyp_strings = await ctx.hermes_engine.generate_hypotheses_async(
                         context=ctx_h,
                         hermes_engine=getattr(ctx.hermes_engine, "_inference_engine", None),
-                    )
+    )
                     for h in (hyp_strings or [])[:10]:
                         action_findings.append({"type": "hypothesis", "content": h, "source": "rl_hypothesis"})
                     reward = len(action_findings) * 0.1
@@ -2519,7 +2519,7 @@ async def _run_rl_loop(ctx: PipelineContext, all_page_results: list) -> dict:
             min(new_findings_count // 10, 10),
             6,
             action == "tot_reasoning",
-        )
+    )
         bridge.update(RL_LANE, rl_state, action, reward, rl_next_state)
         total_reward += reward
 
@@ -2548,7 +2548,7 @@ async def _run_rl_loop(ctx: PipelineContext, all_page_results: list) -> dict:
                 await ctx.memory_manager.put(
                     ctx.session_id, f"rl_result:{step_count}",
                     {"action": action, "reward": reward, "findings_count": len(action_findings), "timestamp": time.time()}
-                )
+    )
             except Exception:
                 pass
 
@@ -2647,7 +2647,7 @@ async def _run_hypothesis_tot(ctx: PipelineContext, all_page_results: list) -> d
                             ioc_type="hypothesis",
                             confidence=0.6,
                             depth=1,
-                        )
+    )
                 except Exception:
                     pass
 
@@ -2707,7 +2707,7 @@ class Phase7_SynthesisRunner:
                     findings=findings_for_synth,
                     max_findings=10,
                     force_synthesis=False,
-                )
+    )
 
             await runner.close()
 
@@ -2722,7 +2722,7 @@ class Phase7_SynthesisRunner:
                     ts=time.time(),
                     payload_text=f"Threat actors: {', '.join(getattr(report, 'threat_actors', []) or [])} | {getattr(report, 'threat_summary', '')[:500]}",
                     provenance=("synthesis", getattr(report, "query", ctx.query)[:50]),
-                )
+    )
                 logger.info("[SYNTHESIS] Report produced: confidence=%.3f", synthesis_finding.confidence)
                 return synthesis_finding
 
@@ -2779,7 +2779,7 @@ class Phase8_ExportManager:
                 findings=session_findings,
                 file_path=None,
                 metadata=export_metadata,
-            )
+    )
             if md_path:
                 logger.info(f"[P18] Exported markdown to {md_path}")
 
@@ -2788,7 +2788,7 @@ class Phase8_ExportManager:
                     graph_manager=ctx.graph,
                     file_path=None,
                     title=f"Hledac Graph - {ctx.query[:50]}",
-                )
+    )
                 if html_path:
                     logger.info(f"[P18] Exported graph HTML to {html_path}")
 
@@ -2810,7 +2810,7 @@ class Phase9_TemporalPersistence:
                 get_temporal_signal_summary,
                 build_temporal_priority_hints,
                 save_temporal_signal_snapshot,
-            )
+    )
             temporal_signal_summary = get_temporal_signal_summary(k=10)
             temporal_priority_hints = build_temporal_priority_hints(k=10)
             persistence_saved = save_temporal_signal_snapshot()
@@ -2907,7 +2907,7 @@ class ResultBuilder:
         }
         public_discovery_fallback_state = FALLBACK_STATE_MAP.get(fallback_triggered) or (
             "no_fallback_needed" if discovery.discovery_error is None else None
-        )
+    )
 
         BLOCKER_MAP = {"primary_backend_failed_fallback_failed": "backend_error_fallback_failed"}
         if ctx.uma_state == "UMA_STATE_EMERGENCY":
@@ -3068,7 +3068,7 @@ class ResultBuilder:
             public_rejection_summary=t["rejection_summary"],
             public_terminal_stage=t["terminal_stage"],
             public_discovery_empty_reason=t["discovery_empty_reason"],
-        )
+    )
 
 
 # =============================================================================
@@ -3574,7 +3574,7 @@ async def _build_public_finding(
             ts=time.time(),
             provenance=provenance,
             payload_text=payload_text,
-        )
+    )
         return (finding,)
     except Exception:
         return ()
@@ -3800,7 +3800,7 @@ async def _store_report_and_inference(store, query: str, report_text: str, repor
             confidence=0.7, ts=time.time(),
             provenance=("source_family:public", "report_generation", hermes_engine.__class__.__name__),
             payload_text=report_text,
-        )
+    )
         await store.submit_findings([report_finding])
         logger.info(f"[REPORT] Stored report {report_id[:8]}")
     except Exception as e:
@@ -3813,13 +3813,13 @@ async def _store_report_and_inference(store, query: str, report_text: str, repor
             timestamp=time.time(), primary_text=report_text, confidence=0.7,
             key_iocs=key_iocs, key_entities=key_entities, pivot_suggestions=key_iocs[:10],
             bounded=False, tokens_used=0, model_name=hermes_engine.__class__.__name__, source_hints=("public",),
-        )
+    )
         hermes_finding = CanonicalFinding(
             finding_id=hermes_output.output_id, query=query, source_type="hermes_inference",
             confidence=hermes_output.confidence, ts=hermes_output.timestamp,
             provenance=("source_family:public", "hermes_inference", hermes_engine.__class__.__name__),
             payload_text=_json.encode(hermes_output.to_dict()).decode("utf-8")[:4096],
-        )
+    )
         await store.submit_findings([hermes_finding])
         logger.info(f"[F256] Stored hermes_inference {hermes_output.output_id[:8]}")
     except Exception as e:
@@ -3941,7 +3941,7 @@ async def _inject_ct_subdomain_hits(
     try:
         subdomains: list[str] = await _CT_SCANNER_GET_SUBDOMAINS(
             base_domain, async_session=shared_session
-        )
+    )
     except Exception:
         subdomains = []
 
@@ -4054,7 +4054,7 @@ async def _inject_commoncrawl_hits(
             title=r.get("title", ""),
             snippet=r.get("snippet", ""),
             rank=idx,
-        )
+    )
         for idx, r in enumerate(cc_results[:20])
     )
     # Prepend CC hits to give them priority in the fetch batch
@@ -4154,7 +4154,7 @@ async def _inject_onion_hits(
                 onion_url,
                 timeout_s=30.0,
                 max_bytes=200_000,
-            )
+    )
             if result.error or result.text is None:
                 return None
 
@@ -4171,7 +4171,7 @@ async def _inject_onion_hits(
                 ts=ts_now,
                 provenance=("onion_discovery", onion_url),
                 payload_text=content[:500] if content else None,
-            )
+    )
         except Exception as e:
             logger.debug(f"[F193A] Onion fetch {onion_url}: {e}")
             return None
@@ -4423,12 +4423,12 @@ def _ensure_discovery_patched() -> None:
         if LANE_REGISTRY.is_enabled("providerless_discovery"):
             from hledac.universal.discovery.cascade import (
                 async_search_providerless,
-            )
+    )
             _ASYNC_DISCOVERY_SEARCH = async_search_providerless
         else:
             from hledac.universal.discovery.duckduckgo_adapter import (
                 async_search_public_web,
-            )
+    )
             _ASYNC_DISCOVERY_SEARCH = async_search_public_web
 
 

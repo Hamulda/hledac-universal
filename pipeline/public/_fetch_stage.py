@@ -94,7 +94,7 @@ class FetchStage:
                     ),
                     fetch_timeout_s=self._fetch_timeout_s,
                     fetch_max_bytes=self._fetch_max_bytes,
-                )
+    )
 
         tasks = [fetch_one(i, url) for i, url in enumerate(urls)]
         # F3XX: parallel_ok() replaces asyncio.gather — returns list[T] in original order,
@@ -137,7 +137,7 @@ class FetchStage:
             redirects=redirects,
             js_renderer_skipped_reasons=js_skipped,
             fetch_blocked_reasons=fetch_blocked,
-        )
+    )
 
         return batch, telemetry
 
@@ -151,7 +151,7 @@ class FetchStage:
             redirects=[],
             js_renderer_skipped_reasons=[],
             fetch_blocked_reasons=[],
-        )
+    )
 
 
 async def _fetch_single_url(
@@ -187,7 +187,7 @@ async def _fetch_single_url(
             discovery_reason=None,
             vector_store=None,
             graph=None,
-        )
+    )
 
         # Extract fields from PipelinePageResult
         text = getattr(result, "text", "") if hasattr(result, "text") else ""

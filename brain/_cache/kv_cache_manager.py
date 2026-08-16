@@ -158,7 +158,7 @@ class KVCacheEvictor:
             cache_hits=self._session_stats['session_cache_hits'] + self._prefix_stats['prefix_cache_hits'],
             cache_misses=self._session_stats['session_cache_misses'] + self._prefix_stats['prefix_cache_misses'],
             cache_prefills=self._kv_stats['cache_prefills'],
-        )
+    )
 
 
 @dataclass
@@ -206,7 +206,7 @@ class KVCacheManager:
             self._kv_cache_pool,
             self._session_cache_pool,
             self._prefix_cache,
-        )
+    )
         self._register_with_broadcaster()
 
     # ========================================================================

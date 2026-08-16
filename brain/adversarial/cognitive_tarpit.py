@@ -208,7 +208,7 @@ def _entropy_score(variance: float) -> float:
 _SENTENCE_SPLIT_RE: Final[re.Pattern] = re.compile(
     r"(?<=[.!?])\s+",
     re.MULTILINE,
-)
+    )
 
 
 def _sentence_lengths(text: str) -> list[int]:
@@ -260,27 +260,27 @@ def _burstiness_score(deviation: float) -> float:
 _DETERMINER_RE: Final[re.Pattern] = re.compile(
     r"\b(?:the|this|that|these|those|a|an|my|your|his|her|its|our|their)\b",
     re.IGNORECASE,
-)
+    )
 
 _ADJECTIVE_RE: Final[re.Pattern] = re.compile(
     r"\b(?:[\w]+(?:ous|ful|less|ive|able|ible|al|ial|ous|ent|ant|ary|ery|ish|tive|ic|sive))\b",
     re.IGNORECASE,
-)
+    )
 
 _NOUN_RE: Final[re.Pattern] = re.compile(
     r"\b(?:\w+(?:tion|sion|ness|ment|ity|ance|ence|er|or|ist|ism|logy|graphy|scopy|data|ics))\b",
     re.IGNORECASE,
-)
+    )
 
 _VERB_RE: Final[re.Pattern] = re.compile(
     r"\b(?:\w+(?:ify|ize|ate|ify|en|ed|ing|es|s))\b",
     re.IGNORECASE,
-)
+    )
 
 _PREPOSITION_RE: Final[re.Pattern] = re.compile(
     r"\b(?:in|on|at|for|to|with|by|from|of|about|into|through|during|before|after|above|below|between|under|over|around|among)\b",
     re.IGNORECASE,
-)
+    )
 
 
 def _pos_tag_tokens(text: str) -> list[str]:
@@ -390,7 +390,7 @@ def _load_smollm() -> tuple[object, object] | tuple[None, None]:
             _smollm_model, _smollm_tokenizer = _mlx_load(
                 _MODEL_ID,
                 tokenizer_config={"trust_remote_code": True},
-            )
+    )
             return _smollm_model, _smollm_tokenizer
         except Exception:
             return None, None
@@ -512,7 +512,7 @@ def _cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
             perplexity_score=0.0,
             text_length_chars=len(text),
             analysis_ms=0.0,
-        )
+    )
 
     # Guard: minimum text length
     if len(text) < _MIN_TEXT_LENGTH:
@@ -526,7 +526,7 @@ def _cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
             perplexity_score=0.0,
             text_length_chars=len(text),
             analysis_ms=0.0,
-        )
+    )
 
     # Truncate to bound CPU
     analysis_text = text[:_MAX_TEXT_ANALYSIS_CHARS]
@@ -548,7 +548,7 @@ def _cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
     if burst_sc > 0.7:
         reasons.append(
             f"burstiness_deviation={burst_dev:.3f} (LLM-flat, sentences={len(sent_lens)})"
-        )
+    )
     burstiness_score = burst_sc
 
     # ── 3. POS trigram ratio (only if enabled) ────────────────────────────
@@ -575,14 +575,14 @@ def _cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
             + _BURSTINESS_WEIGHT * burstiness_score
             + _POS_WEIGHT * pos_sc
             + _PERPLEXITY_WEIGHT * perplexity_sc
-        )
+    )
     else:
         # No perplexity — weight redistributed to entropy + burstiness
         cognitive_tarpit_score = (
             0.40 * entropy_score
             + 0.45 * burstiness_score
             + 0.15 * pos_sc
-        )
+    )
 
     # Decision: cognitive tarpit if composite > threshold
     is_cognitive_tarpit = cognitive_tarpit_score >= _COGNITIVE_TARPIT_THRESHOLD

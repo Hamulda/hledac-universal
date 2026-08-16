@@ -275,7 +275,7 @@ class SidecarRegistry:
                     logger.debug(
                         "SidecarRegistry: %s skipped (RAM %dMB > budget %dMB)",
                         sidecar_id, instance.ram_budget_mb, memory_budget_mb
-                    )
+    )
                     continue
 
                 available.append(instance)
@@ -400,7 +400,7 @@ class BaseSidecarAdapter:
             logger.warning(
                 "SidecarAdapter.%s.run: fail-soft exception",
                 self.sidecar_id, exc_info=True
-            )
+    )
             return []
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
@@ -461,7 +461,7 @@ class BaseSidecarAdapter:
             logger.warning(
                 "BaseSidecarAdapter.%s: fail-soft",
                 self.sidecar_id, exc_info=True,
-            )
+    )
             return []
 
     def _default_extract_terms(self, ctx: SidecarContext) -> list[str]:
@@ -488,7 +488,7 @@ class BaseSidecarAdapter:
             logger.warning(
                 "BaseSidecarAdapter.%s: correlate fail-soft",
                 self.sidecar_id, exc_info=True,
-            )
+    )
             return []
 
     # ── Extract→Search→Transform hook methods ─────────────────────────────
@@ -543,7 +543,7 @@ _ADAPTER_NAMES: tuple[str, ...] = (
     "WhoisSidecarAdapter",
     "ThreatIntelSidecarAdapter",
     "ShadowWalkerSidecarAdapter",
-)
+    )
 
 
 def __getattr__(name: str):

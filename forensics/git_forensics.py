@@ -138,7 +138,7 @@ class GitForensicsDetector:
                 raise RuntimeError(
                     "Git forensics not available. "
                     "Ensure Rust extension is compiled with deep_git feature."
-                )
+    )
             self._extractor = _GitForensicsExtractor()
         return self._extractor
     
@@ -191,7 +191,7 @@ class GitForensicsDetector:
                 pgp_key_id=raw.pgp_key_id,
                 ssh_fingerprint=raw.ssh_fingerprint,
                 message_preview=raw.message_preview,
-            )
+    )
             records.append(record)
             
             # Collect unique IOCs
@@ -220,7 +220,7 @@ class GitForensicsDetector:
             ssh_keys_found=stats.ssh_keys_found,
             packfile_size_bytes=stats.packfile_size_bytes,
             extraction_time_ms=stats.extraction_time_ms,
-        )
+    )
         
         return GitForensicsResult(
             packfile_path=str(packfile_path),
@@ -231,7 +231,7 @@ class GitForensicsDetector:
             pgp_keys=tuple(sorted(pgp_keys_set)),
             ssh_fingerprints=tuple(sorted(ssh_fingerprints_set)),
             author_names=tuple(sorted(author_names_set)),
-        )
+    )
     
     def extract_commits_fast(self, packfile_path: str | Path) -> list[GitForensicRecord]:
         """
@@ -299,7 +299,7 @@ class GitForensicsDetector:
             ssh_keys_found=raw_stats.ssh_keys_found,
             packfile_size_bytes=raw_stats.packfile_size_bytes,
             extraction_time_ms=raw_stats.extraction_time_ms,
-        )
+    )
 
 
 def quick_git_analysis(packfile_path: str | Path) -> GitForensicsResult:

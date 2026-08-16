@@ -125,7 +125,7 @@ class DedupStage:
             metrics.update_latency((time.monotonic() - start_time) * 1000)
             logger.debug(
                 "DedupStage: seen=%d, dedup=%d", seen_count, dedup_count,
-            )
+    )
 
     def _check_and_add(self, url: str) -> bool:
         """Check if URL is new and add to dedup structure.

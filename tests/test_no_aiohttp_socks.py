@@ -116,7 +116,7 @@ def test_pyproject_toml_no_aiohttp_socks_dep() -> None:
             pytest.fail(
                 f"pyproject.toml still references 'aiohttp-socks': {line.strip()}\n"
                 "F4XX/C5: Remove aiohttp-socks from pyproject.toml dependencies."
-            )
+    )
 
 
 def test_httpx_socks_available() -> None:
@@ -129,4 +129,4 @@ def test_httpx_socks_available() -> None:
         pytest.fail(
             "httpx-socks not installed — required for Tor/I2P after F4XX/C5 migration. "
             "Install with: uv add httpx-socks"
-        )
+    )

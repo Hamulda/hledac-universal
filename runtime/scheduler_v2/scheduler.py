@@ -29,7 +29,7 @@ import msgspec
 from hledac.universal.runtime.scheduler_v2._task_registry import (
     TaskScope,
     safe_create_task_tracked,
-)
+    )
 from hledac.universal.utils.asyncx import parallel
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult, SprintContext
 from hledac.universal.utils.asyncx import safe_wait_for
@@ -140,7 +140,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                     graph_service=self._ioc_graph,
                     cancel_event=self._cancel_event,
                 ),
-            )
+    )
 
         # [META]-004: Initialize elastic pool manager before any work
         self._init_rayon_pool_manager()
@@ -172,7 +172,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             run_pdns_prelude_lane,
             run_public_prelude_lane,
             run_wayback_prelude_lane,
-        )
+    )
 
         _t0 = _time.time()
         _duckdb_raw = self._ctx.duckdb_store if self._ctx else None
@@ -184,7 +184,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             from hledac.universal.pipeline.pivot_lane_planner import plan_lanes_for_pivot_seeds
             from hledac.universal.runtime.pivot_planner import (
                 generate_pivot_candidates_from_query as _gen_pivots,
-            )
+    )
             from hledac.universal.runtime.acquisition.nonfeed_outcomes import NonfeedSeedContext
 
             _pivot_seeds = _gen_pivots(query)
@@ -201,7 +201,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                         i.seed_value
                         for i in (_pivot_lanes or [])
                         if getattr(i, "seed_type", None) == "domain"
-                    )
+    )
                     if _ctx_domains:
                         _seed_ctx = NonfeedSeedContext(domains=_ctx_domains)
         except Exception:
@@ -230,7 +230,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
 
         _build = await parallel(
             _coros, concurrency=5, policy="collect", taskgroup=True, ctx="prelude_v2"
-        )
+    )
         _lane_results = _build.ok
         self._result.prelude_duration_s = _time.time() - _t0
         self._result.prelude_lanes_attempted = [r.lane for r in _lane_results if r.attempted]
@@ -246,7 +246,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             self._async_prewarm_temporal(),
             name="prelude:temporal_prewarm",
             scope=TaskScope.PRELUDE,
-        )
+    )
 
     async def _prewarm_hermes(self, _query: str = "") -> None:
         """No-op in V2 — Hermes prewarm is handled directly by V2Init._prewarm_hermes()
@@ -270,7 +270,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             getattr(self._acquisition_plan, "ordered_sources", [])
             if self._acquisition_plan
             else []
-        )
+    )
         _duckdb_raw = self._ctx.duckdb_store if self._ctx else None
         _sidecar_raw = self._sidecar_orchestrator.value if self._sidecar_orchestrator else None
 
@@ -286,14 +286,14 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             effective_max_cycles=self._config.max_cycles,
             enrichment_services=None,
             sidecar_orchestrator=_sidecar_raw,
-        )
+    )
 
         _phase_result = await _orch.run(
             ctx=self._ctx,
             ordered_sources=ordered_sources,
             duckdb_store=_duckdb_raw,
             _rayon_manager=self._rayon_manager,
-        )
+    )
 
         self._result.cycles_started = _phase_result.cycles_started
         self._result.cycles_completed = _phase_result.cycles_completed
@@ -326,7 +326,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             sprint_id=getattr(self, "_sprint_id", "unknown"),
             int_counter_layout=getattr(self._result, "_int_counter_layout", None),
             rel_discovery_engine=getattr(self, "_rel_discovery_engine", None),
-        )
+    )
 
         _orch = WinddownOrchestrator()
         await _orch.run(ctx=self._ctx, lifecycle=self._lifecycle, query=query)
@@ -406,7 +406,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                 accepted_count=accepted_count,
                 signal_value=signal_value,
                 ts=_t.time(),
-            )
+    )
             await _duckdb.async_record_hypothesis_feedback(record)
         except Exception:  # noqa: BLE001
             pass
@@ -497,7 +497,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                     darknet_session_provider.reset_sprint(),
                     name="teardown:darknet_reset_sprint",
                     scope=TaskScope.TEARDOWN
-                )
+    )
                 _bg_tasks.append(_t_sessions)
             except Exception:  # noqa: BLE001
                 pass
@@ -600,5 +600,5 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             elapsed_ms = (_time.monotonic() - start) * 1000
             sys.stdout.write(
                 f"[aclean:{sprint_id}] reason={reason} duration_ms={elapsed_ms:.1f}\n"
-            )
+    )
             sys.stdout.flush()

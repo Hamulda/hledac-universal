@@ -141,7 +141,7 @@ class TransportCircuitBreaker:
             last_failure=self._last_failure if self._last_failure > 0 else None,
             opened_at=self._opened_at,
             is_open=self._opened_at is not None,
-        )
+    )
 
     def __repr__(self) -> str:
         if self._opened_at is None:

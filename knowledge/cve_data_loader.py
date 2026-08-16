@@ -28,7 +28,7 @@ TECHNOLOGIES INDEXED:
 DATA FORMAT:
     JSON array of CVE records with normalized fields.
     Pre-filtered to CVSS 5.0+ or KEV catalog entries.
-    Version patterns use regex notation (e.g., r"1\.18\..*" for nginx 1.18.x).
+    Version patterns use regex notation (e.g., r"1\\.18\\..*" for nginx 1.18.x).
 
 QUARTERLY UPDATE:
     Run: python -m hledac.universal.knowledge.cve_data_loader --update
@@ -347,7 +347,7 @@ async def export_to_duckdb(cve_records: list[dict[str, Any]], db_path: Path) -> 
             cwe_id TEXT,
             description_snippet TEXT,
             published_date TEXT
-        )
+    )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_tech ON cve_matrix(technology)")
 

@@ -33,45 +33,45 @@ ACQUISITION_KEYS = (
     "public_provider_selection_debug", "public_stage_counters",
     "public_bootstrap_order", "public_bootstrap_prevented_discovery_timeout",
     "public_bootstrap_first_fetch_attempted",
-)
+    )
 
 CT_KEYS = (
     "ct_terminal_stage", "ct_planned", "ct_scheduled", "ct_provider_selected",
     "ct_request_attempted", "ct_raw_count", "ct_error", "ct_provider_status",
     "ct_log_discovered", "ct_log_accepted_findings",
-)
+    )
 
 FEED_KEYS = (
     "feed_zero_yield_detected", "feed_inaccessible_detected", "feed_content_empty_detected",
     "feed_no_pattern_with_content", "feed_no_signal_sources", "dominant_feed_blocker",
-)
+    )
 
 NONFEED_KEYS = (
     "nonfeed_expected_lanes", "nonfeed_missing_expected_lanes",
     "nonfeed_surface_complete", "wayback_terminal_state", "passive_dns_terminal_state",
     "nonfeed_mission_active", "nonfeed_any_accepted",
-)
+    )
 
 DOH_KEYS = (
     "doh_planned", "doh_scheduled", "doh_request_attempted", "doh_accepted_findings",
     "doh_terminal_stage",
-)
+    )
 
 SEED_KEYS = (
     "seed_context_available", "seed_context_propagated", "seed_context_skip_reason",
     "lanes_unlocked_by_seed_context", "pivot_seed_domains", "pivot_seed_ips",
-)
+    )
 
 BRANCH_KEYS = (
     "branch_degradation_summary", "dominant_branch_blocker",
     "dominant_public_blocker", "dominant_feed_blocker",
-)
+    )
 
 PRODUCT_KEYS = (
     "signal_stage", "winning_source", "feed_confidence_score",
     "zero_signal_reason", "evidence_freshness", "branch_value",
     "sprint_verdict", "query_effectiveness",
-)
+    )
 
 
 # =============================================================================
@@ -101,7 +101,7 @@ SECTIONS: tuple[SectionDef, ...] = (
     SectionDef("BRANCH DEGRADATION", BRANCH_KEYS),
     SectionDef("CAPABILITY SYNTHESIS", (), format_dict=True),
     SectionDef("PRODUCT VALUE (selected)", PRODUCT_KEYS),
-)
+    )
 
 
 # =============================================================================
@@ -157,7 +157,7 @@ class DeepSprintReporter:
         report_path = (
             path 
             or "/Users/vojtechhamada/.hledac/reports/8sa_1780756273297_7d9878_report.json"
-        )
+    )
         try:
             with open(report_path) as f:
                 return cls(json.load(f))

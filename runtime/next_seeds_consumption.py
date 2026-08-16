@@ -213,7 +213,7 @@ class NextSeedsDiagnostics:
             f"NextSeedsDiagnostics(provider_yield={self.provider_yield_active}, "
             f"pivot_deepening={self.pivot_deepening_active}, "
             f"query_suggestions={len(self.query_suggestions)})"
-        )
+    )
 
 
 # ── F233C: Bounds ────────────────────────────────────────────────────────────

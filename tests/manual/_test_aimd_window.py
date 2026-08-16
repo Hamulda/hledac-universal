@@ -76,7 +76,7 @@ class AIMDWindow:
             self._window = min(
                 self._window + AIMD_ADDITIVE_INCREMENT * multiplier,
                 AIMD_MAX_CONCURRENCY,
-            )
+    )
             if self._window != old:
                 self._stats["increases"] += 1
                 self._stats["window_changes"] += 1
@@ -94,7 +94,7 @@ class AIMDWindow:
             self._window = max(
                 self._window * decrease_factor,
                 AIMD_MIN_CONCURRENCY,
-            )
+    )
             if self._window != old:
                 self._stats["decreases"] += 1
                 self._stats["window_changes"] += 1

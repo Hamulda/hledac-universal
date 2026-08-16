@@ -294,7 +294,7 @@ def batch_rerank(
     if query_emb.shape[1] != candidates.shape[1]:
         raise ValueError(
             f"Embedding dimension mismatch: query={query_emb.shape[1]}, candidates={candidates.shape[1]}"
-        )
+    )
     if query_emb.size == 0 or candidates.size == 0:
         raise ValueError("query_emb and candidates must be non-empty")
 

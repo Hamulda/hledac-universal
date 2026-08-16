@@ -70,7 +70,7 @@ class EntryQualitySignal:
             f"EntryQualitySignal(band={self.quality_band!r}, score={self.quality_score}, "
             f"tag={self.quality_reason_tag!r}, boost={self.metadata_boost}, "
             f"mismatch={self.language_mismatch})"
-        )
+    )
 
     def __eq__(self, other: object) -> bool:
         """Check equality based on quality band and score."""
@@ -82,7 +82,7 @@ class EntryQualitySignal:
             and self.quality_reason_tag == other.quality_reason_tag
             and self.metadata_boost == other.metadata_boost
             and self.language_mismatch == other.language_mismatch
-        )
+    )
 
 
 def _compute_entry_quality_signal(
@@ -199,7 +199,7 @@ _SCRIPT_STYLE_RE = re.compile(
     r"<script[^>]*>.*?</script>|"
     r"<style[^>]*>.*?</style>",
     re.DOTALL | re.IGNORECASE,
-)
+    )
 # Replace any HTML tag with a single space
 _STRIP_TAGS_RE = re.compile(r"<[^>]+>")
 _MULTI_WHITESPACE_RE = re.compile(r"[ \t\r\n]+")

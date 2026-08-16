@@ -166,12 +166,12 @@ class TaskScope:
 # ContextVar holding the current task scope string
 _current_scope: contextvars.ContextVar[str] = contextvars.ContextVar(
     "hledac_task_scope", default=TaskScope.ACQUISITION
-)
+    )
 
 # Optional: ContextVar holding the parent TaskGroup for structured concurrency
 _current_task_group: contextvars.ContextVar["asyncio.TaskGroup | None"] = contextvars.ContextVar(
     "hledac_task_group", default=None
-)
+    )
 
 
 def get_current_scope() -> str:
@@ -264,7 +264,7 @@ class TaskRegistry:
             "_task_counter",  # Monotonic task ID counter
             "_task_order",    # Ordered deque of task IDs for FIFO eviction (O(1) popleft)
             "_task_reverse",  # task -> task_id mapping for O(1) unregister lookup
-        )
+    )
     )
 
     def __init__(self) -> None:
@@ -485,7 +485,7 @@ class TaskRegistry:
         if cancelled > 0:
             timed_out = await self._await_tasks_by_ids(
                 task_ids, timeout=timeout
-            )
+    )
 
         async with self._lock:
             self._cancelled_count += cancelled
@@ -696,7 +696,7 @@ class TaskRegistry:
                     _logger.warning(
                         f"[P7-006] StuckTaskDetector: {len(stuck)} task(s) still "
                         f"running after cancellation grace period: {stuck}"
-                    )
+    )
                 # Also get elapsed times for stuck tasks
                 if stuck:
                     with_tasks = await self._stuck_detector.get_stuck_with_tasks()
@@ -706,7 +706,7 @@ class TaskRegistry:
                         _logger2.warning(
                             f"[P7-006] Stuck task id={tid} elapsed={elapsed:.1f}s "
                             f"(likely C-extension I/O hang)"
-                        )
+    )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -872,7 +872,7 @@ def _make_unregister_callback(task: asyncio.Task[Any]) -> Any:
             # unregister is idempotent and we don't need to await completion
             loop.call_soon_threadsafe(
                 lambda: asyncio.create_task(registry.unregister(done_task))
-            )
+    )
         except Exception:  # noqa: BLE001
             pass
     return _cb

@@ -215,7 +215,7 @@ def _get_feed_url_re():
         _FEED_URL_RE = re.compile(
             r"\.(rss|atom|xml|opensearch|sitemap)$",
             re.IGNORECASE,
-        )
+    )
     return _FEED_URL_RE
 
 

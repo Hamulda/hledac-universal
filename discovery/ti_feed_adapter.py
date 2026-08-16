@@ -842,7 +842,7 @@ async def search_github_gists(keyword: str, max_results: int=10) -> list[dict]:
             snippet_pattern = re.compile(
                 r'<div[^>]+class=["\']gist-snippet["\'][^>]*>.*?<div[^>]+class=["\']gist-snippet-meta["\'][^>]*>.*?<a[^>]+href=["\']([^"\']+)["\'][^>]*>([^<]+)</a>.*?<div[^>]+class=["\']gist-snippet-body["\'][^>]*>(.*?)</div>',
                 re.DOTALL | re.IGNORECASE
-            )
+    )
             for match in snippet_pattern.finditer(html_text)[:max_results]:
                 href = match.group(1).strip()
                 title = match.group(2).strip()
@@ -926,7 +926,7 @@ async def search_ahmia(query: str, max_results: int=20, use_onion: bool=False) -
             pattern = re.compile(
                 r'<li[^>]*class=["\']result["\'][^>]*>.*?<h4[^>]*>.*?<a[^>]+href=["\']([^"\']+)["\'][^>]*>([^<]+)</a>.*?<p[^>]*>([^<]+)</p>',
                 re.DOTALL | re.IGNORECASE
-            )
+    )
             for match in pattern.finditer(html)[:max_results]:
                 results.append({
                     'title': match.group(2).strip(),

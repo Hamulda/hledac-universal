@@ -41,7 +41,7 @@ _URL_PATTERN = re.compile(
     r'(?::\d+)?'
     r'(?:/?|[/?]\S+)\b',
     re.IGNORECASE,
-)
+    )
 
 _IP_PATTERN = re.compile(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d+)?$')
 _DOMAIN_PATTERN = re.compile(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b')

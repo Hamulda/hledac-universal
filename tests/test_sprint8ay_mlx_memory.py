@@ -37,7 +37,7 @@ import sys
 sys.path.insert(0, "{UNIVERSAL_ROOT}")
 
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 print(f"MLX_AVAILABLE={{MLX_AVAILABLE}}")
 
@@ -93,7 +93,7 @@ class TestMlxHelperApiShape(unittest.TestCase):
             get_mlx_memory_metrics,
             get_mlx_memory_pressure,
             get_mlx_peak_memory_mb,
-        )
+    )
         result = clear_mlx_cache()
         self.assertIsInstance(result, bool)
 
@@ -165,7 +165,7 @@ class TestMlxMemoryPressureThresholds(unittest.TestCase):
                 self.assertEqual(
                     level, expected_level,
                     f"Failed for active={active_mb}: got {level}, expected {expected_level}"
-                )
+    )
         finally:
             _core.MLX_AVAILABLE = orig_available
             _core._mlx_core = orig_core

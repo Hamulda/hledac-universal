@@ -91,7 +91,7 @@ class TestF273ADynamicBranchFloor(unittest.TestCase):
                 instance._min_branch_remaining_s(None),
                 expected_floor,
                 f"cycle_ema={ema} should give floor={expected_floor}",
-            )
+    )
 
     def test_min_branch_remaining_s_bounded_2_to_5(self):
         """Floor is always in [2.0, 5.0] for any remaining_s or cycle_ema."""
@@ -186,7 +186,7 @@ class TestF273BWindupRatio(unittest.TestCase):
                 cfg.windup_for_cycle(ema),
                 cfg.effective_windup_lead_s,
                 f"quick cycle_ema={ema} should not add bonus",
-            )
+    )
 
     def test_windup_for_cycle_adaptive_bonus(self):
         """Slow cycles get +0.5s per s over 8s, capped at +30s."""
@@ -240,7 +240,7 @@ class TestF273CPatternExtractionDrain(unittest.TestCase):
         fut = public_fetcher.schedule_html_extraction(
             "<html><body>test IOC</body></html>",
             "https://example.com",
-        )
+    )
         self.assertIsNotNone(fut)
         stats = public_fetcher.get_drain_stats()
         self.assertEqual(stats["registry_size"], 1)
@@ -255,12 +255,12 @@ class TestF273CPatternExtractionDrain(unittest.TestCase):
                 public_fetcher.schedule_html_extraction(
                     f"<html><body>IOC {i}</body></html>",
                     f"https://x.com/{i}",
-                )
+    )
             stats = public_fetcher.get_drain_stats()
             assert stats["registry_size"] == 3
             completed, timed_out, elapsed = await public_fetcher.drain_pending_extractions(
                 deadline_s=5.0,
-            )
+    )
             return completed, timed_out, elapsed
 
         completed, timed_out, elapsed = event_loop.run_until_complete(_run_drain())
@@ -282,7 +282,7 @@ class TestF273CPatternExtractionDrain(unittest.TestCase):
             assert stats["total_scheduled"] == 2
             completed, timed_out, _ = await public_fetcher.drain_pending_extractions(
                 deadline_s=2.0,
-            )
+    )
             return completed, timed_out, public_fetcher.get_drain_stats()
 
         completed, timed_out, stats = event_loop.run_until_complete(_run_drain())
@@ -305,7 +305,7 @@ class TestF273CPatternExtractionDrain(unittest.TestCase):
 
         completed, timed_out, elapsed = event_loop.run_until_complete(
             public_fetcher.drain_pending_extractions(deadline_s=0.0)
-        )
+    )
         self.assertEqual((completed, timed_out, elapsed), (0, 0, 0.0))
 
 
@@ -337,7 +337,7 @@ class TestF273DForceHermes(unittest.TestCase):
             no_coordination=True,
             production=False,
             hermes_force=True,
-        )
+    )
         self.assertTrue(flags.force)
         self.assertTrue(flags.no_communication)
         self.assertFalse(flags.no_stealth)
@@ -439,7 +439,7 @@ class TestF273FFnocacheRuntimeArtifacts(unittest.TestCase):
         """Below NOCACHE_THRESHOLD_BYTES the call is a no-op (False)."""
         from hledac.universal.tools.file_cache import (
             apply_nocache_to_path,
-        )
+    )
 
         if platform.system() != "Darwin":
             self.skipTest("F_NOCACHE only on Darwin")
@@ -505,7 +505,7 @@ class TestF273GMallocPressureRelief(unittest.TestCase):
             SprintScheduler,
             SprintSchedulerConfig,
             SprintSchedulerResult,
-        )
+    )
 
         instance = SprintScheduler.__new__(SprintScheduler)
         instance._config = SprintSchedulerConfig(sprint_duration_s=60)
@@ -580,7 +580,7 @@ class TestF273IBackwardCompat(unittest.TestCase):
                 cfg.effective_windup_lead_s,
                 expected,
                 f"F288: dur={dur} expected={expected}, got {cfg.effective_windup_lead_s}",
-            )
+    )
 
     def test_f288_aggressive_mode_windup(self):
         """P0-1: aggressive mode uses 0.15 ratio, [30, 180] ceiling (F288 cap removed)."""
@@ -596,7 +596,7 @@ class TestF273IBackwardCompat(unittest.TestCase):
                 cfg.effective_windup_lead_s,
                 expected,
                 f"F288 aggressive: dur={dur} expected={expected}, got {cfg.effective_windup_lead_s}",
-            )
+    )
 
     def test_drain_helpers_importable(self):
         """drain_pending_extractions + get_drain_stats are importable."""
@@ -604,7 +604,7 @@ class TestF273IBackwardCompat(unittest.TestCase):
             drain_pending_extractions,
             get_drain_stats,
             schedule_html_extraction,
-        )
+    )
 
         self.assertTrue(callable(drain_pending_extractions))
         self.assertTrue(callable(get_drain_stats))

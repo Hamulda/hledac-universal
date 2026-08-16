@@ -37,7 +37,7 @@ _uvloop_enabled = get_runtime_state().uvloop_installed
 from .domain_concurrency import (  # noqa: F401, E402  # pragma: no cover
     ARM_VALUES,
     DomainConcurrencyBandit,
-)
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ class _SessionRuntimeState:
 _session_state_var: contextvars.ContextVar[_SessionRuntimeState | None] = contextvars.ContextVar(
     "_session_state_var",
     default=None,
-)
+    )
 
 
 def _get_state() -> _SessionRuntimeState:

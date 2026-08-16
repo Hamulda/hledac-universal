@@ -56,7 +56,7 @@ USAGE:
       is_workflow_phase,
       is_coarse_grained_phase,
       get_phase_layer,
-  )
+    )
 """
 
 
@@ -168,7 +168,7 @@ def assert_no_cross_layer_mapping(phase: str, layer_hint: str = "") -> None:
             f"(coarse-grained) but caller expects Layer 1 (workflow-level). "
             f"This may indicate implicit phase string mapping. "
             f"Use model_phase_facts.is_same_layer() to validate."
-        )
+    )
 
 
 def get_phase_layer_strict(phase: str) -> int:
@@ -202,7 +202,7 @@ def get_phase_layer_strict(phase: str) -> int:
         logging.getLogger(__name__).warning(
             f"[PHASE DRIFT GUARD] Phase '{phase}' exists in both Layer 1 and "
             f"Layer 2. This is a cross-layer collision. Treating as unknown."
-        )
+    )
         return 0
 
     if in_layer1:

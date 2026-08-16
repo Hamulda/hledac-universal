@@ -783,14 +783,14 @@ def extract_iocs_from_texts(
         ioc = _rust_backend.ioc
         decoded_per_text = _batch_decode_candidates(
             texts, ioc, _is_deobfuscate_enabled()
-        )
+    )
         if not hasattr(ioc, "batch_extract_iocs_simd_indexed"):
             return [extract_iocs_from_text(t) for t in texts]
 
         # Large batch: Rust batch path — single GIL acquisition, rayon parallel
         result = _process_rust_ioc_batch(
             ioc.batch_extract_iocs_simd_indexed(texts), texts
-        )
+    )
 
         # ADVERSARY-003: merge deobfuscated candidates into results
         # For deobfuscated candidates, we scan each one with the SIMD engine.
@@ -826,7 +826,7 @@ _THREAT_ACTOR_RE = re.compile(
     r"\b(?:Ocean Lot|Reaper Group|Geumseong|APT32|APT37|APT38)\b|"
     r"\b(?:TA428|MenuPass|Tailgater Team|Joe Team)\b",
     re.IGNORECASE,
-)
+    )
 
 _RANSOMWARE_FAMILY_RE = re.compile(
     r"\b(?:LockBit|LockBit\s*2(?:\.0)?|LockBit\s*3|LDX)\b|"
@@ -840,7 +840,7 @@ _RANSOMWARE_FAMILY_RE = re.compile(
     r"\b(?:Cobalt Strike|CobaltStrike|CS)\b|"
     r"\b(?:Metasploit|Metasploit Framework|MSF)\b",
     re.IGNORECASE,
-)
+    )
 
 
 def extract_threat_entities(text: str) -> list[tuple[str, str]]:

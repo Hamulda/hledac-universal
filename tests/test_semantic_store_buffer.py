@@ -75,7 +75,7 @@ class TestSemanticStoreBufferPatternMatches:
             finding_id="fid-tuple",
             payload_text="evil domain example.com",
             pattern_matches=[("example.com", "domain")],
-        )
+    )
         buffer.buffer_findings([finding])
 
         mock_store.add_text.assert_called_once()
@@ -93,7 +93,7 @@ class TestSemanticStoreBufferPatternMatches:
             finding_id="fid-dict",
             payload_text="hash  deadbeef",
             pattern_matches=[{"label": "sha256", "value": "deadbeef"}],
-        )
+    )
         buffer.buffer_findings([finding])
 
         mock_store.add_text.assert_called_once()
@@ -113,7 +113,7 @@ class TestSemanticStoreBufferPatternMatches:
                 ("example.com", "domain"),
                 {"label": "sha256", "value": "deadbeef"},
             ],
-        )
+    )
         buffer.buffer_findings([finding])
 
         call_kwargs = mock_store.add_text.call_args.kwargs
@@ -132,7 +132,7 @@ class TestSemanticStoreBufferPatternMatches:
                 ("example.com", "domain"),
                 ("evil.com", "domain"),
             ],
-        )
+    )
         buffer.buffer_findings([finding])
 
         call_kwargs = mock_store.add_text.call_args.kwargs
@@ -148,7 +148,7 @@ class TestSemanticStoreBufferPatternMatches:
             finding_id="fid-no-pm",
             payload_text="plain text",
             pattern_matches=None,
-        )
+    )
         buffer.buffer_findings([finding])
 
         call_kwargs = mock_store.add_text.call_args.kwargs
@@ -167,7 +167,7 @@ class TestSemanticStoreBufferPatternMatches:
                 ("only-one-element",),
                 ("example.com", "domain"),
             ],
-        )
+    )
         buffer.buffer_findings([finding])
 
         call_kwargs = mock_store.add_text.call_args.kwargs
@@ -187,7 +187,7 @@ class TestSemanticStoreBufferOtherFindingAttrs:
             finding_id="fid-src",
             payload_text="content",
             source_type="ct_indicators",
-        )
+    )
         buffer.buffer_findings([finding])
 
         call_kwargs = mock_store.add_text.call_args.kwargs

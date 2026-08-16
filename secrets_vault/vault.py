@@ -194,7 +194,7 @@ def _derive_key_python(password: str | bytearray, salt: bytes) -> bytes:
             length=32,
             salt=salt,
             iterations=_PBKDF2_ITERATIONS,
-        )
+    )
         # PBKDF2.derive accepts bytearray directly (bytes-like object)
         derived_key = kdf.derive(password_ba)
         return derived_key
@@ -290,7 +290,7 @@ def _aead_decrypt(encrypted: bytes | None, key: bytes) -> bytes | None:
             algorithms.AES(key),
             modes.GCM(nonce, tag),
             backend=default_backend(),
-        )
+    )
         decryptor = cipher.decryptor()
         return decryptor.update(ciphertext) + decryptor.finalize()
     except Exception:
@@ -511,7 +511,7 @@ def _chmod_lmdb_path(path: Path) -> None:
         if self._rust_available:
             encrypted_list = _rust_batch_encrypt(
                 self._password, self._salt, [plaintext.decode()]
-            )
+    )
             if encrypted_list:
                 encrypted = encrypted_list[0]
             else:
@@ -539,7 +539,7 @@ def _chmod_lmdb_path(path: Path) -> None:
         if self._rust_available:
             decrypted_list = _rust_batch_decrypt(
                 self._password, self._salt, [encrypted]
-            )
+    )
             if decrypted_list and decrypted_list[0] is not None:
                 return self._deserialize(decrypted_list[0].encode())
             # Fall through to Python if Rust failed

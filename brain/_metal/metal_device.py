@@ -112,7 +112,7 @@ class MetalDevice:
             peak_gb=round(peak / 1024**3, 3),
             metal_tier=tier,
             pressure_level=self._get_pressure_level(active),
-        )
+    )
 
     def get_metal_tier_thresholds(self) -> dict[str, tuple[int, int]]:
         """Return tier threshold configuration for compatibility."""

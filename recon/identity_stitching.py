@@ -65,7 +65,7 @@ from hledac.universal._core.rust_backend.unicode_fingerprint import (
     UnicodeFingerprint,
     get_unicode_fingerprint_domain,
     ENABLE_UNICODE_ATTRIBUTION,
-)
+    )
 _unicode_domain = None  # Lazy initialization
 
 # --------------------------------------------------------------------------- #
@@ -207,7 +207,7 @@ class _IdentityCache[T]:
                 logger.debug(
                     f'Cache pressure eviction: evicted {evict_count} entries '
                     f'(RSS={rss / 1024 / 1024:.1f}MB)'
-                )
+    )
         except Exception:  # noqa: BLE001
             pass
 
@@ -663,7 +663,7 @@ class CrossModalLSHMatcher:
         query_profile = self._profiles[profile_id]
         candidates: dict[str, tuple[list[float], list[float]]] = defaultdict(
             lambda: ([], [])
-        )
+    )
 
         # LSH lookup for face embeddings
         for embedding in query_profile.face_embeddings:
@@ -695,7 +695,7 @@ class CrossModalLSHMatcher:
                     self._cosine_similarity(q, c)
                     for q in query_profile.face_embeddings
                     for c in face_cands
-                )
+    )
                 face_score = best_face
 
             # Best voice match
@@ -704,7 +704,7 @@ class CrossModalLSHMatcher:
                     self._cosine_similarity(q, c)
                     for q in query_profile.voice_embeddings
                     for c in voice_cands
-                )
+    )
                 voice_score = best_voice
 
             # Weighted fusion
@@ -836,7 +836,7 @@ class IdentityStitchingEngine:
             id="user1",
             primary_name="Alice Smith",
             emails=["alice@example.com"],
-        )
+    )
         profile.add_username("twitter", "alice_smith")
         profile.add_username("github", "alicecodes")
         engine.add_profile(profile)
@@ -1249,7 +1249,7 @@ class IdentityStitchingEngine:
                 logger.debug(
                     f'TF-IDF similarity unavailable: scikit-learn not installed. '
                     f'Install with: pip install hledac-universal[ml]'
-                )
+    )
             return self._lexical_similarity(texts1, texts2)
         if len(all_texts) >= 2:
             try:
@@ -1651,7 +1651,7 @@ class IdentityStitchingEngine:
                     emb_a,
                     max_results=10,
                     min_similarity=0.5,
-                )
+    )
                 # Find matches belonging to profile_b
                 for node_id, similarity in matches:
                     if node_id in profile_b.face_ids:
@@ -1739,7 +1739,7 @@ class IdentityStitchingEngine:
                     emb_a,
                     max_results=10,
                     min_similarity=0.5,
-                )
+    )
                 # Find matches belonging to profile_b
                 for node_id, similarity in matches:
                     if node_id in profile_b.voice_ids:
@@ -1831,7 +1831,7 @@ class IdentityStitchingEngine:
             match_score=final_score,
             match_signals=signals,
             evidence=evidence,
-        )
+    )
         self._match_cache.put(cache_key, match)
         self._stats['matches_computed'] += 1
         return match
@@ -1897,7 +1897,7 @@ class IdentityStitchingEngine:
                 pairs, threshold,
                 lambda a, b: self.compute_match(self._profiles[a], self._profiles[b]),
                 concurrency=None,  # F1 FIX: dynamic UMA-aware limit
-            )
+    )
         matches.sort(key=attrgetter("match_score"), reverse=True)
         return matches
 
@@ -1973,12 +1973,12 @@ class IdentityStitchingEngine:
                 "find_all_matches() called from running event loop with n>=20. "
                 "Use 'await engine.find_all_matches_async()' instead. "
                 f"Current profile count: {len(self._profiles)}"
-            )
+    )
 
         # No running loop — use run_until_complete (Python 3.14+ safe)
         return asyncio.get_running_loop().run_until_complete(
             self.find_all_matches_async(min_score)
-        )
+    )
 
     def stitch_identities(self, match_threshold: float=0.8, transitive_threshold: float=0.6) -> list[StitchedIdentity]:
         """
@@ -2041,7 +2041,7 @@ class IdentityStitchingEngine:
                 merged_usernames=all_usernames,
                 stitch_confidence=avg_confidence,
                 match_evidence=list(set(all_evidence)),
-            )
+    )
             stitched.append(stitched_identity)
         self._stats['identities_stitched'] += len(stitched)
         logger.info(f'Stitched {len(stitched)} identities in {time.time() - start_time:.3f}s')

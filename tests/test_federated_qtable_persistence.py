@@ -155,7 +155,7 @@ class TestFederatedQTablePersistence:
             max_nodes=1,
             use_bridge=True,
             bridge=explicit_bridge
-        )
+    )
 
         assert coord._bridge is explicit_bridge, "Explicit bridge should be used"
 
@@ -186,7 +186,7 @@ class TestFederatedQTablePersistence:
             action="surface",
             reward=0.5,
             next_state=("test-query", 1)
-        )
+    )
         initial_q = bridge_ref.get_q("surface", ("test-query", 0), "surface")
         # Q-learning: alpha=0.1, gamma=0.9, reward=0.5, next_max_q=0
         # new_q = 0 + 0.1 * (0.5 + 0.9 * 0) = 0.05

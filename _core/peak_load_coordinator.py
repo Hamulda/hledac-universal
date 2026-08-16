@@ -74,14 +74,13 @@ logger = logging.getLogger(__name__)
 # New: Uses UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB (SSOT)
 
 from hledac.universal.utils.uma_budget import (
-from _core._util import aclose
     UmaBudget,
     MISSION_PEAK_RSS_GIB,
     ORCHESTRATOR_GIB,
     LLM_WEIGHTS_GIB,
     KV_CACHE_GIB,
     SWAP_TIERS,  # MODERN-41 Fix: Use SSOT swap tiers instead of hardcoded 3.8
-)
+    )
 
 # PRIMARY SSOT: The ONE authoritative ceiling
 _DEFAULT_TOTAL_BUDGET_GIB: float = UmaBudget.UMA_HARD_CEILING_GIB  # 6.25 GiB
@@ -536,7 +535,7 @@ class GlobalPeakLoadCoordinator:
             logger.debug(
                 f"[UNIFIED-003] Priority boosted: {priority} -> {boosted_priority} "
                 f"for {resource_class} ({owner}), remaining={_sprint_deadline_ts - time.monotonic() if _sprint_deadline_ts else 'N/A':.1f}s"
-            )
+    )
             priority = boosted_priority
 
         start_time = time.monotonic()
@@ -573,7 +572,7 @@ class GlobalPeakLoadCoordinator:
                     raise TimeoutError(
                         f"PeakLoadCoordinator: admission timeout for {resource_class} "
                         f"({estimated_mb:.0f} MB, priority={priority})"
-                    )
+    )
 
                 # UNIFIED-003: Re-apply deadline boost (deadline may have changed)
                 priority = _boost_for_deadline(priority)
@@ -587,7 +586,7 @@ class GlobalPeakLoadCoordinator:
                             await asyncio.wait_for(
                                 self._preempt_signal.wait(),
                                 timeout=min(1.0, timeout_s - elapsed),
-                            )
+    )
                         except asyncio.TimeoutError:  # noqa: BLE001
                             pass  # Continue loop, will check again
                         continue
@@ -613,7 +612,7 @@ class GlobalPeakLoadCoordinator:
                     await asyncio.wait_for(
                         self._high_water_event.wait(),
                         timeout=min(_PREEMPTION_CHECK_INTERVAL_S, timeout_s - elapsed),
-                    )
+    )
                     self._high_water_event.clear()
                 except asyncio.TimeoutError:  # noqa: BLE001
                     pass  # Continue loop, will check again
@@ -756,7 +755,7 @@ class GlobalPeakLoadCoordinator:
             system_limit_gib = min(
                 system_total_gib * 0.90,
                 min(uma_budget_warn_gib * 1.10, UmaBudget.UMA_HARD_CEILING_GIB)
-            )
+    )
             projected_used_gib = system_used_gib + (estimated_mb / 1024)
 
             if projected_used_gib > system_limit_gib:
@@ -764,7 +763,7 @@ class GlobalPeakLoadCoordinator:
                     f"UMA pressure: projected {projected_used_gib:.2f} GiB "
                     f"> limit {system_limit_gib:.2f} GiB "
                     f"(system used={system_used_gib:.2f} GiB)"
-                )
+    )
 
             # MODERN-41 Fix: Check swap using SSOT DIAGNOSTIC threshold
             # SWAP_TIERS.DIAGNOSTIC = 4.675 GiB — elevated swap indicates systemic pressure
@@ -774,7 +773,7 @@ class GlobalPeakLoadCoordinator:
                     return False, (
                         f"UMA pressure: swap={uma.swap_used_gib:.1f} GiB "
                         f"(threshold={SWAP_TIERS.DIAGNOSTIC:.3f} GiB from SSOT)"
-                    )
+    )
 
             return True, f"UMA OK ({system_used_gib:.1f}/{system_total_gib:.1f} GiB)"
         except Exception:
@@ -805,7 +804,7 @@ class GlobalPeakLoadCoordinator:
             resource_class=resource_class,
             estimated_mb=estimated_mb,
             owner=owner,
-        )
+    )
         self._active_tokens[ticket.ticket_id] = token
 
     def _unregister_token(self, ticket_id: int) -> None:
@@ -840,7 +839,7 @@ class GlobalPeakLoadCoordinator:
                 logger.warning(
                     f"[UNIFIED-003] Preempting mutex conflict: cancelling "
                     f"{token.resource_class} ({token.owner}) for {incoming_class}"
-                )
+    )
                 token.task.cancel()
                 self._total_preemptions += 1
 
@@ -888,7 +887,7 @@ class GlobalPeakLoadCoordinator:
                 f"[UNIFIED-003] Active preemption: cancelling "
                 f"{token.resource_class} ({token.owner}, "
                 f"priority={token.priority}, est={token.estimated_mb:.0f} MB)"
-            )
+    )
             # Cancel the asyncio task
             if token.task is not None:
                 token.task.cancel()
@@ -920,7 +919,7 @@ class GlobalPeakLoadCoordinator:
             estimated_mb=estimated_mb,
             allocated_at=time.monotonic(),
             owner=owner,
-        )
+    )
 
         self._allocations[ticket_id] = ticket
         self._total_allocated_mb += estimated_mb
@@ -948,7 +947,7 @@ class GlobalPeakLoadCoordinator:
             f"[PeakLoad] Allocated ticket #{ticket_id}: {resource_class} "
             f"{estimated_mb:.0f} MB (total: {self._total_allocated_mb:.0f} MB, "
             f"{utilization:.1%} utilization)"
-        )
+    )
 
         return ticket
 
@@ -1003,7 +1002,7 @@ class GlobalPeakLoadCoordinator:
                 f"[PeakLoad] Released ticket #{ticket.ticket_id}: {ticket.resource_class} "
                 f"{ticket.estimated_mb:.0f} MB (total: {self._total_allocated_mb:.0f} MB, "
                 f"{utilization:.1%} utilization)"
-            )
+    )
 
     def _get_preemptable_mb(self, requester_priority: TaskPriority) -> float:
         """Calculate how much memory can be freed by preempting lower-priority tasks.
@@ -1057,7 +1056,7 @@ class GlobalPeakLoadCoordinator:
             high_water_active=self._high_water_event.is_set(),
             emergency_active=self._emergency_event.is_set(),
             timestamp=time.monotonic(),
-        )
+    )
 
         return snapshot
 
@@ -1106,7 +1105,7 @@ class GlobalPeakLoadCoordinator:
                     f"[PeakLoad] Preemption: signal set + {freed:.0f} MB "
                     f"actively cancelled ({preemptable_mb:.0f} MB preemptable, "
                     f"target: {target_mb:.0f} MB)"
-                )
+    )
 
             return freed
 

@@ -82,7 +82,7 @@ async def dispatch_async(args: argparse.Namespace) -> int:
     try:
         from hledac.universal.runtime.observability_async_handler import (
             configure_async_logging,
-        )
+    )
         await configure_async_logging()
     except Exception:  # noqa: BLE001
         pass
@@ -186,7 +186,7 @@ async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
                 acquisition_profile=profile,
                 flags=root_flags,
                 shutdown_event=shutdown_event,
-            )
+    )
         return 0
     except ImportError as _e:
         raise  # propagate to main() → code 3

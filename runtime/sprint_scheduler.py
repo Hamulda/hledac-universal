@@ -25,13 +25,13 @@ from hledac.universal.runtime.acquisition_strategy import (  # noqa: F401
     complete_source_family_outcomes_from_lane_details,
     normalize_source_family_outcome,
     reconcile_lane_detail_fields,
-)
+    )
 from hledac.universal.runtime.acquisition_strategy import run_enabled_acquisition_lanes  # noqa: F401
 from hledac.universal.runtime.source_finding_bridge import (  # noqa: F401
     ct_results_to_findings,
     wayback_results_to_findings,
     passive_dns_results_to_findings,
-)
+    )
 
 
 class SprintTooShortError(ValueError):
@@ -113,7 +113,7 @@ def __getattr__(name: str):
     if name == "run_enabled_acquisition_lanes":
         from hledac.universal.runtime.acquisition_strategy_runner import (
             run_enabled_acquisition_lanes as _run,
-        )
+    )
         return _run
 
     if name == "source_finding_bridge":

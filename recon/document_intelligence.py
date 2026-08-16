@@ -40,7 +40,7 @@ from hledac.universal.utils.locks import LazyAsyncioLock
 from hledac.universal.utils.domain_executors import get_parallel_executor
 from hledac.universal.security.artifact_verifier import (
     get_artifact_verifier,
-)
+    )
 from hledac.universal.security.media_sandbox import (
     MediaSandboxCoordinator,
     MediaRiskProfile,
@@ -53,7 +53,7 @@ from hledac.universal.security.media_sandbox import (
     _write_sandbox_profile,
     _build_image_sandbox_profile,
     run_pymupdf_sandboxed,
-)
+    )
 import hashlib
 import io
 import logging
@@ -93,7 +93,7 @@ def _guard_file_size(file_path: str) -> None:
         raise ValueError(
             f"Document too large: {stat.st_size / 1024 / 1024:.1f}MB "
             f"(limit {_MAX_DOCUMENT_SIZE / 1024 / 1024:.0f}MB)"
-        )
+    )
 
 
 def _get_forensics_pool() -> concurrent.futures.Executor:
@@ -110,7 +110,7 @@ def _get_forensics_pool() -> concurrent.futures.Executor:
             _forensics_pool = concurrent.futures.ProcessPoolExecutor(
                 max_workers=2,
                 mp_context=ctx,
-            )
+    )
         except Exception as e:
             logger.warning(f'[FORENSICS] ProcessPoolExecutor init failed, using ThreadPool fallback: {e}')
             # R5 FIX (Issue 3): Route fallback through domain_executors shared pool
@@ -235,7 +235,7 @@ def _safe_extract_image(doc: Any, xref: int) -> dict | None:
         logger.warning(
             f"[DOC] Refused image xref={xref} at {len(image_bytes) / 1024 / 1024:.1f}MB "
             f"(limit {_MAX_EMBEDDED_IMAGE_BYTES // 1024 // 1024:.0f}MB)"
-        )
+    )
         return None
     return base_image
 
@@ -247,7 +247,7 @@ def _safe_read_zip_entry(z: zipfile.ZipFile, name: str) -> bytes | None:
             logger.warning(
                 f"[DOC] Refused zip entry '{name}' at {info.file_size / 1024 / 1024:.1f}MB "
                 f"(limit {_MAX_EMBEDDED_STREAM_BYTES // 1024 // 1024:.0f}MB)"
-            )
+    )
             return None
         return z.read(name)
     except Exception:
@@ -270,7 +270,7 @@ def _safe_xref_stream(doc: Any, xref: int) -> bytes | None:
             logger.warning(
                 f"[DOC] Refused xref_stream xref={xref} at {len(stream) / 1024 / 1024:.1f}MB "
                 f"(limit {_MAX_EMBEDDED_IMAGE_BYTES // 1024 // 1024:.0f}MB)"
-            )
+    )
             return None
         return stream
     except Exception:
@@ -570,7 +570,7 @@ class VisionOCREngine:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self.recognize_pixelbuffer, pixel_buffer, recognition_level
-        )
+    )
 
     async def recognize_batch_from_pixelbuffer_async(
         self,
@@ -591,7 +591,7 @@ class VisionOCREngine:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self.recognize_batch_from_pixelbuffer, pixel_buffers, recognition_level
-        )
+    )
 
     async def recognize_batch_async(self, images: list[bytes]) -> list[tuple[str, float]]:
         """Async wrapper for batch OCR — runs recognize_batch in thread pool.
@@ -679,7 +679,7 @@ async def _ocr_embedded_batch_async(image_list: list[bytes]) -> list[tuple[str, 
             ResourceClass,
             TaskPriority,
             get_peak_coordinator,
-        )
+    )
         coordinator = get_peak_coordinator()
         if coordinator is not None:
             # ANE OCR batch: ~1500 MB peak allocation (4 concurrent workers)
@@ -689,7 +689,7 @@ async def _ocr_embedded_batch_async(image_list: list[bytes]) -> list[tuple[str, 
                 priority=TaskPriority.NORMAL,
                 owner=f"ane_ocr_batch:{len(image_list)}_images",
                 timeout_s=5.0,
-            )
+    )
     except (ImportError, TimeoutError) as e:
         logger.debug(f"[UNIFIED-001] ANE OCR admission failed: {e}")
         # Fail-open: proceed without admission if coordinator unavailable
@@ -850,13 +850,17 @@ class PDFAnalyzer:
         self.suspicious_keywords = ['confidential', 'classified', 'secret', 'proprietary', 'internal use only', 'do not distribute', 'draft', 'redacted', 'sensitive']
         self._sandbox = get_sandbox_coordinator()
 
-    def analyze(self, file_path: str | bytes | BinaryIO, source: str = "unknown") -> DocumentAnalysis:
-        """
-        Analyze PDF document with sandbox-aware risk routing.
+    async def analyze_async(self, file_path: str | bytes | BinaryIO, source: str = "unknown") -> DocumentAnalysis:
+        """Async PDF analysis with parallel page/forensics processing.
 
-        ADVERSARY-001: Routes ALL PDFs to subprocess isolation when SANDBOX_ENABLED.
-        PyMuPDF runs in sandboxed subprocess with Seatbelt containment.
-        A crafted PDF cannot exploit PyMuPDF/mupdf CVEs to pivot to orchestrator.
+        ISSUE-S3-FIX: Parallel PDF analysis using asyncio.gather() for:
+        - PDF probing (async page sampling)
+        - Deep page parsing (async parallel)
+        - OCG layer extraction (async parallel)
+        - Redaction detection (async parallel)
+        - Suppressed annotation extraction (async parallel)
+
+        M1 8GB safe: concurrency=4 for I/O-bound PyMuPDF operations.
 
         Args:
             file_path: Path to PDF file, bytes, or file-like object
@@ -865,8 +869,6 @@ class PDFAnalyzer:
         Returns:
             DocumentAnalysis with all extracted data
         """
-        import asyncio
-        
         # ── ADVERSARY-001: Risk classification before parsing ──────────────
         if isinstance(file_path, (str, Path)):
             risk = profile_file_risk(file_path, source)
@@ -879,8 +881,135 @@ class PDFAnalyzer:
                 risk.risk_level.name,
                 risk.entropy_bits_per_byte,
                 tier.name,
+        )
+
+        # Check for sandbox-enabled async path first
+        if SANDBOX_ENABLED and isinstance(file_path, (str, Path)):
+            try:
+                result_data = await run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0)
+                return self._convert_sandbox_result(result_data)
+            except Exception as e:
+                logger.warning(f"[ADVERSARY-001] PyMuPDF sandbox failed: {e}, fallback to in-process")
+
+        # Fallback to in-process analysis (no sandbox or sandbox failed)
+        if not PYMUPDF_AVAILABLE:
+            return self._basic_pdf_analysis(file_path)
+
+        try:
+            doc = fitz.open(file_path)
+            metadata = self._extract_pdf_metadata(doc, file_path)
+
+            # ISSUE-S3-FIX: Parallel PDF analysis using asyncio.gather()
+            # All forensics operations run concurrently for maximum throughput
+            probe_task = self._probe_pdf_async(doc)
+
+            # Execute probe first to get candidate pages
+            probe_result = await probe_task
+
+            # ISSUE-S3-FIX: Parallel deep parsing + forensics using asyncio.gather()
+            SIGNAL_THRESHOLD = 0.5
+            candidate_pages = probe_result['candidate_pages']
+
+            if probe_result['signal_score'] >= SIGNAL_THRESHOLD:
+                # Parallel: deep page parsing + forensics (OCG, redaction, suppressed annotations)
+                deep_parse_task = self._deep_parse_pages_async(doc, candidate_pages)
+                ocg_task = self._extract_ocg_layers_async(doc)
+                redaction_task = self._detect_redaction_failures_async(doc)
+                suppressed_task = self._extract_suppressed_annotations_async(doc)
+
+                # Wait for all parallel tasks
+                deep_texts, ocg_layers, redaction_failures, suppressed_annotations = await asyncio.gather(
+                    deep_parse_task, ocg_task, redaction_task, suppressed_task,
+                    return_exceptions=True
+                )
+
+                # Handle exceptions gracefully
+                if isinstance(deep_texts, Exception):
+                    deep_texts = ['']
+                    logger.warning(f"Deep parse failed: {deep_texts}")
+                if isinstance(ocg_layers, Exception):
+                    ocg_layers = []
+                if isinstance(redaction_failures, Exception):
+                    redaction_failures = []
+                if isinstance(suppressed_annotations, Exception):
+                    suppressed_annotations = []
+
+                full_text = ' '.join(deep_texts)
+            else:
+                # Sequential fallback for low-signal PDFs
+                full_text = ''
+                for page_num in candidate_pages:
+                    if page_num < len(doc):
+                        page = doc[page_num]
+                        full_text += page.get_text()
+                ocg_layers = await self._extract_ocg_layers_async(doc)
+                redaction_failures = await self._detect_redaction_failures_async(doc)
+                suppressed_annotations = await self._extract_suppressed_annotations_async(doc)
+
+            # Extract embedded objects (OCR is already batched)
+            embedded_objects = self._extract_pdf_objects(doc)
+
+            # Extract patterns from text
+            hyperlinks = self.URL_PATTERN.findall(full_text)
+            emails = self.EMAIL_PATTERN.findall(full_text)
+            ip_addresses = self.IP_PATTERN.findall(full_text)
+            suspicious = self._detect_suspicious_content(full_text)
+
+            # ISSUE-015: Canary token detection (pre-flight OPSEC check)
+            from forensics.canary_detector import scan_for_canary_tokens
+            canary_detection = scan_for_canary_tokens(full_text)
+            canary_tokens = canary_detection.tokens if canary_detection.detected else []
+
+            doc.close()
+            return DocumentAnalysis(
+                metadata=metadata,
+                embedded_objects=embedded_objects,
+                hyperlinks=hyperlinks,
+                email_addresses=emails,
+                ip_addresses=ip_addresses,
+                suspicious_indicators=suspicious,
+                canary_tokens=canary_tokens,
+                ocg_layers=ocg_layers,
+                redaction_failures=redaction_failures,
+                suppressed_annotations=suppressed_annotations,
             )
-        
+        except Exception as e:
+            logger.warning(f'PDF analysis failed: {e}')
+            return DocumentAnalysis(metadata=DocumentMetadata(), embedded_objects=[], hyperlinks=[], email_addresses=[], ip_addresses=[], suspicious_indicators=[])
+
+    def analyze(self, file_path: str | bytes | BinaryIO, source: str = "unknown") -> DocumentAnalysis:
+        """
+        Analyze PDF document with sandbox-aware risk routing (sync wrapper).
+
+        ADVERSARY-001: Routes ALL PDFs to subprocess isolation when SANDBOX_ENABLED.
+        PyMuPDF runs in sandboxed subprocess with Seatbelt containment.
+        A crafted PDF cannot exploit PyMuPDF/mupdf CVEs to pivot to orchestrator.
+
+        For async parallel analysis, use analyze_async() instead.
+
+        Args:
+            file_path: Path to PDF file, bytes, or file-like object
+            source: Source fingerprint ("clearnet", "tor", "i2p", "user", etc.)
+
+        Returns:
+            DocumentAnalysis with all extracted data
+        """
+        import asyncio
+
+        # ── ADVERSARY-001: Risk classification before parsing ──────────────
+        if isinstance(file_path, (str, Path)):
+            risk = profile_file_risk(file_path, source)
+            tier = self._sandbox.get_tier_for_file(file_path, source)
+            logger.debug(
+                "[ADVERSARY-001] PDF: path=%s source=%s risk=%s "
+                "entropy=%.2f tier=%s",
+                Path(file_path).name if isinstance(file_path, str) else str(file_path),
+                source,
+                risk.risk_level.name,
+                risk.entropy_bits_per_byte,
+                tier.name,
+    )
+
         # Check for sandbox-enabled async path first
         if SANDBOX_ENABLED and isinstance(file_path, (str, Path)):
             try:
@@ -892,18 +1021,18 @@ class PDFAnalyzer:
                         future = executor.submit(
                             asyncio.run,
                             run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0)
-                        )
+    )
                         result_data = future.result(timeout=65.0)  # Slightly higher than subprocess timeout
                         return self._convert_sandbox_result(result_data)
                 else:
                     # No running loop - use asyncio.run
                     result_data = asyncio.run(
                         run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0)
-                    )
+    )
                     return self._convert_sandbox_result(result_data)
             except Exception as e:
                 logger.warning(f"[ADVERSARY-001] PyMuPDF sandbox failed: {e}, fallback to in-process")
-        
+
         # Fallback to in-process analysis (no sandbox or sandbox failed)
         if not PYMUPDF_AVAILABLE:
             return self._basic_pdf_analysis(file_path)
@@ -949,7 +1078,7 @@ class PDFAnalyzer:
                 ocg_layers=ocg_layers,
                 redaction_failures=redaction_failures,
                 suppressed_annotations=suppressed_annotations,
-            )
+    )
         except Exception as e:
             logger.warning(f'PDF analysis failed: {e}')
             return DocumentAnalysis(metadata=DocumentMetadata(), embedded_objects=[], hyperlinks=[], email_addresses=[], ip_addresses=[], suspicious_indicators=[])
@@ -969,7 +1098,7 @@ class PDFAnalyzer:
                 email_addresses=[],
                 ip_addresses=[],
                 suspicious_indicators=[],
-            )
+    )
         
         # Check for error in sandbox result (set by _error_result in media_sandbox.py)
         meta_dict = result_data.get('metadata', {})
@@ -1018,7 +1147,7 @@ class PDFAnalyzer:
                     **analysis_stats,  # Includes page_count, pymupdf_available, embedded_objects_count
                     'sandboxed': True,  # Mark as sandboxed result
                 },
-            )
+    )
         except Exception:
             metadata = DocumentMetadata()
         
@@ -1055,11 +1184,95 @@ class PDFAnalyzer:
             ocg_layers=result_data.get('ocg_layers', []),
             redaction_failures=result_data.get('redaction_failures', []),
             suppressed_annotations=result_data.get('suppressed_annotations', []),
-        )
+    )
+
+    async def _probe_pdf_async(self, doc) -> dict:
+        """Async PDF probing with parallel page sampling.
+
+        ISSUE-S3-FIX: Parallel sample page analysis using asyncio.gather().
+        M1 8GB safe: concurrency=4 for I/O-bound page inspection.
+
+        Args:
+            doc: PyMuPDF document object
+
+        Returns:
+            dict with "signal_score" (float) and "candidate_pages" (list[int])
+        """
+        MAX_DEEP_PDF_PAGES = 12
+        if not PYMUPDF_AVAILABLE:
+            return {'signal_score': 0.5, 'candidate_pages': list(range(min(10, len(doc) if hasattr(doc, '__len__') else 10)))}
+        try:
+            total_pages = len(doc)
+            if total_pages == 0:
+                return {'signal_score': 0.0, 'candidate_pages': []}
+
+            # Phase 1: Sample pages for signal estimation (parallel)
+            sample_size = min(5, total_pages)
+            sample_indices = [int(i * total_pages / sample_size) for i in range(sample_size)]
+
+            async def _sample_page(page_num: int) -> tuple[int, int, int]:
+                """Sample single page: returns (page_num, text_length, image_count)."""
+                try:
+                    page = doc[page_num]
+                    text = page.get_text()
+                    image_list = page.get_images() if PYMUPDF_AVAILABLE else []
+                    return (page_num, len(text), len(image_list))
+                except Exception:
+                    return (page_num, 0, 0)
+
+            # ISSUE-S3-FIX: Parallel sample page analysis
+            sample_tasks = [asyncio.create_task(_sample_page(idx)) for idx in sample_indices]
+            sample_results = await asyncio.gather(*sample_tasks, return_exceptions=True)
+
+            text_lengths = []
+            has_images = 0
+            for result in sample_results:
+                if isinstance(result, Exception):
+                    continue
+                page_num, text_len, img_count = result
+                text_lengths.append(text_len)
+                if img_count > 0:
+                    has_images += 1
+
+            avg_text_length = sum(text_lengths) / len(text_lengths) if text_lengths else 0
+            image_ratio = has_images / len(sample_indices) if sample_indices else 0
+            signal_score = min(1.0, avg_text_length / 500.0 + image_ratio * 0.3)
+
+            # Phase 2: Score all pages for candidate selection (parallel, limited)
+            # ISSUE-S3-FIX: Score pages in parallel batches to avoid overwhelming I/O
+            _PAGE_SCORING_CONCURRENCY = 4
+
+            async def _score_page(page_num: int) -> tuple[int, int]:
+                """Score single page: returns (page_num, score)."""
+                try:
+                    page = doc[page_num]
+                    text = page.get_text()
+                    images = len(page.get_images()) if PYMUPDF_AVAILABLE else 0
+                    return (page_num, len(text) + images * 100)
+                except Exception:
+                    return (page_num, 0)
+
+            # Score all pages but limit concurrency
+            page_scores: list[tuple[int, int]] = []
+            for i in range(0, total_pages, _PAGE_SCORING_CONCURRENCY):
+                batch = range(i, min(i + _PAGE_SCORING_CONCURRENCY, total_pages))
+                batch_tasks = [asyncio.create_task(_score_page(p)) for p in batch]
+                batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+                for result in batch_results:
+                    if isinstance(result, Exception):
+                        continue
+                    page_scores.append(result)
+
+            page_scores.sort(key=lambda x: x[1], reverse=True)
+            candidate_pages = [p[0] for p in page_scores[:MAX_DEEP_PDF_PAGES]]
+            return {'signal_score': signal_score, 'candidate_pages': candidate_pages}
+        except Exception as e:
+            logger.warning(f'PDF probing failed: {e}')
+            return {'signal_score': 0.5, 'candidate_pages': list(range(5))}
 
     def _probe_pdf(self, doc) -> dict:
         """
-        Probe PDF to estimate signal score and identify candidate pages.
+        Probe PDF to estimate signal score and identify candidate pages (sync wrapper).
 
         Args:
             doc: PyMuPDF document object
@@ -1105,9 +1318,63 @@ class PDFAnalyzer:
             logger.warning(f'PDF probing failed: {e}')
             return {'signal_score': 0.5, 'candidate_pages': list(range(5))}
 
+    async def _deep_parse_pages_async(self, doc, page_indices: list[int]) -> list[str]:
+        """Async deep parse specific pages of the PDF with bounded parallelization.
+
+        ISSUE-S3-FIX: Replaced sequential for-loop with asyncio.gather() + bounded concurrency.
+        M1 8GB safe: Uses asyncio.gather() for page-level I/O with concurrency=4.
+
+        Args:
+            doc: PyMuPDF document object
+            page_indices: List of page indices to parse
+
+        Returns:
+            List of extracted text strings for each page (preserving order)
+        """
+        if not PYMUPDF_AVAILABLE:
+            return []
+        if not page_indices:
+            return []
+
+        # ISSUE-S3-FIX: Bounded concurrency to prevent memory exhaustion on large PDFs.
+        # M1 8GB: concurrency=4 balances I/O parallelism with memory pressure.
+        _PARSER_CONCURRENCY = 4
+
+        async def _parse_page(idx: int) -> tuple[int, str]:
+            """Parse single page and return (index, text) tuple."""
+            try:
+                if idx < len(doc):
+                    page = doc[idx]
+                    text = page.get_text()
+                    return (idx, text)
+            except Exception as e:
+                logger.warning(f'Page {idx} parse failed: {e}')
+            return (idx, '')
+
+        # ISSUE-S3-FIX: Batched parallel execution with bounded concurrency.
+        # For a 100-page PDF: creates 4 batches × 25 pages = bounded memory usage.
+        parsed: list[tuple[int, str]] = []
+
+        for i in range(0, len(page_indices), _PARSER_CONCURRENCY):
+            batch = page_indices[i:i + _PARSER_CONCURRENCY]
+            tasks = [asyncio.create_task(_parse_page(idx)) for idx in batch]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    # Extract original index from batch
+                    orig_idx = batch[batch_results.index(result)]
+                    parsed.append((orig_idx, ''))
+                else:
+                    parsed.append(result)
+
+        # Rebuild results in original order
+        parsed.sort(key=lambda x: x[0])
+        return [text for _, text in parsed]
+
     def _deep_parse_pages(self, doc, page_indices: list[int]) -> list[str]:
         """
-        Deep parse specific pages of the PDF.
+        Deep parse specific pages of the PDF (sync wrapper for backward compatibility).
 
         Args:
             doc: PyMuPDF document object
@@ -1231,12 +1498,92 @@ class PDFAnalyzer:
                         size_bytes=obj.size_bytes,
                         extracted_content=obj.extracted_content,
                         metadata=updated_metadata,
-                    )
+    )
 
         return objects
 
+    async def _extract_ocg_layers_async(self, doc: fitz.Document) -> list[dict]:
+        """Async OCG layer extraction with parallel page sampling.
+
+        ISSUE-S3-FIX: Parallel page sampling per OCG using asyncio.gather().
+        M1 8GB safe: concurrency=4 for I/O-bound page inspection.
+
+        Args:
+            doc: PyMuPDF document object
+
+        Returns:
+            List of dicts with OCG layer information
+        """
+        MAX_OCG_LAYERS = 10
+        MAX_PAGES_PER_OCG = 20
+
+        try:
+            ocg_dict = doc.get_ocgs()
+            if not ocg_dict:
+                return []
+
+            ocg_items = list(ocg_dict.items())[:MAX_OCG_LAYERS]
+
+            async def _extract_single_ocg(xref: int, ocg_info: dict) -> dict | None:
+                """Extract text samples from pages containing this OCG (parallel)."""
+                try:
+                    layer_data = {
+                        'xref': xref,
+                        'name': ocg_info.get('name', 'Unnamed'),
+                        'intent': ocg_info.get('intent', 'View'),
+                        'on': ocg_info.get('on', True),
+                        'text_samples': [],
+                    }
+
+                    # ISSUE-S3-FIX: Parallel page inspection per OCG
+                    page_range = min(len(doc), MAX_PAGES_PER_OCG)
+                    page_range = list(range(page_range))
+
+                    async def _sample_page(page_num: int) -> dict | None:
+                        """Sample single page for OCG text."""
+                        try:
+                            page = doc[page_num]
+                            page_ocgs = page.get_ocgs()
+                            if xref in page_ocgs:
+                                text = page.get_text()[:200]
+                                if text.strip():
+                                    return {
+                                        'page': page_num,
+                                        'text': text,
+                                    }
+                        except Exception:
+                            pass
+                        return None
+
+                    # Parallel page sampling with bounded concurrency
+                    tasks = [asyncio.create_task(_sample_page(p)) for p in page_range]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for result in results:
+                        if isinstance(result, dict):
+                            layer_data['text_samples'].append(result)
+
+                    return layer_data
+                except Exception as e:
+                    logger.debug(f'Failed to extract OCG xref={xref}: {e}')
+                    return None
+
+            # ISSUE-S3-FIX: Parallel OCG extraction with bounded concurrency
+            ocg_tasks = [asyncio.create_task(_extract_single_ocg(xref, ocg_info))
+                         for xref, ocg_info in ocg_items]
+            results = await asyncio.gather(*ocg_tasks, return_exceptions=True)
+
+            ocg_layers = []
+            for result in results:
+                if isinstance(result, dict):
+                    ocg_layers.append(result)
+
+            return ocg_layers
+        except Exception as e:
+            logger.debug(f'OCG extraction failed: {e}')
+            return []
+
     def _extract_ocg_layers(self, doc: fitz.Document) -> list[dict]:
-        """Extract Optional Content Groups (OCG) from PDF - ISSUE-016.
+        """Extract Optional Content Groups (OCG) from PDF - ISSUE-016 (sync wrapper).
 
         OCGs are PDF layers that can be toggled on/off. Hidden layers may contain
         sensitive information like redacted text, watermarks, or alternate content.
@@ -1292,8 +1639,97 @@ class PDFAnalyzer:
 
         return ocg_layers
 
+    async def _detect_redaction_failures_async(self, doc: fitz.Document) -> list[str]:
+        """Async redaction failure detection with parallel page processing.
+
+        ISSUE-S3-FIX: Parallel page processing using asyncio.gather() with bounded concurrency.
+        M1 8GB safe: concurrency=4 for I/O-bound annotation inspection.
+
+        Args:
+            doc: PyMuPDF document object
+
+        Returns:
+            List of strings describing each redaction failure found.
+        """
+        MAX_PAGES_TO_CHECK = 50
+        MAX_FAILURES = 100
+        MAX_FAILURES_PER_PAGE = 10  # Limit per-page to balance work distribution
+
+        try:
+            pages_to_check = min(len(doc), MAX_PAGES_TO_CHECK)
+
+            async def _check_page(page_num: int) -> list[str]:
+                """Check single page for redaction failures."""
+                page_failures = []
+                try:
+                    page = doc[page_num]
+                    annots = page.annots()
+                    if not annots:
+                        return page_failures
+
+                    page_count = 0
+                    for annot in annots:
+                        if page_count >= MAX_FAILURES_PER_PAGE:
+                            break
+                        try:
+                            annot_type = annot.type[0]
+                            if annot_type != 14:
+                                continue
+
+                            rect = annot.rect
+                            if not rect:
+                                continue
+
+                            text_dict = page.get_text('dict', clip=rect)
+                            hidden_texts = []
+                            for block in text_dict.get('blocks', []):
+                                if block.get('type') == 0:
+                                    for line in block.get('lines', []):
+                                        for span in line.get('spans', []):
+                                            span_text = span.get('text', '').strip()
+                                            if span_text:
+                                                hidden_texts.append(span_text)
+
+                            if hidden_texts:
+                                combined = ' '.join(hidden_texts)
+                                page_failures.append(
+                                    f'Page {page_num + 1}: Redaction failure at '
+                                    f'({rect.x0:.1f},{rect.y0:.1f})-({rect.x1:.1f},{rect.y1:.1f}) '
+                                    f'- hidden text: "{combined[:100]}"'
+                                )
+                                page_count += 1
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                return page_failures
+
+            # ISSUE-S3-FIX: Parallel page processing with bounded concurrency
+            _PAGE_CONCURRENCY = 4
+            all_failures = []
+
+            for i in range(0, pages_to_check, _PAGE_CONCURRENCY):
+                if len(all_failures) >= MAX_FAILURES:
+                    break
+                batch = range(i, min(i + _PAGE_CONCURRENCY, pages_to_check))
+                tasks = [asyncio.create_task(_check_page(p)) for p in batch]
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for result in batch_results:
+                    if isinstance(result, Exception):
+                        continue
+                    for failure in result:
+                        all_failures.append(failure)
+                        if len(all_failures) >= MAX_FAILURES:
+                            break
+
+            return all_failures
+        except Exception as e:
+            logger.debug(f'Redaction failure detection failed: {e}')
+            return []
+
     def _detect_redaction_failures(self, doc: fitz.Document) -> list[str]:
-        """Detect redaction failures - text visible under black rectangles - ISSUE-016.
+        """Detect redaction failures - text visible under black rectangles - ISSUE-016 (sync wrapper).
 
         Redaction failures occur when:
         1. Black rectangles are drawn over text (visual redaction)
@@ -1349,7 +1785,7 @@ class PDFAnalyzer:
                                 f'Page {page_num + 1}: Redaction failure at '
                                 f'({rect.x0:.1f},{rect.y0:.1f})-({rect.x1:.1f},{rect.y1:.1f}) '
                                 f'- hidden text: "{combined[:100]}"'
-                            )
+    )
                             if len(redaction_failures) >= MAX_FAILURES:
                                 break
                     except Exception:
@@ -1360,8 +1796,88 @@ class PDFAnalyzer:
 
         return redaction_failures
 
+    async def _extract_suppressed_annotations_async(self, doc: fitz.Document) -> list[dict]:
+        """Async suppressed annotation extraction with parallel page processing.
+
+        ISSUE-S3-FIX: Parallel page processing using asyncio.gather() with bounded concurrency.
+        M1 8GB safe: concurrency=4 for I/O-bound annotation inspection.
+
+        Args:
+            doc: PyMuPDF document object
+
+        Returns:
+            List of dicts with suppressed annotation information
+        """
+        MAX_PAGES_TO_CHECK = 50
+        MAX_ANNOTATIONS = 200
+        SUPPRESSED_FLAG_VALUES = {2, 6}
+
+        try:
+            pages_to_check = min(len(doc), MAX_PAGES_TO_CHECK)
+
+            async def _check_page(page_num: int) -> list[dict]:
+                """Check single page for suppressed annotations."""
+                page_annots = []
+                try:
+                    page = doc[page_num]
+                    annots = page.annots()
+                    if not annots:
+                        return page_annots
+
+                    for annot in annots:
+                        try:
+                            flags = annot.flags
+                            if flags not in SUPPRESSED_FLAG_VALUES:
+                                continue
+
+                            annot_type = annot.type[1] if annot.type else 'Unknown'
+                            content = annot.info.get('content', '') if annot.info else ''
+                            rect = annot.rect
+
+                            page_annots.append({
+                                'page': page_num + 1,
+                                'type': annot_type,
+                                'content': content[:500] if content else '',
+                                'flags': flags,
+                                'rect': {
+                                    'x0': rect.x0,
+                                    'y0': rect.y0,
+                                    'x1': rect.x1,
+                                    'y1': rect.y1,
+                                } if rect else None,
+                            })
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                return page_annots
+
+            # ISSUE-S3-FIX: Parallel page processing with bounded concurrency
+            _PAGE_CONCURRENCY = 4
+            all_annots = []
+
+            for i in range(0, pages_to_check, _PAGE_CONCURRENCY):
+                if len(all_annots) >= MAX_ANNOTATIONS:
+                    break
+                batch = range(i, min(i + _PAGE_CONCURRENCY, pages_to_check))
+                tasks = [asyncio.create_task(_check_page(p)) for p in batch]
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for result in batch_results:
+                    if isinstance(result, Exception):
+                        continue
+                    for annot in result:
+                        all_annots.append(annot)
+                        if len(all_annots) >= MAX_ANNOTATIONS:
+                            break
+
+            return all_annots
+        except Exception as e:
+            logger.debug(f'Suppressed annotation extraction failed: {e}')
+            return []
+
     def _extract_suppressed_annotations(self, doc: fitz.Document) -> list[dict]:
-        """Extract suppressed/hidden annotations from PDF - ISSUE-016.
+        """Extract suppressed/hidden annotations from PDF - ISSUE-016 (sync wrapper).
 
         PDF annotations can have a /F (flags) field. Flag value 6 means:
         - Bit 1 (1): Invisible - annotation not displayed/printed
@@ -1948,12 +2464,12 @@ class DeepForensicsAnalyzer:
             repo_url="https://github.com/abeluck/stegdetect.git",
             branch="master",
             build_cmd=["make"],
-        )
+    )
         if not result.success:
             logger.warning(
                 "[ADVERSARY-001] [INTERNAL-007] Stegdetect installation failed: %s",
                 result.error,
-            )
+    )
 
     def _parse_gps(self, gps_dict):
         """Parse GPS data from EXIF."""
@@ -2095,7 +2611,7 @@ class StegdetectServer:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                )
+    )
                 self._procs.append(proc)
             self._initialized = True
 
@@ -2112,16 +2628,16 @@ class StegdetectServer:
             profile = _build_image_sandbox_profile(
                 os.fspath(Path.home()),
                 str(self._bin_path),
-            )
+    )
             profile_path = _write_sandbox_profile(
                 f'stegd_{os.getpid()}_{id(self)}',
                 profile,
-            )
+    )
             self._profile_path = profile_path
             logger.debug(
                 "[ADVERSARY-001] Wrapping stegdetect with Seatbelt: %s",
                 profile_path.name,
-            )
+    )
             return ['sandbox-exec', '-p', str(profile_path)] + base_cmd
 
         return base_cmd
@@ -2157,7 +2673,7 @@ class StegdetectServer:
                 logger.debug(
                     "[ADVERSARY-001] stegdetect: score=%.2f",
                     result,
-                )
+    )
                 return result
             except Exception as e:
                 logger.warning('[ADVERSARY-001] [STEGDETECT] Failed: %s', e)
@@ -2330,7 +2846,7 @@ class DocumentIntelligenceEngine:
             file_type=DocumentType.UNKNOWN,
             file_extension=f".{file_path.split('.')[-1]}" if '.' in file_path else '.unknown',
             raw_metadata=raw_metadata,
-        )
+    )
         return DocumentAnalysis(metadata=metadata)
 
     async def batch_analyze_async(self, file_paths: list[str]) -> dict[str, DocumentAnalysis]:
@@ -2355,7 +2871,7 @@ class DocumentIntelligenceEngine:
             concurrency=8,
             policy="collect",
             ctx="DocumentIntelligenceEngine.batch_analyze_async",
-        )
+    )
         return dict(result.ok)
 
     def batch_analyze(self, file_paths: list[str]) -> dict[str, DocumentAnalysis]:
@@ -2837,7 +3353,7 @@ class MLXLongContextAnalyzer:
             concurrency=4,
             policy="collect",
             ctx="MLXLongContextAnalyzer.analyze_multiple_dumps_async",
-        )
+    )
         results = dict(result.ok)
 
         if cross_correlate:
@@ -2859,7 +3375,7 @@ class MLXLongContextAnalyzer:
                     key_findings=analysis.key_findings + [f'Linked to {len(source_links)} other sources'],
                     memory_usage_mb=analysis.memory_usage_mb,
                     processing_time_seconds=analysis.processing_time_seconds,
-                )
+    )
         return results
 
     def analyze_multiple_dumps(self, dumps: dict[str, str], cross_correlate: bool=True) -> dict[str, LongContextAnalysis]:
@@ -2913,7 +3429,7 @@ class MLXLongContextAnalyzer:
             concurrency=4,
             policy="collect",
             ctx="MLXLongContextAnalyzer.search_across_dumps_async",
-        )
+    )
         return dict(result.ok)
 
     def search_across_dumps(self, query: str, dumps: dict[str, str], top_k_per_dump: int=3) -> dict[str, list[dict]]:

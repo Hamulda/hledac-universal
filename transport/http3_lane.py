@@ -508,7 +508,7 @@ async def _speculative_altsvc_probe_inner(url: str) -> None:
             impersonate="chrome124",
             timeout=_HEAD_PROBE_TIMEOUT_S,
             max_clients=2,
-        )
+    )
         try:
             async with asyncio.timeout(_HEAD_PROBE_TIMEOUT_S + 1.0):
                 resp = await sess.head(url, timeout=_HEAD_PROBE_TIMEOUT_S)
@@ -583,7 +583,7 @@ def probe_altsvc_speculative(url: str) -> None:
         task = safe_create_task(
             _guarded_probe(url),
             name=f"http3_lane:speculative_probe:{host}",
-        )
+    )
         _probe_tasks.add(task)
         task.add_done_callback(_probe_tasks.discard)
     except Exception as e:  # noqa: BLE001
@@ -1046,7 +1046,7 @@ class QuinnRustlsTransportAdapter:
                 body=None,
                 headers=[(k, v) for k, v in (headers or {}).items()] if headers else None,
                 timeout_s=timeout_s,
-            )
+    )
 
             if response.error:
                 logger.debug("http3_lane: quinn: rust error: %s", response.error)
@@ -1091,7 +1091,7 @@ def _rust_quic_fetch_sync(url: str, headers: dict[str, str] | None, timeout_s: f
             body=None,
             headers=[(k, v) for k, v in (headers or {}).items()] if headers else None,
             timeout_s=timeout_s,
-        )
+    )
 
         if response.error:
             logger.debug("http3_lane: quinn: rust error: %s", response.error)

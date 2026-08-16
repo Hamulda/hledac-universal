@@ -10,7 +10,6 @@ WORKDIR RULE: Work only inside repo root.
 NO-GIT RULE: Do not run git commands.
 """
 import ast
-from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from _core import aclose
@@ -22,12 +21,12 @@ class SectionIndex(msgspec.Struct, gc=False):
     symbols: list[str]
     suggested_target_module: str
     extraction_risk: str
-    notes: list[str] = field(default_factory=list)
+    notes: list[str] = msgspec.field(default_factory=list)
 
 class ResponsibilityIndex(msgspec.Struct, frozen=True, gc=False):
     source_file: str = 'benchmarks/live_sprint_measurement.py'
     total_lines: int = 3757
-    sections: list[SectionIndex] = field(default_factory=list)
+    sections: list[SectionIndex] = msgspec.field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {'source_file': self.source_file, 'total_lines': self.total_lines, 'sections': [{'name': s.name, 'line_count_estimate': s.line_count_estimate, 'line_range': s.line_range, 'symbols': s.symbols, 'suggested_target_module': s.suggested_target_module, 'extraction_risk': s.extraction_risk, 'notes': s.notes} for s in self.sections]}

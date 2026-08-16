@@ -124,7 +124,7 @@ class DiscoveryStage:
                     try:
                         bootstrap_hits = generate_bootstrap_urls(
                             ctx.query, max_urls=self._max_results
-                        )
+    )
                         hits.extend(bootstrap_hits)
                     except Exception:  # noqa: BLE001
                         pass

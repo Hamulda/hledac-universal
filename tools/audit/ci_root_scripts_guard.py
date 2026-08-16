@@ -32,7 +32,7 @@ FORBIDDEN_PATTERNS = (
     "_debug_",     # debug scripts
     "_floor_check", # debug scripts
     "_aclose",      # debug aclose scripts
-)
+    )
 
 ALLOWED_DIRS = {
     "tests/manual",   # debug test scripts go here

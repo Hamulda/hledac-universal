@@ -387,7 +387,7 @@ class HermesModelMonitor:
                 "loop= argument is deprecated; the event loop is resolved automatically",
                 DeprecationWarning,
                 stacklevel=2,
-            )
+    )
         if self._monitor_task is not None and not self._monitor_task.done():
             return
         self._monitor_task = safe_create_task(self.pressure_check_loop(), name="hermes_cache:monitor")
@@ -437,7 +437,7 @@ class HermesModelCache:
             lora_max_size=lora_max_size,
             on_evict_model=on_evict_model,
             on_evict_lora=on_evict_lora,
-        )
+    )
         self._monitor = HermesModelMonitor(self._loader)
 
     # Delegate storage operations to loader
@@ -553,5 +553,5 @@ def hermes_cache() -> HermesModelCache:
         _HERMES_CACHE = HermesModelCache(
             on_evict_model=_hermes_cache_evict_model_otel,
             on_evict_lora=_hermes_cache_evict_lora_otel,
-        )
+    )
     return _HERMES_CACHE

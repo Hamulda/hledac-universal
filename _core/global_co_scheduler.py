@@ -315,7 +315,7 @@ class GlobalPeakCoScheduler:
                 get_peak_coordinator,
                 ResourceClass,
                 TaskPriority,
-            )
+    )
             self._coordinator = get_peak_coordinator()
             self._ResourceClass = ResourceClass
             self._TaskPriority = TaskPriority
@@ -349,7 +349,7 @@ class GlobalPeakCoScheduler:
         logger.info(
             f"[CoScheduler] Started (sprint_deadline={sprint_deadline_s}s, "
             f"subsystems={len(self._profiles)})"
-        )
+    )
 
     async def shutdown(self) -> None:
         """Shutdown the co-scheduler.
@@ -367,7 +367,7 @@ class GlobalPeakCoScheduler:
             f"[CoScheduler] Shutdown complete "
             f"(admissions={self._telemetry.total_admissions}, "
             f"rejections={self._telemetry.total_rejections})"
-        )
+    )
 
     # -- Core admission protocol -----------------------------------------------
 
@@ -414,7 +414,7 @@ class GlobalPeakCoScheduler:
                 estimated_mb=estimated_mb or 500.0,
                 default_priority=priority or "normal",
                 timeout_s=timeout_s or 10.0,
-            )
+    )
 
         est_mb = estimated_mb if estimated_mb is not None else profile.estimated_mb
         prio = priority if priority is not None else profile.default_priority
@@ -448,7 +448,7 @@ class GlobalPeakCoScheduler:
                 from hledac.universal._core.peak_load_coordinator import (
                     ResourceClass,
                     TaskPriority,
-                )
+    )
                 resource_class_name = _SUBSYSTEM_TO_RESOURCE.get(subsystem, "network_fetch")
                 resource_class = ResourceClass(resource_class_name)
 
@@ -468,7 +468,7 @@ class GlobalPeakCoScheduler:
                         priority=task_priority,
                         owner=f"{subsystem.value}:{owner_str}",
                         timeout_s=timeout,
-                    )
+    )
                 except TimeoutError:
                     self._telemetry.total_timeouts += 1
                     self._telemetry.total_rejections += 1
@@ -490,7 +490,7 @@ class GlobalPeakCoScheduler:
                     wait_time_s=wait_time,
                     peak_utilization=coordinator.snapshot().utilization_fraction,
                     mutex_held=None,  # Filled by coordinator internally
-                )
+    )
 
                 yield ctx
 
@@ -508,7 +508,7 @@ class GlobalPeakCoScheduler:
                 wait_time_s=0.0,
                 peak_utilization=0.0,
                 mutex_held=None,
-            )
+    )
         finally:
             if peak_guard is not None:
                 try:

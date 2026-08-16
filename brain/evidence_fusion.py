@@ -89,7 +89,7 @@ class DempsterShafer:
             source_weight=source_weight,
             source_id=source_id,
             timestamp=time.time(),
-        )
+    )
         self._evidence_log.append(record)
 
         # Update source index
@@ -273,7 +273,7 @@ class DempsterShafer:
                 source_weight=ev_data['source_weight'],
                 source_id=ev_data['source_id'],
                 timestamp=ev_data['timestamp'],
-            )
+    )
             ds._evidence_log.append(record)
             if record.source_id not in ds._source_index:
                 ds._source_index[record.source_id] = []

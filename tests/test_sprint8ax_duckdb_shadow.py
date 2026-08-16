@@ -77,7 +77,7 @@ class TestSprint8AXFlagOff:
             'print(f"enabled={enabled}")\n'
             'print(f"failures_before={failures_before}")\n'
             'print(f"failures_after={failures_after}")\n'
-        )
+    )
         stdout, _, _ = _run_in_subprocess(code)
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("enabled=False" in l for l in lines), f"Flag should be False: {lines}"  # noqa: E741
@@ -144,7 +144,7 @@ class TestSprint8AXFlagOn:
             'for row in rows:\n'
             '    print(f"  row={row}")\n'
             'conn.close()\n'
-        )
+    )
         stdout, stderr, _rc = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l and not l.startswith("Warning")]  # noqa: E741
         failures_lines = [l for l in lines if "failures=" in l]  # noqa: E741
@@ -206,7 +206,7 @@ class TestSprint8AXProductionPath:
             'print(f"db_path={store._db_path}")\n'
             'has_mem_mode = hasattr(store, "_using_memory_mode")\n'
             'print(f"has_memory_mode={has_mem_mode}")\n'
-        )
+    )
         stdout, _, _ = _run_in_subprocess(code)
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("db_root=" in l for l in lines), f"DB_ROOT should resolve: {lines}"  # noqa: E741
@@ -266,7 +266,7 @@ class TestSprint8AXMemoryMode:
             'assert inserted2 == 10, f"Expected 10, got {inserted2}"\n'
             'assert total == 20, f"Expected 20 rows, got {total}"\n'
             'conn.close()\n'
-        )
+    )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("inserted1=10" in l for l in lines), f"Expected 10 inserts: {lines}"  # noqa: E741
@@ -313,7 +313,7 @@ class TestSprint8AXMemoryMode:
             'assert len(set(thread_names)) == 1, f"Expected 1 unique thread, got: {set(thread_names)}"\n'
             'assert "duckdb_worker" in thread_names[0], f"Expected duckdb_worker, got: {thread_names[0]}"\n'
             'conn.close()\n'
-        )
+    )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("thread_names=" in l for l in lines), f"Thread names missing: {lines}"  # noqa: E741
@@ -358,7 +358,7 @@ class TestSprint8AXBatchChunking:
             '_loop.close()\n'
             'print(f"inserted={inserted}")\n'
             'conn.close()\n'
-        )
+    )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("inserted=1001" in l for l in lines), f"Expected 1001: {lines}"  # noqa: E741
@@ -393,7 +393,7 @@ class TestSprint8AXQueueFull:
             'print(f"failures={failures}")\n'
             'print(f"queue_size={rec._queue.qsize()}")\n'
             'assert failures >= 2, f"Expected >=2 failures, got {failures}"\n'
-        )
+    )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("failures=" in l for l in lines), f"Failure count missing: {lines}"  # noqa: E741
@@ -426,7 +426,7 @@ class TestSprint8AXFailOpen:
             'failures = shadow_ingest_failures()\n'
             'print(f"failures_after_bad_calls={failures}")\n'
             'print(f"raised={raised}")\n'
-        )
+    )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert not any("RAISED=" in l and "RAISED=" + "True" not in l for l in lines), "shadow_record_finding should not raise"  # noqa: E741
@@ -463,7 +463,7 @@ class TestSprint8AXAclclose:
             '_loop = asyncio.new_event_loop()\n'
             '_loop.run_until_complete(run_test())\n'
             '_loop.close()\n'
-        )
+    )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = stdout.strip().splitlines()
         elapsed_lines = [l for l in lines if "elapsed=" in l]
@@ -507,7 +507,7 @@ class TestSprint8AXRegression:
             '    assert ev2.payload_dict.get("url") == "https://example.com"\n'
             '    assert len(log._log) == 2, f"Expected 2 events, got {len(log._log)}"\n'
             '    print("all_ok=True")\n'
-        )
+    )
         stdout, _, _ = _run_in_subprocess(code)
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("all_ok=True" in l for l in lines), f"EvidenceLog append should still work: {lines}"  # noqa: E741

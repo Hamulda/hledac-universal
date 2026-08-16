@@ -17,7 +17,6 @@ M1 8GB safe: ~0 bytes extra RAM, async by design.
 
 import asyncio
 import logging
-from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING
 
@@ -54,7 +53,7 @@ class SystemMemory(msgspec.Struct, frozen=True, gc=False):
             available_gib=available / (1024**3),
             used_gib=used / (1024**3),
             percent=getattr(vm, "percent", 0.0),
-        )
+    )
 
 
 class SwapMemory(msgspec.Struct, frozen=True, gc=False):
@@ -71,7 +70,7 @@ class SwapMemory(msgspec.Struct, frozen=True, gc=False):
             total_gib=getattr(sm, "total", 0) / (1024**3),
             used_gib=getattr(sm, "used", 0) / (1024**3),
             percent=getattr(sm, "percent", 0.0),
-        )
+    )
 
 
 # ---------------------------------------------------------------------------

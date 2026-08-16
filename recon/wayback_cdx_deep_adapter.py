@@ -75,13 +75,13 @@ class WaybackCDXDeepAdapter:
                     match_type="domain",
                     limit_per_domain=100,
                     concurrency=3,
-                )
+    )
                 findings_count = len(getattr(cdx_results, "findings", []) or [])
                 logger.debug(
                     "[WaybackCDXDeep] %d domains → %d archived results",
                     len(domains_to_query),
                     findings_count,
-                )
+    )
             finally:
                 await adapter.close()
         except Exception:  # noqa: BLE001

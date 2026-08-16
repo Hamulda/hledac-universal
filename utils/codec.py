@@ -443,7 +443,7 @@ def decode_zstd(data: bytes | memoryview | bytearray) -> Any:
     if len(raw) != raw_len:
         raise ValueError(
             f"decode_zstd: length mismatch (prefix={raw_len}, actual={len(raw)})"
-        )
+    )
     return decode(raw)
 
 

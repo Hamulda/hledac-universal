@@ -93,7 +93,7 @@ class PromptTemplate:
             template=self.template,
             max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
             temperature=temperature if temperature is not None else self.temperature,
-        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +164,7 @@ class ChatMLPromptFormatter:
     def __init__(self) -> None:
         self._re_pi = re.compile(
             r'<think>(.*?)</think>', re.DOTALL | re.MULTILINE
-        )
+    )
 
     def format_chatml(
         self,
@@ -290,7 +290,7 @@ OSINT_SYSTEM_PROMPT = PromptTemplate(
     ),
     max_tokens=2048,
     temperature=0.3,
-)
+    )
 
 EVIDENCE_SYNTHESIS_PROMPT = PromptTemplate(
     role=PromptRole.EVIDENCE,
@@ -307,7 +307,7 @@ EVIDENCE_SYNTHESIS_PROMPT = PromptTemplate(
     ),
     max_tokens=1024,
     temperature=0.4,
-)
+    )
 
 ANALYSIS_PROMPT = PromptTemplate(
     role=PromptRole.ANALYSIS,
@@ -324,4 +324,4 @@ ANALYSIS_PROMPT = PromptTemplate(
     ),
     max_tokens=1536,
     temperature=0.3,
-)
+    )

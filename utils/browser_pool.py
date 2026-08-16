@@ -90,7 +90,7 @@ def _check_memory_pressure() -> None:
     if rss > threshold > 0:
         raise MemoryPressureError(
             f"BrowserPool acquire blocked: RSS={rss:.2f} GiB > threshold={threshold:.2f} GiB"
-        )
+    )
 
 
 class MemoryPressureError(Exception):
@@ -339,7 +339,7 @@ async def _get_pool(tor_proxy: str | None = None) -> BrowserPool:
             max_idle=_DEFAULT_MAX_IDLE,
             max_active=_DEFAULT_MAX_ACTIVE,
             browser_args=browser_args,
-        )
+    )
         _POOLS[key] = pool
         return pool
 

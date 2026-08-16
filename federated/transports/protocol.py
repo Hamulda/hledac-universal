@@ -162,7 +162,7 @@ class NodeTransportFactory:
             if not hasattr(klass, "run"):
                 raise TypeError(
                     f"NodeTransport {klass.__name__} missing required method 'run'"
-                )
+    )
             cls._REGISTRY[name] = klass
             logger.debug("[FED-TRANS] registered transport name=%s class=%s", name, klass.__name__)
             return klass
@@ -190,7 +190,7 @@ class NodeTransportFactory:
             logger.debug(
                 "[FED-TRANS] unknown transport name=%r, falling back to default %r",
                 target, cls._DEFAULT,
-            )
+    )
             klass = cls._REGISTRY.get(cls._DEFAULT)
         if klass is None:
             # Defensive: if even the default is missing, return a
@@ -202,7 +202,7 @@ class NodeTransportFactory:
             logger.warning(
                 "[FED-TRANS] transport name=%r failed to construct: %s: %s — using stub",
                 target, type(e).__name__, e,
-            )
+    )
             return _EmergencyLocalTransport()
 
     @classmethod

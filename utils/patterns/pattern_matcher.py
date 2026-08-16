@@ -356,7 +356,7 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("pgp required", "dark_market"),
     ("jabber xmpp", "dark_market"),
     ("hidden service marketplace", "dark_market"),
-)
+    )
 
 _BOOTSTRAP_PATTERNS = _BOOTSTRAP_PATTERNS_V3
 _BOOTSTRAP_PACK_VERSION = 3
@@ -604,13 +604,13 @@ _RE_CVE = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
 _RE_GHSA = re.compile(r"GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}", re.IGNORECASE)
 _RE_SHA256 = re.compile(
     r"\b[a-f0-9]{64}\b", re.IGNORECASE
-)
+    )
 _RE_MD5 = re.compile(
     r"\b[a-f0-9]{32}\b", re.IGNORECASE
-)
+    )
 _RE_SHA1 = re.compile(
     r"\b[a-f0-9]{40}\b", re.IGNORECASE
-)
+    )
 
 # Sprint 8QB V4 — precision regex patterns (compiled once at module level)
 # BTC legacy: case-insensitive (addresses may be mixed case)
@@ -627,7 +627,7 @@ _RE_TELEGRAM = re.compile(r"\bt\.me/[\w\-]{3,}\b")
 # MISP UUID: 8-4-4-4-12 hex format
 _RE_MISP_UUID = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
-)
+    )
 # Onion v3: exactly 56 base32 chars before .onion (stricter than older patterns)
 _RE_ONION_V3 = re.compile(r"\b[a-z2-7]{56}\.onion\b", re.IGNORECASE)
 
@@ -651,7 +651,7 @@ _RE_LTC_ADDR = re.compile(r"\bL[1-9A-HJ-NP-Za-km-z]{33}\b", re.IGNORECASE)
 _RE_DOGE_ADDR = re.compile(
     r"\bD[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{33}\b",
     re.IGNORECASE
-)
+    )
 # Ethereum contract address: 0x prefix + 40 hex, commonly a contract (not just EOA)
 # Uses _RE_ETH_ADDR — same regex, different label distinguishes contract vs EOA
 # Note: removing duplicate regex saves memory; callers use _RE_ETH_ADDR with "eth_contract" label
@@ -764,7 +764,7 @@ def extract_high_precision_entities(text: str) -> list[ExtractedEntity]:
         matched = next(
             ((entity_type, min_len, m.group(g)) for g, (entity_type, min_len) in _MASTER_MAP.items() if m.group(g)),
             None,
-        )
+    )
         if matched is None:
             continue
         entity_type, min_len, _ = matched
@@ -818,7 +818,7 @@ def extract_structured_entities(text: str) -> list[dict]:
         logger.debug(
             f"[PATTERN_MATCHER] zero pattern matches for text sample: {sample!r} "
             f"(len={len(text)})"
-        )
+    )
         return []
 
     seen: set[tuple[str, str]] = set()
@@ -847,7 +847,7 @@ _SEED_REGISTRY: tuple[tuple[str, str], ...] = (
     ("1BTC", "crypto_address"),
     (".onion", "domain"),
     ("+420", "phone"),
-)
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -1079,7 +1079,7 @@ def _configure_patterns_impl(registry: tuple[tuple[str, str], ...]) -> None:
                 "Using regex alternation fallback (O(n) single-pass). "
                 "Consider removing substring patterns to enable Rust ACO.",
                 len(registry),
-            )
+    )
 
 
 # ── Pattern scan helpers ─────────────────────────────────────────────────────────

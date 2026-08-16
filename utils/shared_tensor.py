@@ -10,7 +10,7 @@ _warnings.warn(
     "import from hledac.universal.utils.mlx_memory instead (F330-MLX-DUP-007)",
     DeprecationWarning,
     stacklevel=2,
-)
+    )
 
 from hledac.universal.utils.mlx_memory._tensor import SharedTensor
 from _core import aclose

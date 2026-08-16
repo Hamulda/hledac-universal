@@ -20,18 +20,13 @@ import msgspec
 import pytest
 
 from hledac.universal.rl.actions import ACTION_CONTINUE, ACTION_DEEP_DIVE
-
-
-
-
-
+from hledac.universal.rl.sprint_policy_manager import (
     SprintPolicyManager,
     SprintPolicyState,
 )
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
-from _core import aclose
 @pytest.fixture
 def tmp_policy_path(tmp_path: Path) -> Path:
     """Temporary policy state file."""

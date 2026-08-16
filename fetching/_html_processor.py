@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import logging
 import re
 import urllib.parse
 from collections import deque as _f273c_deque
@@ -16,6 +17,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 from hledac.universal._core.rust_backend import rust as _rust_backend
 from hledac.universal.tools.regex_cache import collapse_whitespace, strip_html_tags
@@ -39,7 +42,7 @@ _JS_SKIP_HOST_RE = re.compile(
     r'therecord\.media|securityweek\.com|inforisktoday\.com|'
     r'helpnetsecurity\.com|malwarebazaar\.abuse\.ch|sslbl\.abuse\.ch)$',
     re.IGNORECASE
-)
+    )
 
 # SERP hosts pattern
 _SERP_HOST_RE = re.compile(
@@ -47,7 +50,7 @@ _SERP_HOST_RE = re.compile(
     r'startpage\.|search\.|serp)|searchresults|webcache|googlesyndication|'
     r'googletagmanager|doubleclick|search\?q=|/search\?|\?q=|\&oq=|\&gs_l=',
     re.IGNORECASE
-)
+    )
 
 # Content length pattern
 _CONTENT_LENGTH_RE = re.compile(r'content-length\s*[=:]\s*(\d+)', re.IGNORECASE)
@@ -278,7 +281,7 @@ def batch_sync_process_html(items: list[tuple[str, str]]) -> list[tuple[str, lis
         texts: list[str] = _rust_backend.html.batch_extract_html_text(htmls)
         links_batch: list[list[str]] = _rust_backend.html.batch_extract_links(
             list(zip(htmls, base_urls, strict=True))
-        )
+    )
         titles_batch: list[str | None] = _rust_backend.html.batch_extract_titles(htmls)
         emails_batch: list[list[str]] = _rust_backend.html.batch_extract_emails(htmls)
         return [
@@ -289,10 +292,11 @@ def batch_sync_process_html(items: list[tuple[str, str]]) -> list[tuple[str, lis
                     'title': titles_batch[i] if i < len(titles_batch) and titles_batch[i] is not None else '',
                     'emails': emails_batch[i] if i < len(emails_batch) else [],
                 },
-            )
+    )
             for i in range(len(items))
         ]
     except Exception:  # noqa: BLE001 — best-effort
+        logger.debug("Rust HTML processing failed, falling back to Python", exc_info=True)
         return [sync_process_html(html, url) for html, url in items]
 
 

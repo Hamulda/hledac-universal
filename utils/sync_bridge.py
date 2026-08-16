@@ -177,11 +177,11 @@ def _get_rayon_breaker():
             from hledac.universal._core.circuit_breaker_service import (
                 circuit_breaker_registry,
                 DEFAULT_MLX_CONFIG,
-            )
+    )
             _rayon_breaker = circuit_breaker_registry.get_breaker(
                 "rayon_pool",
                 config=DEFAULT_MLX_CONFIG,  # Use MLX config (similar failure profile)
-            )
+    )
         except Exception:
             return None
     return _rayon_breaker

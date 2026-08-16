@@ -72,14 +72,14 @@ class TestMoELoadAsync(unittest.IsolatedAsyncioTestCase):
                 self.fail(
                     f"Sleeper task was blocked! Took {elapsed:.3f}s instead of ~0.01s. "
                     "Event loop was frozen during MLX operation."
-                )
+    )
 
         # Spusť obě tasky souběžně
         async with asyncio.timeout(3.0):
             await asyncio.gather(
                 worker_task(),
                 sleeper_task(),
-            )
+    )
 
         # Ověření: sleeper běžel nezávisle
         self.assertIn("sleeper_elapsed", results)
@@ -143,7 +143,7 @@ class TestMoELoadAsync(unittest.IsolatedAsyncioTestCase):
         result = await asyncio.wait_for(
             run_in_mlx_worker(dummy_sync_op, 10, 20),
             timeout=2.0
-        )
+    )
         self.assertEqual(result, 30)
         print("[M-04 API] run_in_mlx_worker() funguje správně")
 

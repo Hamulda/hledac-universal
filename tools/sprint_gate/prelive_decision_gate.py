@@ -502,7 +502,7 @@ class _GateAccumulator:
             missing_required=self.missing_required,
             missing_optional=self.missing_optional,
             checked=self.checked,
-        )
+    )
 
     def add_warning(self, warning: str) -> '_GateAccumulator':
         return _GateAccumulator(
@@ -511,7 +511,7 @@ class _GateAccumulator:
             missing_required=self.missing_required,
             missing_optional=self.missing_optional,
             checked=self.checked,
-        )
+    )
 
     def add_required(self, probe: str) -> '_GateAccumulator':
         return _GateAccumulator(
@@ -520,7 +520,7 @@ class _GateAccumulator:
             missing_required=[*self.missing_required, probe],
             missing_optional=self.missing_optional,
             checked=self.checked,
-        )
+    )
 
     def add_optional(self, probe: str) -> '_GateAccumulator':
         return _GateAccumulator(
@@ -529,7 +529,7 @@ class _GateAccumulator:
             missing_required=self.missing_required,
             missing_optional=[*self.missing_optional, probe],
             checked=self.checked,
-        )
+    )
 
     def update_checked(self, updates: dict) -> '_GateAccumulator':
         new_checked = {**self.checked, **updates}
@@ -539,7 +539,7 @@ class _GateAccumulator:
             missing_required=self.missing_required,
             missing_optional=self.missing_optional,
             checked=new_checked,
-        )
+    )
 
     def extend_warnings(self, more: list[str]) -> '_GateAccumulator':
         return _GateAccumulator(
@@ -548,7 +548,7 @@ class _GateAccumulator:
             missing_required=self.missing_required,
             missing_optional=self.missing_optional,
             checked=self.checked,
-        )
+    )
 
 
 def _collect_required_probes(repo_root: Path, acc: _GateAccumulator) -> tuple[_GateAccumulator, _ContractProbeState]:
@@ -762,14 +762,14 @@ def _derive_decision(
             Decision.BLOCKED_BY_MEMORY, False,
             [f'BLOCKED_BY_MEMORY: uma_state={memory.uma_state} (override)'],
             warnings
-        )
+    )
 
     if memory.swap_policy_tier == 'hard_block':
         return (
             Decision.BLOCKED_BY_MEMORY, False,
             [f'BLOCKED_BY_MEMORY: {memory.swap_gate_reason}'],
             warnings
-        )
+    )
 
     # Decision dispatch based on block classification
     if blocks['f224_blocks'] or blocks['f231_blocks']:

@@ -12,11 +12,7 @@ import asyncio
 import pytest
 from typing import Any
 
-
-
-
-
-
+from runtime.pivot_executor import (
     AutonomousPivotExecutor,
     PivotExecutionResult,
     PivotExecutionRequest,
@@ -30,8 +26,7 @@ from typing import Any
 class FakePivot:
     """Fake pivot object for testing."""
 
-
-from _core import aclose    def __init__(
+    def __init__(
         self,
         pivot_id: str = "p1",
         pivot_type: str = "domain",

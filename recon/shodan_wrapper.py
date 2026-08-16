@@ -213,7 +213,7 @@ async def search_shodan_to_findings(
             ts=ts_now,
             provenance=("shodan_search", query, ip, str(port)),
             payload_text=f"{ip}:{port} {banner[:200]}{'...' if len(banner) > 200 else ''} hostname={hostname_str}",
-        )
+    )
         findings.append(finding)
 
     return findings, raw_results

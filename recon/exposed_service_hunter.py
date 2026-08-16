@@ -260,7 +260,7 @@ class S3BucketEnumerator:
                                     'url': url,
                                     'is_minio': endpoint is not None,
                                 }
-                            )
+    )
                         elif resp.status == 403:
                             # Denied - bucket exists but no access
                             return ExposedService(
@@ -277,7 +277,7 @@ class S3BucketEnumerator:
                                     'url': url,
                                     'is_minio': endpoint is not None,
                                 }
-                            )
+    )
                         elif resp.status == 404:
                             continue
                 except TimeoutError:
@@ -421,7 +421,7 @@ class GCSBucketEnumerator:
                                 'url': url,
                                 'provider': 'gcs'
                             }
-                        )
+    )
                     elif status == 403:
                         # Bucket exists but not publicly accessible
                         return ExposedService(
@@ -437,7 +437,7 @@ class GCSBucketEnumerator:
                                 'url': url,
                                 'provider': 'gcs'
                             }
-                        )
+    )
                     elif status == 404:
                         # Bucket doesn't exist, try next URL pattern
                         continue
@@ -560,7 +560,7 @@ class AzureBlobEnumerator:
             logger=logger,
             log_success='Found Azure container: {0}/{1}',
             semaphore=asyncio.Semaphore(max_concurrent),
-        )
+    )
 
     async def _check_container_exists(self, account_name: str, container_name: str) -> ExposedService | None:
         """Check if an Azure Blob container exists and is accessible."""
@@ -593,7 +593,7 @@ class AzureBlobEnumerator:
                             'url': url,
                             'provider': 'azure'
                         }
-                    )
+    )
                 elif status == 403:
                     return ExposedService(
                         service_type=ServiceType.AZURE_CONTAINER.value,
@@ -609,7 +609,7 @@ class AzureBlobEnumerator:
                             'url': url,
                             'provider': 'azure'
                         }
-                    )
+    )
         except TimeoutError:  # noqa: BLE001
             pass
         except Exception as e:
@@ -705,7 +705,7 @@ class RsyncScanner:
             reader, writer = await safe_wait_for(
                 asyncio.open_connection(host, self.RSYNC_PORT),
                 timeout=self.RSYNC_TIMEOUT
-            )
+    )
             # Send @RSYNCD:30.0 protocol initiation
             writer.write(b'@RSYNCD:30.0\n')
             await writer.drain()
@@ -741,7 +741,7 @@ class RsyncScanner:
             reader, writer = await safe_wait_for(
                 asyncio.open_connection(host, self.RSYNC_PORT),
                 timeout=self.RSYNC_TIMEOUT
-            )
+    )
             # Protocol initiation
             writer.write(b'@RSYNCD:30.0\n')
             await writer.drain()
@@ -845,7 +845,7 @@ class DatabasePortScanner:
             label='exposed_service_hunter:db_scan',
             logger=logger,
             log_success='Found exposed database: {host}:{port}',
-        )
+    )
 
     async def _check_port(self, host: str, port: int) -> ExposedService | None:
         """Check if a specific port is open and identify service."""
@@ -878,7 +878,7 @@ class DatabasePortScanner:
                         result.metadata['extraction_data'] = extraction_data
                         logger.debug(
                             f'[HEIST-03] extraction result attached for {host}:{port}'
-                        )
+    )
                 except Exception as e:
                     logger.debug(f'[HEIST-03] extraction await failed for {host}:{port}: {e}')
 
@@ -909,7 +909,7 @@ class DatabasePortScanner:
             from hledac.universal.network.native_extraction import (
                 extract_from_exposed,
                 is_native_extraction_enabled,
-            )
+    )
 
             # HEIST-08 gate: extraction only when enabled
             # But for HEIST-03 we ALWAYS attempt — the feature gate is for
@@ -924,7 +924,7 @@ class DatabasePortScanner:
                 f'databases={result.databases}, '
                 f'keys={result.key_count}, '
                 f'indices={result.indices}'
-            )
+    )
 
             # Convert struct to dict for metadata storage
             return {
@@ -946,11 +946,11 @@ class DatabasePortScanner:
             logger.debug(
                 f'[HEIST-03] native_extraction not available for '
                 f'{host}:{port} ({db_type}) — extraction skipped'
-            )
+    )
         except Exception as e:
             logger.warning(
                 f'[HEIST-03] Extraction failed for {host}:{port} ({db_type}): {e}'
-            )
+    )
 
         return None
 
@@ -1058,13 +1058,13 @@ class DatabasePortScanner:
             logger.debug(
                 f'[HEIST-03] Rust native_db not available — '
                 f'skipping MongoDB extraction for {host}:{port}'
-            )
+    )
             return []
         try:
             dumper = MongoDumper()
             entries = await asyncio.to_thread(
                 dumper.dump_all, host, port, limit, self.timeout
-            )
+    )
             results: list[dict[str, Any]] = []
             for entry in entries:
                 entry_dict = {
@@ -1080,18 +1080,18 @@ class DatabasePortScanner:
                         f'[HEIST-03] MongoDB extraction error '
                         f'{host}:{port}/{entry.database}/{entry.collection}: '
                         f'{entry.error}'
-                    )
+    )
                 elif entry.collection and entry.document_count:
                     logger.info(
                         f'[HEIST-03] MongoDB extracted '
                         f'{entry.document_count} docs from '
                         f'{host}:{port}/{entry.database}/{entry.collection}'
-                    )
+    )
             return results
         except Exception as e:
             logger.warning(
                 f'[HEIST-03] MongoDB extraction failed {host}:{port}: {e}'
-            )
+    )
             return []
 
     async def _try_extract_redis(
@@ -1111,13 +1111,13 @@ class DatabasePortScanner:
             logger.debug(
                 f'[HEIST-03] Rust native_db not available — '
                 f'skipping Redis extraction for {host}:{port}'
-            )
+    )
             return []
         try:
             dumper = RedisDumper()
             entries = await asyncio.to_thread(
                 dumper.dump_all, host, port, max_keys, self.timeout
-            )
+    )
             results: list[dict[str, Any]] = []
             for entry in entries:
                 entry_dict = {
@@ -1132,17 +1132,17 @@ class DatabasePortScanner:
                     logger.warning(
                         f'[HEIST-03] Redis extraction error '
                         f'{host}:{port}/{entry.key}: {entry.error}'
-                    )
+    )
             if results and not results[0].get('error'):
                 logger.info(
                     f'[HEIST-03] Redis extracted {len(results)} keys '
                     f'from {host}:{port}'
-                )
+    )
             return results
         except Exception as e:
             logger.warning(
                 f'[HEIST-03] Redis extraction failed {host}:{port}: {e}'
-            )
+    )
             return []
 
     async def _try_extract_elasticsearch(
@@ -1165,7 +1165,7 @@ class DatabasePortScanner:
                 dumper = ElasticsearchDumper()
                 entries = await asyncio.to_thread(
                     dumper.dump_all, host, port, limit, self.timeout
-                )
+    )
                 results: list[dict[str, Any]] = []
                 for entry in entries:
                     entry_dict = {
@@ -1179,23 +1179,23 @@ class DatabasePortScanner:
                         logger.warning(
                             f'[HEIST-03] ES extraction error '
                             f'{host}:{port}/{entry.index}: {entry.error}'
-                        )
+    )
                     elif entry.document_count:
                         logger.info(
                             f'[HEIST-03] ES extracted '
                             f'{entry.document_count} docs from '
                             f'{host}:{port}/{entry.index}'
-                        )
+    )
                 return results
             except Exception as e:
                 logger.debug(
                     f'[HEIST-03] Rust ES extraction failed, httpx fallback: {e}'
-                )
+    )
         else:
             logger.debug(
                 f'[HEIST-03] Rust native_db not available — '
                 f'falling back to httpx ES extraction for {host}:{port}'
-            )
+    )
 
         # Python httpx fallback for Elasticsearch (REST-based)
         try:
@@ -1208,7 +1208,7 @@ class DatabasePortScanner:
                 # List indices
                 cat_resp = await client.get(
                     f'http://{host}:{port}/_cat/indices?format=json'
-                )
+    )
                 if cat_resp.status_code != 200:
                     return []
                 indices_data = cat_resp.json()
@@ -1225,7 +1225,7 @@ class DatabasePortScanner:
                                 'size': limit,
                                 '_source': True,
                             },
-                        )
+    )
                         if search_resp.status_code == 200:
                             body = search_resp.json()
                             hits = body.get('hits', {}).get('hits', [])
@@ -1243,7 +1243,7 @@ class DatabasePortScanner:
                                 f'[HEIST-03] ES (httpx) extracted '
                                 f'{len(docs)} docs from '
                                 f'{host}:{port}/{index_name}'
-                            )
+    )
                     except Exception as e:
                         results.append({
                             'index': index_name,
@@ -1255,7 +1255,7 @@ class DatabasePortScanner:
         except Exception as e:
             logger.warning(
                 f'[HEIST-03] ES extraction failed {host}:{port}: {e}'
-            )
+    )
             return []
 
     async def scan_and_extract(
@@ -1299,10 +1299,10 @@ class DatabasePortScanner:
                         logger.info(
                             f'[HEIST-03] Open MongoDB at {host}:{port} '
                             f'— extracting data...'
-                        )
+    )
                         extracted = await self._try_extract_mongodb(
                             host, port, mongo_limit
-                        )
+    )
                         finding.metadata['extracted_data'] = extracted
                         finding.metadata['extraction_method'] = 'rust_native_db'
 
@@ -1313,10 +1313,10 @@ class DatabasePortScanner:
                         logger.info(
                             f'[HEIST-03] Open Redis at {host}:{port} '
                             f'— extracting data...'
-                        )
+    )
                         extracted = await self._try_extract_redis(
                             host, port, redis_max_keys
-                        )
+    )
                         finding.metadata['extracted_data'] = extracted
                         finding.metadata['extraction_method'] = 'rust_native_db'
 
@@ -1329,21 +1329,21 @@ class DatabasePortScanner:
                         logger.info(
                             f'[HEIST-03] Open Elasticsearch at {host}:{port} '
                             f'— extracting data...'
-                        )
+    )
                         extracted = await self._try_extract_elasticsearch(
                             host, port, es_limit
-                        )
+    )
                         finding.metadata['extracted_data'] = extracted
                         finding.metadata['extraction_method'] = (
                             'rust_native_db' if 'rust_native_db' not in str(
                                 extracted
                             ) else 'httpx_fallback'
-                        )
+    )
             except Exception as e:
                 logger.warning(
                     f'[HEIST-03] Extraction orchestration failed '
                     f'{host}:{port}: {e}'
-                )
+    )
                 finding.metadata['extraction_error'] = str(e)
 
         return findings
@@ -1394,7 +1394,7 @@ class GraphQLIntrospector:
             label='exposed_service_hunter:graphql',
             logger=logger,
             log_success='Found GraphQL endpoint: {0}',  # First positional arg
-        )
+    )
 
     async def _check_endpoint(self, url: str) -> ExposedService | None:
         """Check if a URL is a GraphQL endpoint with introspection enabled."""
@@ -1549,7 +1549,7 @@ class ContainerAPIExplorer:
             label='exposed_service_hunter:docker',
             logger=logger,
             log_success='Found exposed Docker API: {host}:{port}',
-        )
+    )
 
     async def _check_docker_api(self, host: str, port: int) -> ExposedService | None:
         """Check if a Docker API is exposed."""
@@ -1578,7 +1578,7 @@ class ContainerAPIExplorer:
             label='exposed_service_hunter:k8s',
             logger=logger,
             log_success='Found exposed Kubernetes API: {host}:{port}',
-        )
+    )
 
     async def _check_kubernetes_api(self, host: str, port: int) -> ExposedService | None:
         """Check if a Kubernetes API is exposed."""
@@ -1676,7 +1676,7 @@ class SwaggerEnumerator:
             label='exposed_service_hunter:swagger',
             logger=logger,
             log_success='Found Swagger/OpenAPI spec: {0}',
-        )
+    )
 
     async def _check_swagger_path(self, url: str) -> ExposedService | None:
         """Check if a URL serves a valid Swagger/OpenAPI specification."""
@@ -1707,7 +1707,7 @@ class SwaggerEnumerator:
                             'status': head_resp.status_code,
                             'note': 'Swagger/OpenAPI spec detected but access-restricted',
                         },
-                    )
+    )
         except httpx.HTTPError:  # noqa: BLE001
             pass
         except Exception as e:
@@ -1805,7 +1805,7 @@ class SwaggerEnumerator:
                 'endpoint_count': len(endpoints), 'sample_endpoints': endpoints[:20],
                 'auth_schemes': auth_schemes[:10], 'base_path': base_path,
             },
-        )
+    )
 
     @staticmethod
     def _parse_yaml_minimal(text: str) -> dict | None:
@@ -1820,7 +1820,7 @@ class SwaggerEnumerator:
         # Extract paths block
         paths_match = re.search(
             r'^paths:\s*\n((?:  \S.*\n)*)', text, re.MULTILINE
-        )
+    )
         if paths_match:
             paths_block = paths_match.group(1)
             path_keys = re.findall(r'^  (/[^:]+):', paths_block, re.MULTILINE)
@@ -1830,7 +1830,7 @@ class SwaggerEnumerator:
         # Extract version
         version_match = re.search(
             r'^(?:swagger|openapi):\s*["\']?([\d.]+)', text, re.MULTILINE
-        )
+    )
         if version_match:
             result['openapi'] = version_match.group(1)
             result['swagger'] = version_match.group(1)
@@ -1839,7 +1839,7 @@ class SwaggerEnumerator:
         info_match = re.search(
             r"^info:\s*\n(?:^\s{2}title:\s*['\"]?([^\n'\"]+))",
             text, re.MULTILINE,
-        )
+    )
         if info_match:
             result['info'] = {'title': info_match.group(1).strip()}
 
@@ -1848,14 +1848,14 @@ class SwaggerEnumerator:
         sec_block = re.search(
             r'(?:securitySchemes|securityDefinitions):\s*\n((?:  \S[^\n]*\n(?:    \S[^\n]*\n)*)*)',
             text, re.MULTILINE,
-        )
+    )
         if sec_block:
             scheme_names = re.findall(r'^  (\S+):', sec_block.group(1), re.MULTILINE)
             for name in scheme_names[:10]:
                 type_match = re.search(
                     rf'^  {re.escape(name)}:\s*\n    type:\s*(\S+)',
                     sec_block.group(1), re.MULTILINE,
-                )
+    )
                 if type_match:
                     sec_schemes[name] = {'type': type_match.group(1)}
             if sec_schemes:
@@ -2158,7 +2158,7 @@ class GitExposer:
                     'packed_refs': git_info.get('.git/packed-refs', '')[:500] if '.git/packed-refs' in git_info else None,
                 }
             }
-        )
+    )
 
 
 class DirectoryListingDetector:
@@ -2350,7 +2350,7 @@ class DirectoryListingDetector:
                 file_links = re.findall(
                     r'<a[^>]+href="([^"]+)"[^>]*>([^<]+)</a>',
                     text, re.IGNORECASE,
-                )
+    )
                 for href, display in file_links:
                     if href in ('/', '..', '../', './'):
                         continue
@@ -2389,7 +2389,7 @@ class DirectoryListingDetector:
                         'match_pattern': matched_patterns[0] if matched_patterns else None,
                         'server': resp.headers.get('server', 'unknown'),
                     },
-                )
+    )
         except httpx.HTTPError:  # noqa: BLE001
             pass
         except Exception as e:
@@ -2440,7 +2440,7 @@ class ExposedServiceHunter:
         self.session = httpx.AsyncClient(
             timeout=httpx.Timeout(total=30),
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
-        )
+    )
         self._s3_enumerator = S3BucketEnumerator(self.session)
         self._graphql_introspector = GraphQLIntrospector(self.session)
         self._ct_logs = CertificateTransparency(self.session)
@@ -3155,7 +3155,7 @@ async def banner_grabber(host: str, port: int, timeout: float = 5.0) -> str | No
             reader, writer = await safe_wait_for(
                 asyncio.open_connection(host, port),
                 timeout=timeout
-            )
+    )
             try:
                 # Send appropriate probe based on port
                 if port == 22:

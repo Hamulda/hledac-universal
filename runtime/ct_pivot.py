@@ -90,7 +90,7 @@ async def run_ct_pivot(domain: str) -> CTPivotResult:
             last_cert=result["last_cert"],
             san_names=_san_names,
             issuers=result["issuers"],
-        )
+    )
     finally:
         await tor_transport.stop()
         logger.info("CT pivot done, Tor stopped")

@@ -20,11 +20,7 @@ import asyncio
 import logging
 from typing import Any
 
-
-
-
-
-
+from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     domain_breaker_record_failure,
     domain_breaker_record_success,
@@ -35,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 # ── Circuit Breaker Integration ─────────────────────────────────────────────────
 
-from _core import aclose
 
 def circuit_breaker_check(domain: str) -> Any | None:
     """

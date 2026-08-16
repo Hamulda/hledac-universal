@@ -143,7 +143,7 @@ def _resolve_backend() -> VectorBackend:
         logger.warning(
             "[VectorIndex] Unknown HLEDAC_VECTOR_BACKEND=%r, defaulting to auto",
             backend,
-        )
+    )
         return "auto"
     return cast(VectorBackend, backend)
 
@@ -161,10 +161,10 @@ def _is_m1() -> bool:
                 capture_output=True,
                 text=True,
                 timeout=5,
-            )
+    )
             _is_m1_cached = (
                 "Apple" in result.stdout and ("M1" in result.stdout or "M2" in result.stdout)
-            )
+    )
         except Exception:
             _is_m1_cached = False
     return _is_m1_cached
@@ -299,11 +299,11 @@ class SqliteVecIndex(VectorIndex):
         if vectors.shape[0] != len(ids) or vectors.shape[0] != len(metadata):
             raise ValueError(
                 f"Shape mismatch: {vectors.shape[0]} vectors, {len(ids)} ids, {len(metadata)} meta"
-            )
+    )
         if vectors.shape[1] > self.MAX_DIM:
             raise ValueError(
                 f"[SqliteVecIndex] dim={vectors.shape[1]} exceeds MAX_DIM={self.MAX_DIM}"
-            )
+    )
 
         # Ensure initialized
         await self._ensure_db()
@@ -339,13 +339,13 @@ class SqliteVecIndex(VectorIndex):
                 id TEXT PRIMARY KEY,
                 embedding FLOAT[{self._dim}],
                 metadata JSON
-            )
+    )
             """
-        )
+    )
         self._conn.commit()
         logger.debug(
             "[SqliteVecIndex] Initialized: %s (dim=%d)", self._db_path, self._dim
-        )
+    )
 
     async def _flush_locked(self) -> None:
         """Flush pending upserts (must hold self._lock)."""
@@ -356,7 +356,7 @@ class SqliteVecIndex(VectorIndex):
             self._pending_ids[:],
             self._pending_vectors[:],
             self._pending_meta[:],
-        )
+    )
         self._pending_ids.clear()
         self._pending_vectors.clear()
         self._pending_meta.clear()
@@ -369,7 +369,7 @@ class SqliteVecIndex(VectorIndex):
             self._conn.executemany(
                 f"INSERT OR REPLACE INTO {self._table_name} (id, embedding, metadata) VALUES (?, ?, ?)",
                 rows,
-            )
+    )
             self._conn.commit()
             logger.debug("[SqliteVecIndex] Flushed %d vectors", len(rows))
         except Exception as e:
@@ -416,7 +416,7 @@ class SqliteVecIndex(VectorIndex):
                 score = max(0.0, 1.0 - (row[1] or 0.0) / 2.0)
                 results.append(
                     AnnHit(id=row[0], score=float(score), metadata=meta)
-                )
+    )
             return results
 
         except Exception as e:
@@ -484,7 +484,7 @@ class LanceDbIndex(VectorIndex):
         if vectors.shape[0] != len(ids) or vectors.shape[0] != len(metadata):
             raise ValueError(
                 f"Shape mismatch: {vectors.shape[0]} vectors, {len(ids)} ids, {len(metadata)} meta"
-            )
+    )
 
         await self._ensure_db()
 
@@ -500,7 +500,7 @@ class LanceDbIndex(VectorIndex):
                 "vector": pa.array(vectors.tolist(), type=pa.list_(pa.float32(), self._dim)),
                 "metadata": pa.array([json_dumps_maybe(m) for m in metadata]),
             }
-        )
+    )
 
         try:
             self._table.merge_insert("id").on("id").execute(table.to_batches())
@@ -526,7 +526,7 @@ class LanceDbIndex(VectorIndex):
                 ),
                 pa.field("metadata", pa.string()),
             ]
-        )
+    )
 
         try:
             self._table = self._db.open_table(self._table_name)
@@ -534,7 +534,7 @@ class LanceDbIndex(VectorIndex):
         except Exception:
             self._table = self._db.create_table(
                 self._table_name, schema=schema, exist_ok=True
-            )
+    )
             logger.info("[LanceDbIndex] Created table: %s", self._table_name)
 
         # Try to create FTS indexes (best-effort)

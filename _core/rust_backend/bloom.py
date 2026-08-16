@@ -19,7 +19,7 @@ from hledac.universal.utils.bloom_filter import (
     RotatingBloomFilter as _CanonicalRotatingBloomFilter,
     MultiTierRotatingBloomFilter,
     MmapBloomFilter as _CanonicalMmapBloomFilter,
-)
+    )
 
 # Import the Rust extension accessor
 from ._prober import probe
@@ -95,7 +95,7 @@ class _RustBloomDomain:
             max_tiers=max_tiers,
             max_fill_ratio=max_fill_ratio,
             mmap_path=mmap_path,
-        )
+    )
 
 
 class _PythonBloomDomain:
@@ -160,7 +160,7 @@ class _PythonBloomDomain:
             max_tiers=max_tiers,
             max_fill_ratio=max_fill_ratio,
             mmap_path=mmap_path,
-        )
+    )
 
 
 class _RotatingMmapFilterWrapper:

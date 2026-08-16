@@ -23,7 +23,7 @@ Schema (persisted in duckdb_store):
     accepted_count INTEGER,
     signal_value DOUBLE,
     ts DOUBLE
-  )
+    )
 
 Integration:
 - duckdb_store: async_record_hypothesis_feedback(), async_get_hypothesis_feedback()

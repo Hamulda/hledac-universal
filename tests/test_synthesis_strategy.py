@@ -204,7 +204,7 @@ class MockSynthesisRunner:
             done, pending = await asyncio.wait(
                 pending,
                 return_when=asyncio.FIRST_COMPLETED,
-            )
+    )
             for task in done:
                 task_name = tasks.pop(task)
                 try:
@@ -255,7 +255,7 @@ class TestSequentialPreferred:
             "sequential_preferred",
             xgrammar_fn=lambda: _result_none(),
             streaming_fn=lambda: _result_ok({"title": "streaming"}),
-        )
+    )
 
         result, name = await runner._race_inference("test prompt")
         assert result == {"title": "streaming"}
@@ -270,7 +270,7 @@ class TestSequentialPreferred:
             xgrammar_fn=lambda: _result_none(),
             streaming_fn=lambda: _result_none(),
             structured_fn=lambda: _result_ok({"title": "structured"}),
-        )
+    )
 
         result, name = await runner._race_inference("test prompt")
         assert result == {"title": "structured"}
@@ -285,7 +285,7 @@ class TestSequentialPreferred:
             xgrammar_fn=lambda: _result_none(),
             streaming_fn=lambda: _result_none(),
             structured_fn=lambda: _result_none(),
-        )
+    )
 
         result, name = await runner._race_inference("test prompt")
         assert result is None
@@ -326,7 +326,7 @@ class TestRaceFirstWins:
             xgrammar_fn=lambda: fast_xgrammar(),
             streaming_fn=lambda: slow_streaming(),
             structured_fn=lambda: slow_structured(),
-        )
+    )
 
         result, name = await runner._race_inference("test prompt")
 
@@ -348,7 +348,7 @@ class TestRaceFirstWins:
             xgrammar_fn=lambda: _result_none(),
             streaming_fn=lambda: _result_none(),
             structured_fn=lambda: _result_none(),
-        )
+    )
 
         result, name = await runner._race_inference("test prompt")
         assert result is None
@@ -375,7 +375,7 @@ class TestRaceFirstWins:
             xgrammar_fn=lambda: xgrammar_fail(),
             streaming_fn=lambda: streaming_fast(),
             structured_fn=lambda: structured_slow(),
-        )
+    )
 
         result, name = await runner._race_inference("test prompt")
         assert result == {"title": "streaming"}

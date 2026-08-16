@@ -161,7 +161,7 @@ class JTMS:
             inference_rule=inference_rule,
             timestamp=timestamp,
             source_reliability=source_reliability,
-        )
+    )
 
         self._facts[fact_id] = {
             'ioc_id': ioc_id,

@@ -601,7 +601,7 @@ class MultimodalEnricher:
             [enrich_one(f) for f in findings],
             policy="collect",
             ctx="multimodal_enrichment_batch",
-        )
+    )
         out = {}
         for item in results.ok:
             if isinstance(item, Exception):

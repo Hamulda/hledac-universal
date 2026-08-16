@@ -112,7 +112,7 @@ def _run_loop_until_condition(
         run_loop.runMode_beforeDate_(
             getattr(NSRunLoop, "NSDefaultRunLoopMode", "kCFRunLoopDefaultMode"),
             NSDate.dateWithTimeIntervalSinceNow_(poll_interval),
-        )
+    )
     return False
 
 
@@ -133,7 +133,7 @@ def _do_render(payload: dict) -> bytes:
             NSDate,
             NSRunLoop,
             NSURLRequest,
-        )
+    )
         from objc import dyld_framework, nil
         from WebKit import WKWebView, WKWebViewConfiguration
 
@@ -165,7 +165,7 @@ def _do_render(payload: dict) -> bytes:
         webview = WKWebView.alloc().initWithFrame_configuration_(
             ((0, 0), (800, 600)),
             config,
-        )
+    )
 
         # Set custom User-Agent if provided
         if user_agent:
@@ -220,7 +220,7 @@ def _do_render(payload: dict) -> bytes:
             run_loop.runMode_beforeDate_(
                 getattr(NSRunLoop, "NSDefaultRunLoopMode", "kCFRunLoopDefaultMode"),
                 NSDate.dateWithTimeIntervalSinceNow_(0.05),
-            )
+    )
 
         html = html_result[0]
         error = error_result[0]
@@ -233,14 +233,14 @@ def _do_render(payload: dict) -> bytes:
                 False, "macos_webkit_worker_error",
                 elapsed_ms=elapsed_ms,
                 rendered_bytes=0,
-            )
+    )
 
         if html is None or html == "":
             return _build_response(
                 False, "macos_webkit_empty",
                 elapsed_ms=elapsed_ms,
                 rendered_bytes=0,
-            )
+    )
 
         # Truncate if over max_bytes (fail-soft)
         html_str = str(html)
@@ -251,14 +251,14 @@ def _do_render(payload: dict) -> bytes:
                 html=None,
                 elapsed_ms=elapsed_ms,
                 rendered_bytes=rendered_bytes,
-            )
+    )
 
         return _build_response(
             True, "macos_webkit_success",
             html=html_str[:max_bytes],
             elapsed_ms=elapsed_ms,
             rendered_bytes=min(rendered_bytes, max_bytes),
-        )
+    )
 
     except Exception as e:
         elapsed_ms = (time.monotonic() - t0) * 1000
@@ -268,11 +268,11 @@ def _do_render(payload: dict) -> bytes:
             return _build_response(
                 False, "macos_webkit_pyobjc_missing",
                 elapsed_ms=elapsed_ms,
-            )
+    )
         return _build_response(
             False, "macos_webkit_worker_error",
             elapsed_ms=elapsed_ms,
-        )
+    )
 
 
 def main() -> None:

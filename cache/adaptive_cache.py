@@ -141,7 +141,7 @@ class AdaptiveCache(Generic[K, V]):
             max_bytes=self._max_bytes,
             max_entries=self._max_entries,
             pressure_level=self._pressure,
-        )
+    )
         self._memory_check_interval_sec = self._config.memory_check_interval_sec
         self._last_memory_check = 0.0  # timestamp
 
@@ -170,12 +170,12 @@ class AdaptiveCache(Generic[K, V]):
             self._rust_cache = rust.PyGraphLRUCache(
                 self._max_entries,
                 self._max_bytes,
-            )
+    )
             self._use_rust = True
             logger.debug(
                 f"[AdaptiveCache] Rust PyGraphLRUCache initialized: "
                 f"entries={self._max_entries}, bytes={self._max_bytes}"
-            )
+    )
             return True
         except Exception as e:
             logger.warning(f"[AdaptiveCache] Rust PyGraphLRUCache init failed: {e}")
@@ -214,7 +214,7 @@ class AdaptiveCache(Generic[K, V]):
                     f"[AdaptiveCache] Memory pressure changed: "
                     f"{self._pressure.name} -> {new_pressure.name} "
                     f"(available={available_gib:.2f} GiB)"
-                )
+    )
                 self._pressure = new_pressure
                 self._update_limits()
 
@@ -248,7 +248,7 @@ class AdaptiveCache(Generic[K, V]):
                 f"[AdaptiveCache] Limits updated: "
                 f"bytes={old_max_bytes//1024//1024}MB -> {self._max_bytes//1024//1024}MB, "
                 f"entries={old_max_entries} -> {self._max_entries}"
-            )
+    )
 
     def get(self, key: K) -> V | None:
         """
@@ -407,7 +407,7 @@ class AdaptiveCache(Generic[K, V]):
                 max_bytes=self._max_bytes,
                 max_entries=self._max_entries,
                 pressure_level=self._pressure,
-            )
+    )
 
     def stats(self) -> CacheStats:
         """Vráti štatistiky cache."""

@@ -24,7 +24,7 @@ from hledac.universal.pipeline._soa_types import (
     MatchedBatch,
     PageBatch,
     ScoredBatch,
-)
+    )
 from hledac.universal.pipeline._stage_graph import StageOrchestrator, StageResult
 from hledac.universal.pipeline.public._build_stage import BuildStage
 from hledac.universal.pipeline.public._discovery_stage import DiscoveryStage
@@ -128,7 +128,7 @@ class PublicPipelineOrchestrator:
         results = await self._orchestrator.run(
             initial_input=query,
             max_batch_size=kwargs.get("max_batch_size", 256),
-        )
+    )
 
         return results
 

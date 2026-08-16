@@ -104,7 +104,7 @@ class TestDHTFindingsStructure(unittest.TestCase):
             ts=1234567890.0,
             provenance=("deep_probe", "dht", "192.168.1.1:6881"),
             payload_text="DHT peer 192.168.1.1:6881",
-        )
+    )
 
         self.assertEqual(finding.source_type, "dht_discovery")
 
@@ -120,7 +120,7 @@ class TestDHTFindingsStructure(unittest.TestCase):
             ts=1234567890.0,
             provenance=("deep_probe", "dht", "192.168.1.1:6881"),
             payload_text="DHT peer 192.168.1.1:6881 for abc123",
-        )
+    )
 
         # Provenance format: (probe_source, dht, peer_addr)
         self.assertEqual(finding.provenance[0], "deep_probe")
@@ -196,7 +196,7 @@ class TestDHTBencode(unittest.TestCase):
         node = KademliaNode(
             node_id="test-node-id",
             governor=MagicMock(),
-        )
+    )
 
         # BEP-5: dict keys must be bytes, values encoded correctly
         msg = {"t": "aa", "y": "q", "q": "ping", "a": {"id": b"test"}}
@@ -213,7 +213,7 @@ class TestDHTBencode(unittest.TestCase):
         node = KademliaNode(
             node_id="test-node-id",
             governor=MagicMock(),
-        )
+    )
 
         # BEP-5: dict keys are bytes, not strings
         # d1:ai1ee = {b"a": 1}

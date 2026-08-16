@@ -68,7 +68,7 @@ class LLMEngine(Protocol):
                 prompt = self._prompt_builder.format_chatml(
                     system_msg="You are helpful",
                     user_msg=query
-                )
+    )
                 # Delegate inference to engine
                 result = await self._llm.generate(prompt)
                 return result.text

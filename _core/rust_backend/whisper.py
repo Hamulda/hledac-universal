@@ -147,7 +147,7 @@ class _PythonWhisperDomain:
             raise NotImplementedError(
                 "Rust whisper module not available. "
                 "Install with: pip install whispercpp or build Rust extension with whisper feature"
-            )
+    )
 
     def transcribe_with_timestamps(
         self,

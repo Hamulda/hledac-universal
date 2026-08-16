@@ -104,7 +104,7 @@ class CTLogCacheStore:
                 "SELECT subdomains FROM ct_cache WHERE domain = ? AND fetched_at >= ?",
                 (domain, cutoff),
             ).fetchall()
-        )
+    )
 
         if not rows:
             return None
@@ -138,7 +138,7 @@ class CTLogCacheStore:
                 VALUES (?, ?, ?)
                 """,
                 (domain, subdomains_json, fetched_at),
-            )
+    )
         )
 
     async def delete(self, domain: str) -> None:
@@ -154,7 +154,7 @@ class CTLogCacheStore:
         conn = self._get_connection()
         await asyncio.to_thread(
             lambda: conn.execute("DELETE FROM ct_cache WHERE domain = ?", (domain,))
-        )
+    )
 
     async def cleanup_expired(self) -> int:
         """
@@ -175,7 +175,7 @@ class CTLogCacheStore:
             lambda: conn.execute(
                 "DELETE FROM ct_cache WHERE fetched_at < ?",
                 (cutoff,),
-            )
+    )
         )
         return result.rowcount if hasattr(result, "rowcount") else 0
 

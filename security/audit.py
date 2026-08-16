@@ -20,7 +20,6 @@ import hmac
 import logging
 import msgspec.json as _json
 import os
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
@@ -57,8 +56,8 @@ class AuditEvent(msgspec.Struct, gc=False):
     session_id: str | None
     details: dict[str, Any]
     level: AuditLevel
-    hash: str = field(default='')
-    _hmac_key: bytes | None = field(default=None, repr=False)
+    hash: str = msgspec.field(default='')
+    _hmac_key: bytes | None = msgspec.field(default=None, omit=True)
 
     def __post_init__(self) -> None:
         """Vypočítat hash pro integrity"""

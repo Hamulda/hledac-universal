@@ -206,7 +206,7 @@ class CognitiveSaturationDetector:
             ioc_type or "unknown",
             entity_value[:64] if len(entity_value) > 64 else entity_value,
             len(self._seen_hashes),
-        )
+    )
 
     def should_enter_windup(self, elapsed_active_s: float, now_monotonic: float | None = None) -> bool:
         """
@@ -252,7 +252,7 @@ class CognitiveSaturationDetector:
                 "[COGNITIVE_SATURATION] Zero-discovery period started at t=%.1fs "
                 "(elapsed_active_s=%.1f, window_s=%.1f)",
                 now, elapsed_active_s, self._window_s,
-            )
+    )
             return False
 
         # Check if we've been at zero long enough
@@ -270,7 +270,7 @@ class CognitiveSaturationDetector:
                 elapsed_active_s,
                 self._total_reports,
                 self._unique_reports,
-            )
+    )
             return True
 
         return False
@@ -336,7 +336,7 @@ class CognitiveSaturationDetector:
             f"in_window={len(self._entries)}, "
             f"unique_total={self._unique_reports}"
             f")"
-        )
+    )
 
 
 # ── Global Registry ────────────────────────────────────────────────────────────

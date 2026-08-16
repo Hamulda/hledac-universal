@@ -11,11 +11,7 @@ Run: pytest tests/test_issue9_error_policy.py -x -q
 import asyncio
 import pytest
 
-
-
-
-
-
+from runtime.error_policy import (
     Ok,
     Err,
     Result,
@@ -33,8 +29,7 @@ import pytest
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-
-from _core import aclose# Result monad tests
+# Result monad tests
 # ─────────────────────────────────────────────────────────────────────────────
 
 

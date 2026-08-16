@@ -271,7 +271,7 @@ class CircuitBreakerOpenError(IsolatedExecutorError):
         super().__init__(
             f"FFI circuit breaker OPEN for module={module!r} "
             f"(retry in {recovery_timeout_s:.1f}s): {reason}"
-        )
+    )
         self.module = module
         self.recovery_timeout_s = recovery_timeout_s
         self.reason = reason
@@ -590,7 +590,7 @@ class IsolatedDuckDBExecutor:
                     self._pool.submit(query_func, *args, timeout=timeout, **kwargs),
                     timeout=timeout,
                     label="isolated_executors:duckdb",
-                )
+    )
             return await self._pool.submit(query_func, *args, **kwargs)
         except asyncio.TimeoutError:
             logger.warning("DuckDB query timeout")
@@ -702,7 +702,7 @@ class IsolatedMLXExecutor:
                     self._pool.submit(inference_func, *args, timeout=timeout, **kwargs),
                     timeout=timeout,
                     label="isolated_executors:mlx",
-                )
+    )
             return await self._pool.submit(inference_func, *args, **kwargs)
         except asyncio.TimeoutError:
             logger.warning("MLX inference timeout")
@@ -734,7 +734,7 @@ class IsolatedMLXExecutor:
             return asyncio.run_coroutine_threadsafe(coro, loop).result()
         return loop.run_until_complete(
             self.run_inference_async(inference_func, *args, **kwargs)
-        )
+    )
 
     def close(self) -> None:
         """Close is a no-op for RustWorkerPool (process-wide singleton)."""
@@ -807,7 +807,7 @@ class IsolatedEvidenceBatchWriter:
                     self._pool.submit(process_func, items, *args, timeout=timeout, **kwargs),
                     timeout=timeout,
                     label="isolated_executors:evidence",
-                )
+    )
             return await self._pool.submit(process_func, items, *args, **kwargs)
         except asyncio.TimeoutError:
             logger.warning("Evidence batch processing timeout")
@@ -915,7 +915,7 @@ class IsolatedSIMDExecutor:
                     self._pool.submit(simd_func, *args, timeout=timeout, **kwargs),
                     timeout=timeout,
                     label="isolated_executors:simd",
-                )
+    )
             return await self._pool.submit(simd_func, *args, **kwargs)
         except asyncio.TimeoutError:
             logger.warning("SIMD execution timeout")
@@ -1020,7 +1020,7 @@ class IsolatedGraphExecutor:
                     self._pool.submit(graph_func, *args, timeout=timeout, **kwargs),
                     timeout=timeout,
                     label="isolated_executors:graph",
-                )
+    )
             return await self._pool.submit(graph_func, *args, **kwargs)
         except asyncio.TimeoutError:
             logger.warning("Graph execution timeout")
@@ -1586,7 +1586,7 @@ def _validate_phase_budget(phase: str, cpu: int, io: int, mixed: int) -> tuple[b
             False,
             total,
             f"Phase {phase}: {cpu}+{io}+{mixed}+{dispatchers}={total} exceeds budget {_BUDGET_AVAILABLE}"
-        )
+    )
     return (True, total, "OK")
 
 
@@ -1657,7 +1657,7 @@ class ThreadBudgetGuard:
                 + self._reserved.get("rayon_io", 0)
                 + self._reserved.get("rayon_mixed", 0)
                 + self._reserved.get("rayon_dispatchers", 0)
-            )
+    )
     
     @property
     def available_budget(self) -> int:
@@ -1711,7 +1711,7 @@ class ThreadBudgetGuard:
                         f"Budget violation: {source} requests {count} threads, "
                         f"but only {self.available_budget} available for rayon pools "
                         f"(rayon={self.rayon_threads}/{_BUDGET_AVAILABLE})"
-                    )
+    )
                     logger.warning(f"[ThreadBudgetGuard] {self._last_violation_reason}")
                     return False
             
@@ -1925,17 +1925,17 @@ class RayonPoolManager:
                     _DISPATCHER_COUNT,
                     cpu + io + _DISPATCHER_COUNT,
                     _BUDGET_AVAILABLE,
-                )
+    )
             except Exception as e:
                 logger.error(
                     "[RayonPoolManager] Rust init failed: %s — CRITICAL: thread safety compromised",
                     e,
-                )
+    )
         else:
             logger.critical(
                 "[RayonPoolManager] Rust elastic_pool bindings unavailable — "
                 "thread budget enforcement DISABLED. This can cause thermal throttling!"
-            )
+    )
 
     @property
     def current_phase(self) -> str:
@@ -1990,14 +1990,14 @@ class RayonPoolManager:
             logger.error(
                 "[RayonPoolManager] Unknown phase %r — refusing transition",
                 phase,
-            )
+    )
             return False
 
         if not self._initialized:
             logger.error(
                 "[RayonPoolManager] Cannot set phase %r: Rust pools not initialized",
                 phase_upper,
-            )
+    )
             return False
 
         # Get target configuration
@@ -2010,7 +2010,7 @@ class RayonPoolManager:
                 "[RayonPoolManager] Phase %r REJECTED: %s",
                 phase_upper,
                 reason,
-            )
+    )
             return False
 
         # Snapshot current state for rollback
@@ -2044,7 +2044,7 @@ class RayonPoolManager:
                             phase_upper,
                             prev_cpu,
                             actual,
-                        )
+    )
                 except Exception as e:
                     errors.append(f"cpu_pool resize({target_cpu}): {e}")
                     resize_success = False
@@ -2062,7 +2062,7 @@ class RayonPoolManager:
                             phase_upper,
                             prev_io,
                             actual,
-                        )
+    )
                 except Exception as e:
                     errors.append(f"io_pool resize({target_io}): {e}")
                     resize_success = False
@@ -2076,7 +2076,7 @@ class RayonPoolManager:
                     phase_upper,
                     prev_mixed,
                     target_mixed,
-                )
+    )
 
             # Handle resize result
             if resize_success:
@@ -2092,7 +2092,7 @@ class RayonPoolManager:
                     _DISPATCHER_COUNT,
                     self.total_threads,
                     _BUDGET_AVAILABLE,
-                )
+    )
                 return True
             else:
                 # ROLLBACK on error
@@ -2100,7 +2100,7 @@ class RayonPoolManager:
                     logger.warning(
                         "[RayonPoolManager] [%s] Phase transition FAILED — ROLLING BACK",
                         phase_upper,
-                    )
+    )
                     self._rollback(prev_phase, prev_cpu, prev_io, prev_mixed)
                     self._record_transition(phase_upper, prev_phase, prev_cpu, prev_io, prev_mixed, "rollback")
                     return False
@@ -2132,13 +2132,13 @@ class RayonPoolManager:
                     cpu,
                     io,
                     mixed,
-                )
+    )
             except Exception as e:
                 # Critical: rollback failed
                 logger.critical(
                     "[RayonPoolManager] ROLLBACK FAILED: pools in indeterminate state! %s",
                     e,
-                )
+    )
 
     def _record_transition(
         self,
@@ -2185,7 +2185,7 @@ class RayonPoolManager:
             if not adaptive_rust:
                 logger.warning(
                     "[RayonPoolManager] [adaptive] adaptive_scheduler unavailable"
-                )
+    )
                 return False
 
             # Get pressure-based recommendations (store original for logging)
@@ -2218,7 +2218,7 @@ class RayonPoolManager:
                     rec_io,
                     orig_cpu,
                     orig_io,
-                )
+    )
 
             with self._lock:
                 success = True
@@ -2234,14 +2234,14 @@ class RayonPoolManager:
                                 "[RayonPoolManager] [adaptive] cpu_pool: %d → %d threads (pressure-based)",
                                 self._last_cpu,
                                 actual,
-                            )
+    )
                             self._last_cpu = actual
                     except Exception as e:
                         logger.warning(
                             "[RayonPoolManager] [adaptive] cpu_pool resize(%d) failed: %s",
                             rec_cpu,
                             e,
-                        )
+    )
                         success = False
 
                 # Resize I/O pool if recommendation differs
@@ -2255,14 +2255,14 @@ class RayonPoolManager:
                                 "[RayonPoolManager] [adaptive] io_pool: %d → %d threads (pressure-based)",
                                 self._last_io,
                                 actual,
-                            )
+    )
                             self._last_io = actual
                     except Exception as e:
                         logger.warning(
                             "[RayonPoolManager] [adaptive] io_pool resize(%d) failed: %s",
                             rec_io,
                             e,
-                        )
+    )
                         success = False
                 
                 return success
@@ -2270,7 +2270,7 @@ class RayonPoolManager:
             logger.warning(
                 "[RayonPoolManager] [adaptive] sizing failed: %s",
                 e,
-            )
+    )
             return False
 
     def shutdown(self) -> bool:
@@ -2437,7 +2437,7 @@ class IsolatedSIMDExecutor:
                     self._pool.submit(simd_func, *args, timeout=timeout, **kwargs),
                     timeout=timeout,
                     label="isolated_executors:simd",
-                )
+    )
             return await self._pool.submit(simd_func, *args, **kwargs)
         except asyncio.TimeoutError:
             logger.warning("SIMD execution timeout")
@@ -2522,7 +2522,7 @@ class IsolatedGraphExecutor:
                     self._pool.submit(graph_func, *args, timeout=timeout, **kwargs),
                     timeout=timeout,
                     label="isolated_executors:graph",
-                )
+    )
             return await self._pool.submit(graph_func, *args, **kwargs)
         except asyncio.TimeoutError:
             logger.warning("Graph execution timeout")

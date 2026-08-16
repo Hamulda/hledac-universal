@@ -72,7 +72,7 @@ def _get_lmdb_async() -> Any:
                 lmdb_async_delete,
                 lmdb_async_put,
                 lmdb_async_scan_prefix,
-            )
+    )
 
             _lmdb_async = {
                 "put": lmdb_async_put,
@@ -220,7 +220,7 @@ class PersistentKVCache:
                     create=True,
                     max_dbs=1,
                     mode=0o600,
-                )
+    )
                 # SEC-02: double-enforce to cover all LMDB-created files
                 _chmod_lmdb_path(meta_path.parent)
             finally:
@@ -230,7 +230,7 @@ class PersistentKVCache:
             logger.info(
                 "[PKV] LMDB metadata index initialized at %s",
                 meta_path,
-            )
+    )
         except Exception as e:
             logger.warning("[PKV] LMDB init failed: %s, running without metadata index", e)
             self._initialized = False
@@ -312,7 +312,7 @@ class PersistentKVCache:
                 "[PKV] Loaded %d entries, total=%.1fMB",
                 len(self._lru_order),
                 self._total_bytes / 1024 / 1024,
-            )
+    )
         except Exception as e:
             logger.debug("[PKV] Failed to load LRU order: %s", e)
 
@@ -429,7 +429,7 @@ class PersistentKVCache:
                 created_at=time.time(),
                 last_accessed=time.time(),
                 token_count=token_count,
-            )
+    )
 
             if self._lmdb_env is not None:
                 # P4-3: Rust backend with py.allow_threads() GIL release
@@ -454,7 +454,7 @@ class PersistentKVCache:
                 key,
                 size_bytes / 1024,
                 self._total_bytes / 1024 / 1024,
-            )
+    )
             return True
 
         except Exception as e:
@@ -511,7 +511,7 @@ class PersistentKVCache:
                 cache, metadata = load_prompt_cache(
                     str(st_path),
                     return_metadata=True,
-                )
+    )
                 tok_count = 0
                 if isinstance(metadata, dict):
                     tok_count = metadata.get("token_count", 0)

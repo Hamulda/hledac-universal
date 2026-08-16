@@ -39,7 +39,7 @@ _TRACKING_PARAM_PREFIXES: tuple[str, ...] = (
     "utm_", "fbclid", "gclid", "msclkid", "dclid", "twclid", "at_",
     "_ga", "_gl", "mc_cid", "mc_eid", "oly_enc_id", "oly_anon_id",
     "ref_src", "ref_url", "source",
-)
+    )
 
 
 def _is_tracking_param(param: str) -> bool:
@@ -142,7 +142,7 @@ def fuse_discovery_hits(
             provider_name=None,
             provider_chain=(),
             source_family=None,
-        )
+    )
 
     # Collect all hits with provenance
     # F271D: attribute access through .result for CascadeResult wrapper

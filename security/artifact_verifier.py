@@ -71,7 +71,7 @@ _STEGDETECT_KNOWN_GOOD: tuple[str, str, str, str | None, int] = (
     "REPLACE_WITH_ACTUAL_SHA256_AFTER_FIRST_CI_BUILD",  # placeholder
     None,  # no official release → isolated build path used
     50_000,  # stegdetect is ~80KB compiled binary
-)
+    )
 
 _VERIFIED_ARTIFACTS: dict[str, tuple[str, str, str | None, int]] = {
     "stegdetect": _STEGDETECT_KNOWN_GOOD,
@@ -188,7 +188,7 @@ class ArtifactVerifier:
             logger.warning(
                 "[ADVERSARY-001] [INTERNAL-007] HLEDAC_ENABLE_STEGDETECT_SIGNED=0: "
                 "artifact verification DISABLED. Falling back to original git+make."
-            )
+    )
             return await self._fallback_git_clone_make(name, repo_url)
 
         manifest = _VERIFIED_ARTIFACTS.get(name)
@@ -197,7 +197,7 @@ class ArtifactVerifier:
                 "[ADVERSARY-001] [INTERNAL-007] Unknown artifact: %s. "
                 "Add to VERIFIED_ARTIFACTS before use.",
                 name,
-            )
+    )
             return ArtifactInstallResult(success=False, error=f"Unknown artifact: {name}")
 
         version, expected_sha256, release_url, min_size = manifest
@@ -216,7 +216,7 @@ class ArtifactVerifier:
                 dest=binary_path,
                 expected_sha256=expected_sha256,
                 min_size=min_size,
-            )
+    )
             if dl_result.success:
                 return dl_result
 
@@ -229,7 +229,7 @@ class ArtifactVerifier:
             dest=binary_path,
             expected_sha256=expected_sha256,
             min_size=min_size,
-        )
+    )
         if build_result.success:
             return build_result
 
@@ -239,7 +239,7 @@ class ArtifactVerifier:
             f"{name}. Cache: no matching binary. "
             f"Release: {'unavailable' if release_url is None else 'SHA-256 mismatch'}. "
             f"Isolated build: {build_result.error or 'failed'}."
-        )
+    )
         logger.error("%s", error_msg)
         return ArtifactInstallResult(success=False, error=error_msg)
 
@@ -269,7 +269,7 @@ class ArtifactVerifier:
                     binary_path,
                     size,
                     min_size,
-                )
+    )
                 return None
         except OSError:
             return None
@@ -282,7 +282,7 @@ class ArtifactVerifier:
                 "expected=%s actual=%s. Removing and rebuilding.",
                 expected_sha256[:16],
                 actual_sha256[:16],
-            )
+    )
             try:
                 binary_path.unlink()
             except OSError:  # noqa: BLE001
@@ -292,13 +292,13 @@ class ArtifactVerifier:
         logger.debug(
             "[ADVERSARY-001] [INTERNAL-007] Cache hit: %s (SHA-256 verified)",
             binary_path,
-        )
+    )
         return ArtifactInstallResult(
             success=True,
             binary_path=binary_path,
             method="cache_hit",
             verified=True,
-        )
+    )
 
     # ─── Private: Release Download ──────────────────────────────────────────────
 
@@ -324,7 +324,7 @@ class ArtifactVerifier:
                 url,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-            )
+    )
             stdout, stderr = await proc.communicate()
 
             if proc.returncode != 0:
@@ -332,7 +332,7 @@ class ArtifactVerifier:
                     "[ADVERSARY-001] [INTERNAL-007] Download failed (curl rc=%d): %s",
                     proc.returncode,
                     stderr.decode(errors="replace"),
-                )
+    )
                 return ArtifactInstallResult(success=False, error="curl download failed")
 
             # Verify
@@ -343,7 +343,7 @@ class ArtifactVerifier:
                     "expected=%s actual=%s",
                     expected_sha256[:16],
                     actual_sha256[:16],
-                )
+    )
                 dest.unlink(missing_ok=True)
                 return ArtifactInstallResult(success=False, error="SHA-256 mismatch")
 
@@ -353,13 +353,13 @@ class ArtifactVerifier:
                 binary_path=dest,
                 method="release_download",
                 verified=True,
-            )
+    )
 
         except Exception as e:
             logger.warning(
                 "[ADVERSARY-001] [INTERNAL-007] Download error: %s",
                 e,
-            )
+    )
             return ArtifactInstallResult(success=False, error=str(e))
 
     # ─── Private: Isolated Build ───────────────────────────────────────────────
@@ -388,7 +388,7 @@ class ArtifactVerifier:
             return ArtifactInstallResult(
                 success=False,
                 error="git not available — cannot build from source",
-            )
+    )
 
         # Validate destination is inside allowed directory (ADVERSARY-001 invariant)
         _BIN_DIR = (Path.home() / ".hledac" / "bin").resolve()
@@ -398,7 +398,7 @@ class ArtifactVerifier:
             return ArtifactInstallResult(
                 success=False,
                 error=f"Binary path outside allowed directory: {dest}",
-            )
+    )
 
         tmp_root = Path(tempfile.gettempdir()) / f"hledac_artifact_build_{os.getpid()}"
         src_dir = tmp_root / "src"
@@ -421,7 +421,7 @@ class ArtifactVerifier:
                 str(src_dir),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-            )
+    )
             stdout, stderr = await proc.communicate()
 
             if proc.returncode != 0:
@@ -430,11 +430,11 @@ class ArtifactVerifier:
                     "[ADVERSARY-001] [INTERNAL-007] git clone failed (rc=%d): %s",
                     proc.returncode,
                     clone_out,
-                )
+    )
                 return ArtifactInstallResult(
                     success=False,
                     error=f"git clone failed: {clone_out[:200]}",
-                )
+    )
 
             # ── Step 2: Build in temp dir ───────────────────────────────────────
             build_dir = src_dir
@@ -444,7 +444,7 @@ class ArtifactVerifier:
                 cwd=str(build_dir),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-            )
+    )
             stdout, stderr = await proc.communicate()
 
             if proc.returncode != 0:
@@ -453,11 +453,11 @@ class ArtifactVerifier:
                     "[ADVERSARY-001] [INTERNAL-007] build failed (rc=%d): %s",
                     proc.returncode,
                     build_out,
-                )
+    )
                 return ArtifactInstallResult(
                     success=False,
                     error=f"build failed: {build_out[:200]}",
-                )
+    )
 
             # Locate the built binary in src_dir
             src_binary = src_dir / name
@@ -469,7 +469,7 @@ class ArtifactVerifier:
                     return ArtifactInstallResult(
                         success=False,
                         error=f"build succeeded but binary not found: {src_binary}",
-                    )
+    )
                 src_binary = found
 
             # ── Step 3: SHA-256 verify ──────────────────────────────────────────
@@ -481,13 +481,13 @@ class ArtifactVerifier:
                     "Update the manifest SHA-256 and re-run.",
                     expected_sha256[:16],
                     actual_sha256[:16],
-                )
+    )
                 return ArtifactInstallResult(
                     success=False,
                     error=f"SHA-256 mismatch: build artifact differs from manifest. "
                     f"Expected {expected_sha256[:16]}... Got {actual_sha256[:16]}... "
                     f"Update VERIFIED_ARTIFACTS with new SHA-256.",
-                )
+    )
 
             # ── Step 4: Install to ~/.hledac/bin ───────────────────────────────
             os.makedirs(_BIN_DIR, exist_ok=True)
@@ -499,19 +499,19 @@ class ArtifactVerifier:
                 "%s (SHA-256=%s, method=isolated_build)",
                 dest,
                 actual_sha256[:16],
-            )
+    )
             return ArtifactInstallResult(
                 success=True,
                 binary_path=dest,
                 method="isolated_build",
                 verified=True,
-            )
+    )
 
         except Exception as e:
             logger.warning(
                 "[ADVERSARY-001] [INTERNAL-007] Isolated build error: %s",
                 e,
-            )
+    )
             return ArtifactInstallResult(success=False, error=str(e))
 
         finally:
@@ -541,7 +541,7 @@ class ArtifactVerifier:
             "This path is vulnerable to supply-chain attacks. "
             "Set HLEDAC_ENABLE_STEGDETECT_SIGNED=1 to enable verification.",
             name,
-        )
+    )
 
         _BIN_DIR = (Path.home() / ".hledac" / "bin").resolve()
         binary_path = _BIN_DIR / name
@@ -561,7 +561,7 @@ class ArtifactVerifier:
                 str(src_dir),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-            )
+    )
             await proc.communicate()
             if proc.returncode != 0:
                 return ArtifactInstallResult(success=False, error="git clone failed")
@@ -573,7 +573,7 @@ class ArtifactVerifier:
                 str(src_dir),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-            )
+    )
             await proc.communicate()
             if proc.returncode != 0:
                 return ArtifactInstallResult(success=False, error="make failed")
@@ -585,7 +585,7 @@ class ArtifactVerifier:
                 return ArtifactInstallResult(
                     success=False,
                     error=f"Binary path outside allowed directory: {binary_path}",
-                )
+    )
 
             shutil.copy2(src_dir / name, binary_path)
             binary_path.chmod(0o755)
@@ -595,7 +595,7 @@ class ArtifactVerifier:
                 binary_path=binary_path,
                 method="fallback",
                 verified=False,
-            )
+    )
 
         except Exception as e:
             return ArtifactInstallResult(success=False, error=str(e))

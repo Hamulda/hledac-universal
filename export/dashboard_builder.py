@@ -1142,7 +1142,7 @@ class WASMDashboardBuilder:
             timeline_data=[...],
             warc_snippets=[...],
             output_path=Path("~/sprint_dashboard.html"),
-        )
+    )
 
     M1 8GB safe: dashboard generation runs in TEARDOWN phase only.
     """
@@ -1220,7 +1220,7 @@ class WASMDashboardBuilder:
                 max_graph_edges=str(self._max_graph_nodes * 2),
                 max_timeline_events=str(self._max_timeline_events),
                 max_warc_snippets=str(self._max_warc_snippets),
-            )
+    )
 
             # Write file
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1231,7 +1231,7 @@ class WASMDashboardBuilder:
                 f"[DASHBOARD] Generated {output_path} ({size_kb:.1f} KB) "
                 f"— nodes={len(graph_json.get('nodes', []))}, "
                 f"timeline={len(timeline_json.get('events', []))}"
-            )
+    )
             return output_path
 
         except Exception as e:
@@ -1410,7 +1410,7 @@ class WASMDashboardBuilder:
                 f'<div class="legend-dot" style="background:{color}"></div>'
                 f'<span>{ioc_type}</span>'
                 f'</div>'
-            )
+    )
         return "\n".join(items)
 
     @staticmethod
@@ -1442,7 +1442,7 @@ async def build_wasm_dashboard(
             handoff=export_handoff,
             graph_data={"nodes": nodes, "edges": edges},
             output_path=Path("~/sprint_dashboard.html"),
-        )
+    )
     """
     builder = WASMDashboardBuilder()
     return await builder.build(

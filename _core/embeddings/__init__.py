@@ -28,19 +28,18 @@ from hledac.universal._core.embeddings.manager import (
     is_embedding_model_prewarmed,
     apply_task_prefix,
     should_normalize,
-)
+    )
 
 from hledac.universal._core.embeddings.cache import EmbeddingCache, get_embedding_cache, get_embedding_cache_stats
 
 from hledac.universal._core.embeddings.pool import (
-from _core._util import aclose
     init_mlx_buffers,
     mlx_cleanup_sync,
     mlx_cleanup_aggressive,
     get_metal_limits_status,
     reconfigure_metal_cache_limit,
     MLX_AVAILABLE,
-)
+    )
 
 __all__ = [
     # manager

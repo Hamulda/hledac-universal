@@ -195,7 +195,7 @@ def _init_mlx_buffers() -> None:
             logger.debug(
                 "MLX Metal cache limit set to %.2f GiB",
                 METAL_CACHE_LIMIT_BYTES / 2**30,
-            )
+    )
     except Exception as e:  # fail-soft
         logger.debug("MLX buffer init skipped: %s", e)
 
@@ -266,7 +266,7 @@ def _build_program(program_name: str) -> Any | None:
             DarkQueryProgram,
             HypothesisGeneratorProgram,
             HypothesisRankProgram,
-        )
+    )
         registry = {
             "dark_query": DarkQueryProgram,
             "hypothesis_generator": HypothesisGeneratorProgram,
@@ -277,7 +277,7 @@ def _build_program(program_name: str) -> Any | None:
             logger.error(
                 "Unknown program: %s. Known: %s",
                 program_name, sorted(registry.keys()),
-            )
+    )
             return None
         return cls()
     except Exception as e:
@@ -303,7 +303,7 @@ def _compile_with_few_shot(
                 "graph_summary",
                 "reward_context",
                 "existing_hypotheses",
-            )
+    )
             examples.append(example)
         examples = examples[:MAX_NUM_EXAMPLES]
 
@@ -320,7 +320,7 @@ def _compile_with_few_shot(
         logger.info(
             "Compiling %s with BootstrapFewShot (%d examples)...",
             program_name, len(examples),
-        )
+    )
         compiled = teleprompter.compile(program=program, trainset=examples)
         n_demos = len(getattr(compiled, "demos", []) or [])
         logger.info("Compilation complete: %d demos baked in", n_demos)
@@ -482,12 +482,12 @@ def _dry_run(
         _has_programs = all(
             hasattr(_mod, name)
             for name in ("DarkQueryProgram", "HypothesisGeneratorProgram", "HypothesisRankProgram")
-        )
+    )
         logger.info(
             "Program registry for '%s': resolved=%s",
             program_name,
             _has_programs,
-        )
+    )
     except Exception as e:
         logger.warning("Could not import program classes: %s", e)
 

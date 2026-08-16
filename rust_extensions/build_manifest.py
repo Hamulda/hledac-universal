@@ -133,7 +133,7 @@ def _generate_build_command() -> str:
         return (
             "CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 "
             "cargo build --release --manifest-path rust_extensions/Cargo.toml"
-        )
+    )
     else:
         return "cargo build --release --manifest-path rust_extensions/Cargo.toml"
 
@@ -211,7 +211,7 @@ def verify_manifest(manifest_path: Path | None = None) -> tuple[bool, str]:
         return False, (
             f"Source hash mismatch: "
             f"stored={stored_hash[:16]}..., current={current_hash[:16]}..."
-        )
+    )
 
     return True, "BUILD_MANIFEST is valid"
 

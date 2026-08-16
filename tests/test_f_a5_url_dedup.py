@@ -19,11 +19,7 @@ to avoid the global bloom singleton leaking state across tests.
 
 import pytest
 
-
-
-
-
-
+from hledac.universal.tools.url_dedup import (
     RotatingBloomFilterAdapter,
     create_rotating_bloom_filter,
     dedupe_url_list,
@@ -33,8 +29,7 @@ import pytest
 @pytest.fixture
 def fresh_filter():
     """Per-test bloom filter for hermetic isolation."""
-
-from _core import aclose    return RotatingBloomFilterAdapter(create_rotating_bloom_filter())
+    return RotatingBloomFilterAdapter(create_rotating_bloom_filter())
 
 
 # ---------------------------------------------------------------------------

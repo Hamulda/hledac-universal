@@ -86,7 +86,7 @@ from hledac.universal.export.components.narrative_builder import (  # noqa: F401
     _derive_why_this_run_matters,
     _enrich_follow_ups,
     _get_branch_value,
-)
+    )
 
 from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag  # noqa: E402
 
@@ -123,14 +123,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 from hledac.universal.export.components.hypothesis_builder import (  # noqa: E402
     _derive_hypothesis_queries,
-)
+    )
 from hledac.universal.export.components.pivot_builder import (  # noqa: E402
     _derive_branch_seeds,
     _derive_focus_expand,
     _derive_trend_seeds,
     _get_correlation_from_handoff,
     _get_runtime_truth,
-)
+    )
 
 # ---------------------------------------------------------------------------
 # Sprint F232A: Investigation Packet builder
@@ -141,12 +141,12 @@ from hledac.universal.runtime.acquisition_telemetry_reconcile import (  # noqa: 
     complete_source_family_outcomes_from_lane_details,
     complete_source_family_outcomes_from_prelude,
     reconcile_lane_detail_fields,
-)
+    )
 from hledac.universal.runtime.investigation_planner import (  # noqa: E402
     build_planner_state_from_report,
     plan_next_investigation_actions,
     summarize_planner_actions,
-)
+    )
 
 import itertools  # for JSONFormatter.render_investigation_packet_markdown
 from _core import aclose
@@ -1218,7 +1218,7 @@ def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
                     "priority": 0.75,
                     "reason": f"signal=high_density/accepted={accepted}/ioc_density={ioc_density:.2f}",
                 }
-            )
+    )
         case "medium_density":
             if low_info_ratio > 0.5:
                 seeds.append(
@@ -1228,7 +1228,7 @@ def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
                         "priority": 0.70,
                         "reason": f"low_info_ratio={low_info_ratio:.2f}/broad_queries",
                     }
-                )
+    )
             else:
                 seeds.append(
                     {
@@ -1237,7 +1237,7 @@ def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
                         "priority": 0.65,
                         "reason": f"signal=medium_density/ioc_density={ioc_density:.2f}",
                     }
-                )
+    )
         case "slow_novelty":
             seeds.append(
                 {
@@ -1246,7 +1246,7 @@ def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
                     "priority": 0.60,
                     "reason": f"signal=slow_novelty/fpm={findings_per_minute:.2f}",
                 }
-            )
+    )
         case "depleted":
             seeds.append(
                 {
@@ -1255,7 +1255,7 @@ def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
                     "priority": 0.80,
                     "reason": "signal=depleted/exhausted_query_space",
                 }
-            )
+    )
 
     return seeds[:3]  # Hard cap: max 3 query suggestions
 
@@ -1284,7 +1284,7 @@ def _derive_source_revisit_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
                     "reason": "circuit_breaker_open",
                     "backoff_seconds": 3600,  # 1h backoff recommendation
                 }
-            )
+    )
     elif signal == "depleted":
         # No cb state but depleted  --  suggest retrying known sources with backoff
         seeds.append(
@@ -1294,7 +1294,7 @@ def _derive_source_revisit_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
                 "priority": 0.50,
                 "reason": "signal=depleted/retry_after_backoff",
             }
-        )
+    )
 
     return seeds[:3]
 
@@ -1325,7 +1325,7 @@ def _derive_low_signal_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
                 "priority": 0.70,
                 "reason": f"accepted={accepted}/fpm={findings_per_minute:.2f}/near_empty_sprint",
             }
-        )
+    )
         # If dedup was effective but we still found nothing, sources may be exhausted
         if pvs.get("dedup_effective"):
             seeds.append(
@@ -1335,7 +1335,7 @@ def _derive_low_signal_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
                     "priority": 0.65,
                     "reason": "dedup_effective_but_depleted/switch_sources",
                 }
-            )
+    )
 
     return seeds[:2]  # Hard cap: max 2 low-signal recommendations
 
@@ -1383,7 +1383,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
                 "seed_source": "capability_synthesis",
                 "expected_value": "nonfeed_signal_balance",
             }
-        )
+    )
 
     # 2. Weak source diversity -> PUBLIC/CT/Wayback seed
     if source_diversity in ("single_source_feed_only", "single_source_niche", "unknown_source"):
@@ -1396,7 +1396,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
                 "seed_source": "capability_synthesis",
                 "expected_value": "multi_source_diversity",
             }
-        )
+    )
 
     # 3. Weak corroboration -> corroboration seed
     if corroboration in ("none", "noisy"):
@@ -1409,7 +1409,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
                 "seed_source": "capability_synthesis",
                 "expected_value": "cross_source_confirmation",
             }
-        )
+    )
 
     # 4. Weak evidence quality -> quality improvement seed
     if not evidence_present:
@@ -1422,7 +1422,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
                 "seed_source": "capability_synthesis",
                 "expected_value": "actionable_findings",
             }
-        )
+    )
 
     # 5. Next investigation action -> top-priority investigation seed
     if next_action and isinstance(next_action, str) and len(next_action) > 3:
@@ -1435,7 +1435,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
                 "seed_source": "capability_synthesis",
                 "expected_value": "targeted_discovery",
             }
-        )
+    )
 
     # 6. Engineering action as lower-priority engineering seed
     if next_engineering and isinstance(next_engineering, str) and len(next_engineering) > 3:
@@ -1448,7 +1448,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
                 "seed_source": "capability_synthesis",
                 "expected_value": "system_improvement",
             }
-        )
+    )
 
     return seeds[:4]  # Hard cap: max 4 capability-derived seeds
 
@@ -1495,7 +1495,7 @@ def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[di
                         "seed_source": "analyst_brief",
                         "expected_value": "pivot_discovery",
                     }
-                )
+    )
 
     gaps = _get_brief_field(analyst_brief, "evidence_gaps") or []
     if isinstance(gaps, (list, tuple)) and gaps:
@@ -1510,7 +1510,7 @@ def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[di
                     "seed_source": "analyst_brief",
                     "expected_value": "evidence_completeness",
                 }
-            )
+    )
 
     risks = _get_brief_field(analyst_brief, "risk_hypotheses") or []
     if isinstance(risks, (list, tuple)) and risks:
@@ -1525,7 +1525,7 @@ def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[di
                     "seed_source": "analyst_brief",
                     "expected_value": "risk_mitigation",
                 }
-            )
+    )
 
     return seeds[:4]  # Hard cap: max 4 analyst-brief seeds
 
@@ -1551,7 +1551,7 @@ def _dedup_seeds(seeds: list[dict[str, Any]]) -> list[dict[str, Any]]:
             s.get("seed_source", ""),
             s.get("task_type", ""),
             s.get("suggested_action", ""),
-        )
+    )
         if key not in seen:
             seen.add(key)
             deduped.append(s)
@@ -1895,11 +1895,11 @@ def _build_product_value_summary(
         # F193B: Archive + academic discovery contribution surfaces
         "commoncrawl_archive_augmented": (
             eh.canonical_run_summary.get("cc_archive_injected", 0) if eh.canonical_run_summary else None
-        )
+    )
         or scorecard.get("cc_archive_injected", 0),  # noqa: E501
         "academic_discovery_contribution": (
             eh.canonical_run_summary.get("academic_findings_count", 0) if eh.canonical_run_summary else None
-        )
+    )
         or scorecard.get("academic_findings_count", 0),  # noqa: E501
         # Sprint F204F: Production CTI scorecard enrichment fields
         "attribution": eh.canonical_run_summary.get("attribution") if eh.canonical_run_summary else None,
@@ -3032,7 +3032,7 @@ def _compute_source_diversity(research_depth: dict[str, Any] | None) -> tuple[li
     elif len(source_types) == 1:
         source_diversity_summary = (
             "single_source_feed_only" if source_types[0] in ("ct", "feed") else "single_source_niche"
-        )
+    )
     else:
         source_diversity_summary = "unknown_source"
 

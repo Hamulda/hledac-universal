@@ -10,6 +10,10 @@ ROLE: Sprint memory / cross-sprint persistence layer.
 - History lookup via find_connected
 - Fail-safe: sprint continues on graph failure
 
+Truth store: IOCGraph (Kuzu) owns authoritative IOC entity storage.
+Analytics donor: DuckPGQGraph (DuckDB) owns path queries and graph analytics.
+This service acts as the sprint memory seam between the two.
+
 ARCHITECTURE (F226):
 - GraphService instances own only instance-isolated state: _seen_iocs, _seen_rels.
 - DuckPGQGraph backend remains a module-level lazy singleton via _get_graph().
@@ -19,23 +23,6 @@ ARCHITECTURE (F226):
 - New code should prefer injected GraphService instances for test isolation.
 - Existing module-level API (reset_session) is preserved for
   backward compatibility and remains wired to the default facade instance.
-
-MODERN-25: Sprint Data Unit Integration
-=======================================
-All IOC writes route through AtomicSprintPipeline for atomic semantics:
-- Provenance is required on all upsert_ioc calls (no more silent loss)
-- Unknown IOC types are preserved with classification_status="pending_review"
-- Vector storage: DuckDB-backed DuckDBRAGStore (no LanceDB dependency)
-
-DEPRECATED (F350M-R):
-- "pending" IOC type: Preserve original type with classification_status field
-
-ORPHANED TASK FIX (Issue #2):
-    All fire-and-forget tasks (relationship callbacks) now use
-    safe_create_task_tracked with TaskScope.GRAPH_SERVICE.
-    This ensures cancel_all() in winddown reaches these tasks and prevents:
-    - Hanging MLX kernels from untracked embeddings
-    - Unreleased Mach ports from background operations
 """
 
 
@@ -46,20 +33,10 @@ from collections.abc import Callable
 from typing import Any
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-
-
-
-
-
-    TaskScope,
-    safe_create_task_tracked,
-)
-
 # Rust backend — strict import
 try:
     from hledac.universal._core.rust_backend import rust
-
-from _core import acloseexcept ImportError:
+except ImportError:
     try:
         from hledac.universal._core.rust_backend import rust
     except ImportError:
@@ -163,9 +140,6 @@ class GraphService:
         confidence: float = 0.5,
         source: str = "",
         observed_at: float | None = None,
-        *,
-        provenance: dict | None = None,
-        classification_status: str = "classified",
     ) -> bool:
         """
         Idempotent IOC upsert — skip if already upserted within this sprint session.
@@ -173,18 +147,8 @@ class GraphService:
         Idempotency is enforced via an in-memory set, so duplicate upserts within
         a sprint return False (already handled) rather than re-writing to DuckDB.
 
-        MODERN-25: provenance is now stored with the IOC for full traceability.
-        Unknown IOC types are preserved with classification_status="pending_review"
-        instead of silently converting to "pending".
-
-        Args:
-            value: IOC value
-            ioc_type: IOC type (e.g., "ipv4", "domain", "hash_sha256")
-            confidence: Confidence score 0.0-1.0
-            source: Source URL or identifier (stored in provenance)
-            observed_at: Unix timestamp of observation
-            provenance: Optional provenance dict with byte_offset, timestamp, source, protocol
-            classification_status: "classified" or "pending_review"
+        [META]-012: observed_at captures the original event timestamp for temporal
+        provenance. When None, defaults to current time (backward-compatible).
 
         Returns:
             True if IOC was newly upserted, False if it already existed or on error.
@@ -198,44 +162,85 @@ class GraphService:
             if (value, ioc_type) in self._seen_iocs:
                 return False
 
-        # MODERN-25: Preserve unknown IOC types with classification status
-        # No longer silently converting to "pending" — this caused provenance loss
+        # Sprint F214Q: Validate ioc_type against canonical taxonomy
+        # Sprint F320: unknown IOC types → "pending" (awaiting manual classification)
+        # NOT rejected — unknown types are valuable for pattern discovery
         from hledac.universal.utils.ioc_extract import IOC_TYPES as _VALID_IOC_TYPES
         if ioc_type not in _VALID_IOC_TYPES:
-            logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, preserving with pending_review")
-            classification_status = "pending_review"
+            logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, routing to 'pending'")
+            ioc_type = "pending"
 
         graph = _get_graph()
         if graph is None:
             return False
         try:
-            # MODERN-25: Pass provenance dict to graph for storage
-            row_id = graph.add_ioc(
-                value, ioc_type, confidence, source, observed_at=_ts,
-                provenance=provenance, classification_status=classification_status
-            )
+            row_id = graph.add_ioc(value, ioc_type, confidence, source, observed_at=_ts)
             if row_id is not None:
                 if _RUST_IOC_DEDUP_AVAILABLE:
                     self._seen_iocs.add(value, ioc_type)
                 else:
                     self._seen_iocs.add((value, ioc_type))
+
+                # BUG-5 FIX: Use get_running_loop() + create_task() instead of
+                # run_until_complete(). get_running_loop() raises RuntimeError when
+                # no loop is running (sync context) — we catch that and skip
+                # the fire-and-forget LanceDB upsert. This eliminates the nested
+                # event loop crash (RuntimeError: loop is already running) in Python 3.10+.
+                try:
+                    running_loop = asyncio.get_running_loop()
+                except RuntimeError:  # noqa: BLE001
+                    # No running loop — we're in a sync context, skip LanceDB upsert.
+                    # Sprint continues without the LanceDB entity (fire-and-forget).
+                    pass
+                else:
+                    try:
+                        _ = running_loop.create_task(
+                            self._upsert_lancedb_entity_async(value, ioc_type)
+                        )
+                    except Exception as _e:
+                        logger.debug(f"[GraphService] LanceDB entity upsert skipped: {_e}")
+
                 return True
             return False
         except Exception as e:
             logger.warning(f"[GraphService] upsert_ioc failed for {value}: {e}")
             return False
 
-    # ── DuckDB-backed Entity Store (MODERN-25) ────────────────────────────────
-    # Vector storage: DuckDB-backed DuckDBRAGStore
-    # See: knowledge.duckdb_rag_store.get_identity_store()
+    # ── LanceDB Entity Store Seam (Sprint P2-3) ────────────────────────────────
+
+    async def _upsert_lancedb_entity_async(
+        self, value: str, ioc_type: str
+    ) -> None:
+        """Sprint P2-3: Upsert entity embedding to LanceDBIdentityStore.
+
+        Fire-and-forget async upsert after DuckPGQ IOC insert.
+        Bounded: skips if LanceDB store unavailable (fail-soft).
+        M1 8GB: uses shared MLXEmbeddingManager singleton, no duplicate model load.
+        """
+        try:
+            from hledac.universal.knowledge.lancedb_store import get_identity_store
+
+            store = await get_identity_store()
+            # Compute embedding via shared MLX embedder (already initialized in store)
+            emb = await store._embed_single(value)
+            if emb is None:
+                return
+            # Normalize
+            import numpy as np
+            norm = np.linalg.norm(emb) + 1e-8
+            emb_norm = (np.array(emb) / norm).tolist()
+            await store.add_entity(
+                entity_id=f"{ioc_type}:{value}",
+                embedding=emb_norm,
+                aliases=[value],
+            )
+        except Exception as _e:
+            logger.debug(f"[GraphService] LanceDB entity upsert failed: {_e}")
 
     def upsert_ioc_batch(
         self,
         rows: list[tuple[str, str, float, str]],
         observed_at: float | None = None,
-        *,
-        provenance: dict | None = None,
-        classification_status: str = "classified",
     ) -> int:
         """
         Batch upsert IOCs — single DuckDB round-trip for N rows.
@@ -243,17 +248,14 @@ class GraphService:
         Idempotency is enforced via _seen_iocs (in-memory dedup set) so duplicate
         values within a sprint are filtered before the batch is sent to DuckDB.
 
-        MODERN-25: provenance is now stored with each IOC for full traceability.
-        Unknown IOC types are preserved with classification_status="pending_review"
-        instead of silently converting to "pending".
+        [META]-012: observed_at provides default timestamp for all rows.
+        Supports 5-tuple format (value, ioc_type, confidence, source, observed_at)
+        for per-row timestamps. Falls back to 4-tuple for backward compat.
 
         Args:
             rows: List of (value, ioc_type, confidence, source) tuples.
                   Optional 5th element: observed_at (Unix epoch seconds).
             observed_at: Default timestamp for rows without explicit observed_at.
-            provenance: Optional provenance dict with byte_offset, timestamp, source, protocol
-            classification_status: "classified" or "pending_review"
-
         Returns:
             Number of rows passed to DuckDB (not number actually inserted).
         """
@@ -287,11 +289,10 @@ class GraphService:
                 key = (value, ioc_type)
                 if key in self._seen_iocs:
                     continue
-            # MODERN-25: Preserve unknown IOC types with classification status
-            # No longer silently converting to "pending" — this caused provenance loss
+            # Sprint F214Q: Validate ioc_type
+            # Sprint F320: unknown IOC types → "pending" (awaiting manual classification)
             if ioc_type not in _VALID_IOC_TYPES:
-                logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, preserving with pending_review")
-                classification_status = "pending_review"
+                ioc_type = "pending"
             if has_ts_rows:
                 unique_with_ts.append((value, ioc_type, confidence, source, row_ts))
             else:
@@ -307,10 +308,9 @@ class GraphService:
         if graph is None:
             return 0
         try:
-            # MODERN-25: Pass provenance to batch upsert
             if has_ts_rows:
-                return graph.upsert_ioc_batch(unique_with_ts, provenance=provenance, classification_status=classification_status)
-            return graph.upsert_ioc_batch(unique, provenance=provenance, classification_status=classification_status)
+                return graph.upsert_ioc_batch(unique_with_ts)
+            return graph.upsert_ioc_batch(unique)
         except Exception as e:
             logger.warning(f"[GraphService] upsert_ioc_batch failed: {e}")
             return 0
@@ -368,82 +368,28 @@ class GraphService:
                     )
             except Exception:  # noqa: BLE001
                 pass
-            # ORPHANED TASK FIX: Fire relationship callbacks via safe_create_task_tracked
-            # instead of bare running_loop.create_task(). This ensures:
-            # 1. Callback tasks are registered in TaskRegistry
-            # 2. cancel_all() reaches callbacks during winddown
-            # 3. No orphaned relationship processing on sprint cancel
+            # Fire relationship callbacks (NetworkX bridge for cross-sprint persistence)
+            # BUG-5 FIX: Use get_running_loop() + create_task() instead of
+            # run_until_complete() to avoid nested loop RuntimeError.
             for cb in self._relationship_callbacks:
                 try:
                     result = cb(src, dst, rel_type, weight)
                     if asyncio.iscoroutine(result):
-                        safe_create_task_tracked(
-                            result,
-                            name=f"graph:rel_callback:{src[:16]}->{dst[:16]}",
-                            scope=TaskScope.GRAPH_SERVICE,
-                        )
+                        try:
+                            running_loop = asyncio.get_running_loop()
+                        except RuntimeError:  # noqa: BLE001
+                            # Sync context — skip async callback (fire-and-forget)
+                            pass
+                        else:
+                            try:
+                                _ = running_loop.create_task(result)
+                            except Exception as cb_e:
+                                logger.debug("[GraphService] relationship_callback failed: %s", cb_e)
                 except Exception as cb_e:
                     logger.debug("[GraphService] relationship_callback failed: %s", cb_e)
             return True
         except Exception as e:
             logger.warning(f"[GraphService] upsert_relation failed: {e}")
-            return False
-
-    def delete_relation(
-        self,
-        src: str,
-        dst: str,
-        rel_type: str,
-    ) -> bool:
-        """
-        MODERN-25: Delete a relation from the graph.
-
-        Used for rollback operations in AtomicSprintPipeline.
-
-        ISSUE-FIX: Also removes from _seen_rels in-memory set so the relation
-        can be re-upserted within the same session if needed.
-
-        Args:
-            src: Source IOC value
-            dst: Destination IOC value
-            rel_type: Relation type to delete
-
-        Returns:
-            True on success, False on error.
-        """
-        graph = _get_graph()
-        if graph is None:
-            return False
-        try:
-            # Use the stable node ID from quantum_pathfinder
-            from hledac.universal.graph.quantum_pathfinder import _stable_node_id
-            src_id = _stable_node_id(src)
-            dst_id = _stable_node_id(dst)
-            graph.con.execute(
-                "DELETE FROM ioc_edges WHERE src_id = ? AND dst_id = ? AND rel_type = ?",
-                [src_id, dst_id, rel_type],
-            )
-            # ISSUE-FIX: Remove from _seen_rels in-memory set so relation can be re-upserted
-            rel_key = (src, dst, rel_type)
-            if _RUST_IOC_DEDUP_AVAILABLE and self._seen_rels is not None:
-                # Rust IocDedupStore - try to remove if it supports removal
-                try:
-                    if hasattr(self._seen_rels, 'remove'):
-                        self._seen_rels.remove(src, dst, rel_type)
-                except Exception:  # noqa: BLE001
-                    pass
-            elif rel_key in self._seen_rels:
-                self._seen_rels.discard(rel_key)
-
-            # Remove from hot_edges_cache if present
-            try:
-                from hledac.universal.knowledge import hot_edges_cache
-                hot_edges_cache.delete_hot_edge(src_id, dst_id)
-            except Exception:  # noqa: BLE001
-                pass
-            return True
-        except Exception as e:
-            logger.warning(f"[GraphService] delete_relation({src}→{dst}) failed: {e}")
             return False
 
     def upsert_identity_edge(
@@ -539,7 +485,7 @@ class GraphService:
             logger.warning(f"[GraphService] find_entity_history failed for {value}: {e}")
             return []
 
-    async def find_connected_with_rerank(
+    async def find_connected_with_lancedb_rerank(
         self,
         seed_value: str,
         query_embedding: list[float],
@@ -548,17 +494,16 @@ class GraphService:
         similarity_threshold: float = 0.0,
     ) -> list[dict]:
         """
-        MODERN-25: Hybrid graph traversal + DuckDB vector similarity reranking.
-
-        Uses DuckDB-backed DuckDBRAGStore from knowledge.duckdb_rag_store.
+        Hybrid graph traversal + LanceDB vector similarity reranking.
 
         Flow:
         1. Graph traversal via DuckPGQGraph.find_connected() — always runs.
-        2. If DuckDB embeddings exist for connected IOCs, fetch + compute
-           cosine similarity against query_embedding.
+        2. If LanceDB embeddings exist for connected IOCs, fetch + compute
+           MLX cosine similarity against query_embedding.
         3. Rerank by similarity, filter by threshold, return top_k.
 
-        M1 8GB safe: DuckDB manages memory via hard_memory_limit.
+        M1 8GB safe: RAM guard before MLX ops; LanceDB handles its own
+        memory budget via IVF-PQ quantization (HLEDAC_LANCEDB_QUANTIZE=1).
 
         Args:
             seed_value: IOC value to start graph traversal from.
@@ -569,7 +514,7 @@ class GraphService:
 
         Returns:
             List of connected IOCs reranked by vector similarity, or
-            plain graph results if DuckDB reranking unavailable / fails.
+            plain graph results if LanceDB reranking unavailable / fails.
         """
         # Step 1: Pure graph traversal
         graph = _get_graph()
@@ -583,17 +528,28 @@ class GraphService:
         if not connected:
             return []
 
-        # Step 2: DuckDB reranking (only if embedding provided)
+        # Step 2: LanceDB reranking (only if embedding provided)
         if query_embedding is None:
             return connected[:top_k]
 
-        # DuckDB-backed reranking via DuckDBRAGStore
+        # Check LanceDB availability + RAM
         try:
-            from hledac.universal.knowledge.duckdb_rag_store import DuckDBRAGStore
-            store = DuckDBRAGStore()
-            connected_values = [c["value"] for c in connected]
+            from hledac.universal.knowledge.lancedb_store import get_identity_store
+        except Exception:
+            logger.debug("[GraphService] LanceDB identity store unavailable")
+            return connected[:top_k]
 
-            # DuckDB FTS5 + HNSW reranking
+        try:
+            store = await get_identity_store()
+        except Exception:
+            logger.debug("[GraphService] get_identity_store() failed")
+            return connected[:top_k]
+
+        try:
+            connected_values = [c["value"] for c in connected]
+            # LanceDB semantic search — returns entities ranked by similarity to query_embedding.
+            # Uses text_hint as optional FTS boost; the entity id == IOC value so
+            # LanceDB scores reflect how semantically close each stored IOC is to query.
             reranked = await store.search_similar(
                 embedding=query_embedding,
                 text_hint=",".join(connected_values[:50]),
@@ -602,20 +558,27 @@ class GraphService:
                 query_type="hybrid",
             )
             if not reranked:
+                # LanceDB returned no results — fall back to graph order
                 return connected[:top_k]
 
-            # Build score map
+            # Build score map: LanceDB id == IOC value
+            # LanceDB returns {id, similarity, ...} per result
             score_map: dict[str, float] = {}
             for r in reranked:
                 ioc_val = r.get("id", "")
                 if ioc_val:
                     score_map[ioc_val] = float(r.get("similarity", 0.0))
 
-            # Score and rank
+            # If LanceDB has very few overlapping IOCs with graph, fall back to graph order
             overlap = sum(1 for v in connected_values if v in score_map)
             if overlap < max(1, len(connected_values) * 0.1):
+                logger.debug(
+                    f"[GraphService] LanceDB overlap {overlap}/{len(connected_values)} "
+                    "too sparse — using graph order"
+                )
                 return connected[:top_k]
 
+            # Score graph-connected IOCs by LanceDB similarity; unknown → -1 (push to end)
             scored: list[tuple[float, dict]] = []
             for c in connected:
                 val = c.get("value", "")
@@ -624,8 +587,10 @@ class GraphService:
                 c_copy["_similarity_score"] = sim
                 scored.append((sim, c_copy))
 
+            # Sort descending by similarity (LanceDB order dominates when available)
             scored.sort(key=lambda x: x[0], reverse=True)
 
+            # Filter by threshold and cap
             result: list[dict] = []
             for sim, c in scored:
                 if similarity_threshold > 0 and sim < similarity_threshold:
@@ -636,11 +601,8 @@ class GraphService:
                     break
             return result
 
-        except ImportError:
-            logger.debug("[GraphService] DuckDBRAGStore unavailable, using graph order")
-            return connected[:top_k]
         except Exception as e:
-            logger.debug(f"[GraphService] DuckDB rerank failed: {e}")
+            logger.debug(f"[GraphService] LanceDB rerank failed: {e}")
             return connected[:top_k]
 
     def find_connected_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict]]:
@@ -702,24 +664,14 @@ class GraphService:
 
     def reset_session(self) -> None:
         """
-        MODERN-35: Clear session-level idempotency trackers and graph singleton.
+        Clear session-level idempotency trackers and graph singleton.
 
         Call at sprint start to prevent cross-sprint state leakage.
         Resets only this instance's state — does NOT affect other instances.
-
-        MODERN-35 FIX: Now calls close() on the old DuckPGQGraph before
-        setting _DUCKPGQ_GRAPH = None to properly release DuckDB connection
-        and lock.
         """
         global _DUCKPGQ_GRAPH
         self._seen_iocs.clear()
         self._seen_rels.clear()
-        # MODERN-35: Close the old graph before setting to None
-        if _DUCKPGQ_GRAPH is not None:
-            try:
-                _DUCKPGQ_GRAPH.close()
-            except Exception:  # noqa: BLE001
-                pass
         _DUCKPGQ_GRAPH = None
 
     # ── Analytics ─────────────────────────────────────────────────────────────
@@ -853,6 +805,148 @@ class GraphService:
             logger.warning(f"[GraphService] community_detection failed: {e}")
             return {}
 
+    async def parallel_graph_analytics(
+        self,
+        top_k: int = MAX_GRAPH_ANALYTICS_TOP_K,
+        pagerank_max_iter: int = 100,
+        pagerank_damping: float = 0.85,
+        *,
+        concurrency: int = 3,
+        ctx: str = "graph_service:parallel_analytics",
+    ) -> dict:
+        """
+        ISSUE-006 FIX: Parallel graph analytics — runs independent DuckDB queries concurrently.
+
+        FIXES false parallelism from ISSUE-006: DuckPGQGraph methods (pagerank,
+        community_detection, get_top_nodes_by_degree) are SYNCHRONOUS DuckDB SQL
+        operations. Wrapping them in async def + parallel() was pseudo-parallelism
+        (still sequential in same thread).
+
+        SOLUTION: Use to_thread_rayon() to offload each sync DuckDB call to a
+        separate rayon CPU pool thread. This achieves true parallelism since
+        DuckDB can run concurrent queries on its connection pool.
+
+        Executes multiple analytics operations in parallel:
+        - Top nodes by degree
+        - PageRank scores
+        - Community detection
+
+        Args:
+            top_k: Number of top entities to return (default 10)
+            pagerank_max_iter: PageRank max iterations (default 100)
+            pagerank_damping: PageRank damping factor (default 0.85)
+            concurrency: Max concurrent analytics operations (default 3)
+            ctx: Context string for parallel() call
+
+        Returns:
+            Dict with keys:
+                - top_central_entities: list of {value, ioc_type, degree}
+                - pagerank: dict mapping IOC value → PageRank score
+                - communities: dict mapping community_id → list of IOC values
+                - analytics_available: bool
+                - errors: list of error messages
+        """
+        from hledac.universal.utils.asyncx import parallel
+        from hledac.universal.utils.sync_bridge import to_thread_rayon
+
+        graph = _get_graph()
+        if graph is None:
+            return {
+                "top_central_entities": [],
+                "pagerank": {},
+                "communities": {},
+                "analytics_available": False,
+                "errors": ["graph_unavailable"],
+            }
+
+        errors: list[str] = []
+        n = min(top_k, MAX_GRAPH_ANALYTICS_NODES)
+
+        # ISSUE-006 FIX: Use to_thread_rayon to offload sync DuckDB calls to separate threads.
+        # This achieves TRUE parallelism since DuckDB runs queries concurrently.
+        async def _top_nodes() -> list:
+            try:
+                return await to_thread_rayon(
+                    "cpu",
+                    graph.get_top_nodes_by_degree,
+                    (n,),
+                    timeout=30.0,
+                )
+            except Exception as e:
+                errors.append(f"top_nodes: {e}")
+                return []
+
+        async def _pagerank() -> dict:
+            try:
+                return await to_thread_rayon(
+                    "cpu",
+                    graph.pagerank,
+                    (pagerank_max_iter, pagerank_damping),
+                    timeout=60.0,
+                )
+            except Exception as e:
+                errors.append(f"pagerank: {e}")
+                return {}
+
+        async def _communities() -> dict:
+            try:
+                return await to_thread_rayon(
+                    "cpu",
+                    graph.community_detection,
+                    ("louvain",),
+                    timeout=60.0,
+                )
+            except Exception as e:
+                errors.append(f"communities: {e}")
+                return {}
+
+        # Execute all analytics concurrently with bounded concurrency
+        results = await parallel(
+            [_top_nodes(), _pagerank(), _communities()],
+            policy="collect",
+            concurrency=concurrency,
+            ctx=ctx,
+        )
+
+        top_nodes_raw = results[0] if len(results) > 0 else []
+        pagerank_scores = results[1] if len(results) > 1 else {}
+        communities = results[2] if len(results) > 2 else {}
+
+        # Process top nodes into structured format
+        confidence_by_node: dict[str, float] = {}
+        for row in top_nodes_raw:
+            if not isinstance(row, dict):
+                continue
+            v = row.get("value", "")
+            c = row.get("confidence", 0.5)
+            if v:
+                confidence_by_node[v] = max(0.0, min(1.0, c))
+
+        entities = []
+        for row in top_nodes_raw[:top_k]:
+            if not isinstance(row, dict):
+                continue
+            val = row.get("value", "")
+            ioc = row.get("ioc_type", "unknown")
+            deg = int(row.get("degree", 0))
+            if val:
+                entities.append({
+                    "value": val,
+                    "ioc_type": ioc,
+                    "degree": deg,
+                    "max_confidence": confidence_by_node.get(val, 0.5),
+                })
+
+        return {
+            "top_central_entities": entities,
+            "confidence_by_node": confidence_by_node,
+            "pagerank": pagerank_scores,
+            "communities": communities,
+            "community_count": len(communities) if communities else 0,
+            "analytics_available": True,
+            "errors": errors if errors else None,
+        }
+
 
 # ── Module-level singleton facade ──────────────────────────────────────────────
 # Default instance — preserves backward compatibility for code that imports
@@ -869,41 +963,15 @@ def upsert_ioc(
     confidence: float = 0.5,
     source: str = "",
     observed_at: float | None = None,
-    *,
-    provenance: dict | None = None,
-    classification_status: str = "classified",
 ) -> bool:
-    """
-    MODERN-25: Pass provenance and classification_status through to GraphService.
-
-    Args:
-        provenance: Optional provenance dict with byte_offset, timestamp, source, protocol
-        classification_status: "classified" or "pending_review"
-    """
-    return _DEFAULT_GRAPH_SERVICE.upsert_ioc(
-        value, ioc_type, confidence, source, observed_at=observed_at,
-        provenance=provenance, classification_status=classification_status
-    )
+    return _DEFAULT_GRAPH_SERVICE.upsert_ioc(value, ioc_type, confidence, source, observed_at=observed_at)
 
 
 def upsert_ioc_batch(
     rows: list[tuple[str, str, float, str]],
     observed_at: float | None = None,
-    *,
-    provenance: dict | None = None,
-    classification_status: str = "classified",
 ) -> int:
-    """
-    MODERN-25: Pass provenance and classification_status through to GraphService.
-
-    Args:
-        provenance: Optional provenance dict with byte_offset, timestamp, source, protocol
-        classification_status: "classified" or "pending_review"
-    """
-    return _DEFAULT_GRAPH_SERVICE.upsert_ioc_batch(
-        rows, observed_at=observed_at,
-        provenance=provenance, classification_status=classification_status
-    )
+    return _DEFAULT_GRAPH_SERVICE.upsert_ioc_batch(rows, observed_at=observed_at)
 
 
 def upsert_relation(
@@ -942,17 +1010,15 @@ def checkpoint() -> None:
 
 
 def reset_session() -> None:
-    """
-    MODERN-35: Reset session-level idempotency trackers and graph singleton.
-    
-    Delegates to _DEFAULT_GRAPH_SERVICE.reset_session() which:
-    1. Clears instance-level _seen_iocs and _seen_rels sets
-    2. Closes and nullifies the module-level _DUCKPGQ_GRAPH singleton
-    
-    MODERN-35 FIX: Removed duplicate close() call. GraphService.reset_session()
-    already calls close() on _DUCKPGQ_GRAPH before setting it to None.
-    """
+    global _DUCKPGQ_GRAPH
     _DEFAULT_GRAPH_SERVICE.reset_session()
+    # ISSUE-5.1: close() before None to release DuckDB connection and lock
+    if _DUCKPGQ_GRAPH is not None:
+        try:
+            _DUCKPGQ_GRAPH.close()
+        except Exception:  # noqa: BLE001
+            pass
+    _DUCKPGQ_GRAPH = None
 
 
 def shutdown_graph() -> None:
@@ -976,6 +1042,24 @@ def shutdown_graph() -> None:
 
 def graph_analytics_summary(top_k: int = MAX_GRAPH_ANALYTICS_TOP_K) -> dict:
     return _DEFAULT_GRAPH_SERVICE.graph_analytics_summary(top_k)
+
+
+async def parallel_graph_analytics(
+    top_k: int = MAX_GRAPH_ANALYTICS_TOP_K,
+    pagerank_max_iter: int = 100,
+    pagerank_damping: float = 0.85,
+    *,
+    concurrency: int = 3,
+    ctx: str = "graph_service:parallel_analytics",
+) -> dict:
+    """Async module-level facade for parallel_graph_analytics."""
+    return await _DEFAULT_GRAPH_SERVICE.parallel_graph_analytics(
+        top_k=top_k,
+        pagerank_max_iter=pagerank_max_iter,
+        pagerank_damping=pagerank_damping,
+        concurrency=concurrency,
+        ctx=ctx,
+    )
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
@@ -1004,9 +1088,11 @@ __all__ = [
     "upsert_relation",
     "upsert_identity_edge",
     "find_entity_history",
+    "find_connected_batch",
     "graph_stats",
     "checkpoint",
     "reset_session",
     "shutdown_graph",
     "graph_analytics_summary",
+    "parallel_graph_analytics",
 ]

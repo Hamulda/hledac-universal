@@ -78,7 +78,7 @@ class H2CircuitBreaker:
             logger.warning(
                 f"[HTTPX] httpx_h2 auto-disabled after {self._failure_count} failures "
                 f"(threshold={_MAX_HTTPX_H2_FAILURES})"
-            )
+    )
 
     def reset(self) -> None:
         """Reset state — for tests only."""
@@ -438,7 +438,7 @@ async def fetch_via_httpx_h2(
             headers=headers,
             timeout=timeout_s,
             follow_redirects=False,  # Manual handling required for SSRF validation
-        )
+    )
         last_response = response
 
         # Check for redirect status codes
@@ -492,7 +492,7 @@ _PRIVATE_NETS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (  # 
     ipaddress.ip_network("fe80::/10"),        # RFC 4291: link-local unicast
     ipaddress.ip_network("2001::/32"),        # RFC 4380: Teredo tunnel
     ipaddress.ip_network("ff00::/8"),         # RFC 4291: multicast
-)
+    )
 
 
 def _is_ssrf_safe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -561,7 +561,7 @@ async def _validate_redirect_url(redirect_url: str) -> None:
                     raise _SSRFBlockError(
                         f"Redirect to private/reserved IP via DNS rebinding blocked: {redirect_url} "
                         f"(resolved to {ip_str})"
-                    )
+    )
             except ValueError:  # noqa: BLE001
                 pass  # Not an IP format, skip (shouldn't happen from getaddrinfo)
     except _SSRFBlockError:

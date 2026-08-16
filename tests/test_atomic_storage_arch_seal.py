@@ -57,7 +57,7 @@ ALLOWED_PREFIXES = (
     ("docs/", "docs may reference"),
     ("reports/", "reports may reference"),
     ("knowledge/atomic_storage.py", "the shim itself"),
-)
+    )
 
 # BANNED directory prefixes (relative to universal/)
 BANNED_DIRS = (
@@ -67,7 +67,7 @@ BANNED_DIRS = (
     "runtime/",
     "pipeline/",
     "layers/",
-)
+    )
 
 
 class ImportFinding(NamedTuple):
@@ -165,10 +165,10 @@ class TestAtomicStorageArchitectureSeal:
         text = shim_path.read_text()
         assert "DeprecationWarning" in text, (
             "Shim must emit DeprecationWarning to warn callers"
-        )
+    )
         assert "duckdb_store" in text, (
             "Shim must reference duckdb_store as canonical replacement"
-        )
+    )
 
 
 class TestLayerManagerMigrated:
@@ -183,10 +183,10 @@ class TestLayerManagerMigrated:
         assert "from ..knowledge.atomic_storage import" not in text, (
             "layer_manager.py must not import from knowledge.atomic_storage shim; "
             "use ..legacy.atomic_storage instead"
-        )
+    )
 
         # Should use explicit legacy path
         assert "from ..legacy.atomic_storage import AtomicJSONKnowledgeGraph" in text, (
             "layer_manager.py should import AtomicJSONKnowledgeGraph "
             "directly from ..legacy.atomic_storage"
-        )
+    )

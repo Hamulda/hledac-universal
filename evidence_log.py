@@ -19,6 +19,8 @@ import gzip
 import hashlib
 import logging
 
+logger = logging.getLogger(__name__)
+
 import os
 import secrets
 import threading
@@ -181,7 +183,7 @@ def _archive_sync_worker(
             http_request=http_request,
             http_response=http_response,
             content_type=content_type,
-        )
+    )
     except Exception:  # noqa: BLE001 — fail-safe
         return None
 
@@ -249,7 +251,7 @@ def archive_http_response_cached(
                 http_request,
                 http_response,
                 content_type,
-            )
+    )
             return _future.result(timeout=3.0)
         except Exception:  # noqa: BLE001 — fail-safe; timeout or scheduling error
             return None
@@ -257,7 +259,7 @@ def archive_http_response_cached(
         # Sync context: call the worker directly
         return _archive_sync_worker(
             url, _ts, http_request, http_response, content_type,
-        )
+    )
 
 
 def _register_warc_path(path: str) -> None:
@@ -650,7 +652,7 @@ def _parse_warc_record_from_bytes(
                 "warc_seek_record_id_mismatch",
                 expected=expected_record_id,
                 found=_record_id
-            )
+    )
             return None
 
         # Extract body (HTTP response/request)
@@ -831,7 +833,7 @@ class WARCWriter:
                     f"WARC-Identified-Payload-Type: application/http;msgtype=response\r\n"
                     f"WARC-Filename: {self._path.name}\r\n"
                     f"\r\n"
-                )
+    )
 
                 # Request record (Section 7.3 — request is separate record for full context)
                 request_header = (
@@ -843,7 +845,7 @@ class WARCWriter:
                     f"Content-Length: {len(http_request)}\r\n"
                     f"Content-Type: application/http;msgtype=request\r\n"
                     f"\r\n"
-                )
+    )
 
                 # Write request record
                 request_block = request_header.encode('utf-8', errors='replace') + http_request + b"\r\n"
@@ -885,7 +887,7 @@ class WARCWriter:
                     success=True,
                     compressed_offset=compressed_offset,
                     compressed_size=compressed_size,
-                )
+    )
 
         except Exception as e:  # noqa: BLE001 — fail-safe: never blocks sprint
             try:
@@ -946,7 +948,7 @@ class WARCWriter:
                     f"WARC-Payload-Digest: {payload_digest}\r\n"
                     f"WARC-Filename: {self._path.name}\r\n"
                     f"\r\n"
-                )
+    )
 
                 block = header.encode('utf-8', errors='replace') + http_response + b"\r\n"
                 self._file.write(block)
@@ -981,7 +983,7 @@ class WARCWriter:
                     success=True,
                     compressed_offset=compressed_offset,
                     compressed_size=compressed_size,
-                )
+    )
 
         except Exception as e:  # noqa: BLE001
             try:
@@ -1539,7 +1541,7 @@ class _RustMPSCBytes:
             # call_later is safe — if loop is closed, callback simply doesn't fire
             self._retry_handle = loop.call_later(
                 self._retry_delay, _retry_callback
-            )
+    )
             self._pending_retry = True
             # Exponential backoff: double delay, cap at 60s
             self._retry_delay = min(self._retry_delay * 2, 60.0)
@@ -1970,7 +1972,8 @@ class EvidenceLog:
             self._async_write_task = None
         if self._mpsc2_reader:
             try: self._mpsc2_reader.close()
-            except Exception: pass
+            except Exception:  # noqa: BLE001 — best-effort; mpsc2 reader close failure; non-critical
+                logger.debug("Failed to close mpsc2 reader: %s", type(e).__name__, exc_info=True)
             self._mpsc2_reader = None
 
     def _restart_workers(self) -> None:
@@ -2076,7 +2079,7 @@ class EvidenceLog:
                         hash VARCHAR NOT NULL,
                         prev_chain_hash VARCHAR,
                         chain_hash VARCHAR
-                    )
+    )
                 ''')
                 self._duckdb_enabled = True
                 logger.info("duckdb_arrow_ipc_evidence_enabled", db_path=str(self._db_path))
@@ -2111,7 +2114,7 @@ class EvidenceLog:
                     hash TEXT NOT NULL,
                     prev_chain_hash TEXT,
                     chain_hash TEXT
-                )
+    )
             ''')
             await self._db.commit()
             _ensure_evidence_sqlite_executor()
@@ -2193,7 +2196,7 @@ class EvidenceLog:
         _flush_interval = (
             self._BLITZ_FLUSH_INTERVAL_S if self._blitz_mode
             else self._SQLITE_FLUSH_INTERVAL
-        )
+    )
         while True:
             try:
                 async with asyncio.timeout(1.0):
@@ -2446,7 +2449,7 @@ class EvidenceLog:
                 self._duckdb_conn.executemany(
                     'INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)',
                     records,
-                )
+    )
                 self._duckdb_conn.commit()
             except Exception as e:  # noqa: BLE001
                 logger.warning("flush_duckdb_batch_executemany_failed", error=str(e))
@@ -2502,7 +2505,7 @@ class EvidenceLog:
                 conn.executemany(
                     'INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)',
                     records
-                )
+    )
                 conn.commit()
                 conn.close()
             except Exception as e:  # noqa: BLE001
@@ -2744,7 +2747,7 @@ class EvidenceLog:
         event.prev_chain_hash = self._chain_head
         event.chain_hash = self._compute_chain_hash(
             self._chain_head, event.content_hash, event.event_id
-        )
+    )
         self._chain_head = event.chain_hash
 
     def append(self, event: EvidenceEvent) -> None:
@@ -2849,7 +2852,7 @@ class EvidenceLog:
             payload=orjson.dumps(scrubbed_payload),
             source_ids=source_ids or [], confidence=confidence,
             content_hash="", run_id=self._run_id,
-        )
+    )
         event.prev_chain_hash = chain_head
         event.content_hash = event.calculate_hash()
         chain_input = f'{chain_head}:{event.content_hash}:{event.event_id}'
@@ -2956,7 +2959,7 @@ class EvidenceLog:
                         branch_id=_co.get('branch_id') if _co else None,
                         provider_id=_co.get('provider_id') if _co else None,
                         action_id=_co.get('action_id') if _co else None,
-                    )
+    )
         except Exception:
             pass
 
@@ -3045,7 +3048,7 @@ class EvidenceLog:
                     url=fetch_result.url,
                     http_response=fetch_result.body,
                     content_type=f"application/http;msgtype=response;charset={fetch_result.content_type or 'utf-8'}",
-                )
+    )
                 if prov:
                     logger.debug("warc_archived", url=url, record_id=prov.record_id)
         """
@@ -3168,12 +3171,12 @@ class EvidenceLog:
             _body_start = http_response.find(b'\r\n\r\n')
             _raw_headers = (
                 http_response[:_body_start] if _body_start >= 0 else b''
-            )
+    )
             _body_bytes = (
                 http_response[_body_start + 4:]
                 if _body_start >= 0
                 else http_response
-            )
+    )
 
             # Extract status from first response line
             _status = prov.status or 0
@@ -4048,7 +4051,7 @@ class EvidenceLog:
             name="EvidenceLog",
             coro=self._do_shutdown(),
             timeout_s=timeout_s if timeout_s is not None else self.DEFAULT_TIMEOUT_S,
-        )
+    )
 
     async def _cancel_task_with_timeout(self, task, label, timeout1=5.0, timeout2=2.0):
         """Cancel a task with two-stage timeout."""
@@ -4154,7 +4157,8 @@ class EvidenceLog:
         """Inner cleanup — called by aclose() via shutdown_aclose()."""
         self._closing = True
         try: self._wal_checkpoint()
-        except Exception: pass
+        except Exception:  # noqa: BLE001 — best-effort; WAL checkpoint failure; non-critical
+            logger.debug("WAL checkpoint failed: %s", type(e).__name__, exc_info=True)
         await self._cancel_watcher()
         await self._shutdown_workers()
         drained, mpsc2_drained = self._mpsc.recv_batch(max_items=None), self._mpsc2.recv_batch(max_items=None)
@@ -4635,7 +4639,7 @@ class EvidenceLog:
         return self._assemble_retrospective_bundle(
             health, total, health_status, posture,
             error_rate, decision_count, low_conf_pressure
-        )
+    )
 
     def get_chain(self, event_id: str) -> list[EvidenceEvent]:
         """
@@ -4678,4 +4682,4 @@ from hledac.universal.evidence import (
     get_warc_paths,
     get_warc_snippets,
     _clear_warc_globals,
-)
+    )

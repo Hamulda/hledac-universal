@@ -1,27 +1,25 @@
 """
 fetching/curl_cffi_fetch.py
 
-E2 FIX: Thin re-export layer for curl_cffi with CAPS capability checking.
+ISSUE-0.2 FIX: Primary transport wrapper for curl_cffi with JA3 profile rotation.
 
-This module is a thin wrapper around the canonical transport/curl_cffi_fetch.py
-that adds CAPS-based capability checking for the fetch coordinator layer.
+This module provides the canonical fetch interface using curl_cffi with:
+- JA3/TLS fingerprint rotation (6 browser profiles)
+- CAPS-based capability checking (never falls back to httpx without JA3)
+- Per-host session caching with LRU eviction
+- HTTP/3 Alt-Svc support via prewarm pool
 
-Architecture (E2 invariant):
-  coordinators/ (FetchCoordinator, OpsECCoordinator)
+Architecture:
+  FetchCoordinator (coordinators/)
       ↓
-  fetching/curl_cffi_fetch.py    ← THIS MODULE (thin CAPS check + re-export)
+  fetching/curl_cffi_fetch.py    ← THIS MODULE (CAPS check + JA3)
       ↓
-  transport/curl_cffi_fetch.py   ← canonical implementation (THE entry point)
+  transport/curl_cffi_fetch.py   ← canonical implementation
 
-E2 FIX Notes:
-- transport/curl_cffi_fetch.py is the SINGLE canonical curl_cffi entry point
-- fetching/curl_cffi_fetch.py is a thin re-export layer with CAPS checks
-- Coordinators MUST use this module to access curl_cffi, not raw AsyncSession
-- This ensures fail-closed darknet guard, JA3 rotation, session reuse, max_bytes cap
-
-Fallback chain:
+Fallback chain (ISSUE-0.2):
   curl_cffi available → use JA3 spoofing ✓
-  curl_cffi unavailable via CAPS → FAIL FAST (no silent httpx fallback)
+  curl_cffi unavailable → FAIL FAST (no silent httpx fallback)
+  Lightpanda failure → curl_cffi → FAIL FAST (never plain httpx)
 """
 
 from __future__ import annotations
@@ -33,19 +31,9 @@ from hledac.universal._core.capabilities import CAPS, CURL_CFFI
 
 # Re-export all public symbols from canonical implementation
 # This maintains backward compatibility while adding CAPS enforcement
-# E2 FIX: All curl_cffi access goes through this layer
-
-
-
-
-
-    # Core fetch functions
-    fetch_via_curl_cffi,  # E2: canonical entry point
-    fetch_via_curl_cffi_cached,  # GET with conditional-GET (304) shortcut
-    fetch_via_tor_curl_cffi,  # E2: darknet Tor SOCKS5H fetch
-    fetch_via_i2p_curl_cffi,  # darknet I2P SOCKS5H fetch
-
-from _core import aclose    # Capability checks
+from hledac.universal.transport.curl_cffi_fetch import (
+    fetch_via_curl_cffi_cached,
+    fetch_via_i2p_curl_cffi,
     is_curl_cffi_available,
     async_get_curl_cffi_session,
     async_get_curl_cffi_session_for_host,
@@ -136,10 +124,6 @@ async def fetch_via_curl_cffi_with_caps_check(
             profile=profile,
             **kwargs,
         )
-    except RuntimeError:
-        # FIX: RuntimeError should propagate, not be swallowed
-        # This catches critical errors that should not be silently ignored
-        raise
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[ISSUE-0.2] curl_cffi fetch failed: {e}")
         return None
@@ -147,10 +131,7 @@ async def fetch_via_curl_cffi_with_caps_check(
 
 __all__ = [
     # From transport/curl_cffi_fetch (re-exported)
-    # E2 FIX: Added fetch_via_curl_cffi and fetch_via_tor_curl_cffi
-    "fetch_via_curl_cffi",  # E2: canonical entry point
     "fetch_via_curl_cffi_cached",
-    "fetch_via_tor_curl_cffi",  # E2: darknet Tor fetch
     "fetch_via_i2p_curl_cffi",
     "is_curl_cffi_available",
     "async_get_curl_cffi_session",
@@ -162,7 +143,7 @@ __all__ = [
     "HLEDAC_DEBUG_JA3",
     "_JA3_ROTATION_POOL",
     "_blocking_altsvc_probe_for_url",
-    # ISSUE-0.2 additions (CAPS-specific)
+    # ISSUE-0.2 additions
     "is_curl_cffi_capable",
     "require_curl_cffi",
     "fetch_via_curl_cffi_with_caps_check",

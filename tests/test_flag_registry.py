@@ -3,7 +3,7 @@ F11 Phase 2 — Declarative FlagSpec registry tests.
 
 Six tests verify the invariants of
 ``utils.flag_registry.FlagSpec`` / :data:`utils.flag_registry.FLAG_REGISTRY`
-and the companion :func:`core.feature_flags.is_enabled` resolver.
+and the companion :func:`utils.feature_flags.is_enabled` resolver.
 
 Run with::
 
@@ -15,12 +15,8 @@ from typing import cast
 
 import pytest
 
-from hledac.universal._core.feature_flags import is_enabled
-
-
-
-
-
+from hledac.universal.utils.feature_flags import is_enabled
+from hledac.universal.utils.flag_registry import (
     FLAG_REGISTRY,
     FlagGroup,
     VALID_GROUPS,
@@ -32,8 +28,7 @@ from hledac.universal._core.feature_flags import is_enabled
 )
 
 # ---------------------------------------------------------------------------
-
-from _core import aclose# Group integrity
+# Group integrity
 # ---------------------------------------------------------------------------
 
 def test_all_registered_flags_have_valid_groups() -> None:

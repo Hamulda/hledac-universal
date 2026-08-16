@@ -41,7 +41,7 @@ except ImportError as _e:
 pytestmark = pytest.mark.skipif(
     not _HAS_RUST,
     reason=_SKIP_REASON,
-)
+    )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ class TestBlake3:
         """BLAKE3("") = af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"""
         assert ContentHasher.blake3_hex(b"") == (
             "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
-        )
+    )
 
     def test_blake3_hex_returns_64_lowercase_hex(self) -> None:
         h = ContentHasher.blake3_hex(b"test")

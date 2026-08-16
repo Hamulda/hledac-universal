@@ -21,13 +21,13 @@ warnings.warn(
     "Import from coordinators.resource.resource_coordinator instead.",
     DeprecationWarning,
     stacklevel=2,
-)
+    )
 
 # Re-export from new location for backwards compatibility
 from hledac.universal.coordinators.resource.resource_coordinator import (
     BackpressureDecision,
     BackpressureMonitor,
-)
+    )
 from _core import aclose
 
 __all__ = [

@@ -43,7 +43,7 @@ class VisionOCR:
             if file_size > max_size_bytes:
                 logger.warning(
                     f"[VisionOCR] File too large: {image_path} ({file_size} bytes > {max_size_bytes} bytes), skipping"
-                )
+    )
                 return []
         except OSError as e:
             logger.warning(f"[VisionOCR] Could not get file size for {image_path}: {e}")

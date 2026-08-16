@@ -246,7 +246,7 @@ class PressureSampler:
                     total_gib=total,
                     metal_active_gib=metal,
                     timestamp=now,
-                )
+    )
         except Exception:
             logger.debug("[MemoryPressure] Rust snapshot failed, trying mach")
 
@@ -265,7 +265,7 @@ class PressureSampler:
                 total_gib=max(total, 8.0),
                 metal_active_gib=0.0,
                 timestamp=now,
-            )
+    )
         except Exception:
             logger.debug("[MemoryPressure] mach snapshot failed, trying psutil")
 
@@ -288,7 +288,7 @@ class PressureSampler:
                 total_gib=total,
                 metal_active_gib=0.0,
                 timestamp=now,
-            )
+    )
         except Exception:
             logger.warning("[MemoryPressure] All sampling methods failed — returning NORMAL")
             return _PressureSample(
@@ -298,7 +298,7 @@ class PressureSampler:
                 total_gib=8.0,
                 metal_active_gib=0.0,
                 timestamp=now,
-            )
+    )
 
     @staticmethod
     def _derive_level(available_gib: float) -> MemoryPressureLevel:
@@ -427,13 +427,13 @@ class MemoryPressureBroadcaster:
                 listener=listener,
                 priority=listener.listener_priority,
                 name=name,
-            )
+    )
             self._listeners.append(entry)
             self._listeners.sort(key=attrgetter("priority"))
             logger.info(
                 f"[MemoryPressure] registered listener: {name} "
                 f"(priority={listener.listener_priority})"
-            )
+    )
 
     def unregister(self, listener: MemoryPressureListener) -> bool:
         """
@@ -474,7 +474,7 @@ class MemoryPressureBroadcaster:
         self._running = True
         self._monitor_task = asyncio.create_task(
             self._monitor_loop(), name="memory_pressure:monitor"
-        )
+    )
         logger.info("[MemoryPressure] Broadcaster started (poll=%.1fs)", self._poll_interval_s)
 
     async def stop(self) -> None:
@@ -512,7 +512,7 @@ class MemoryPressureBroadcaster:
                 "[MemoryPressure] forced check: %s → %s (avail=%.2f GiB, rss=%.2f GiB)",
                 old_level.name, sample.level.name,
                 sample.available_gib, sample.rss_gib,
-            )
+    )
         return sample.level
 
     def get_current_level(self) -> MemoryPressureLevel:
@@ -562,7 +562,7 @@ class MemoryPressureBroadcaster:
                         old.name, new_level.name,
                         sample.available_gib, sample.rss_gib,
                         sample.metal_active_gib,
-                    )
+    )
 
                     await self._notify_listeners(new_level, sample)
 
@@ -609,13 +609,13 @@ class MemoryPressureBroadcaster:
                     await asyncio.to_thread(fn)
                     logger.debug(
                         "[MemoryPressure] notified %s: %s", entry.name, method
-                    )
+    )
             except Exception:
                 # Fail-open: one bad listener must not affect others
                 logger.debug(
                     "[MemoryPressure] listener %s.%s() failed",
                     entry.name, method, exc_info=True,
-                )
+    )
 
         # CRITICAL: after all listeners evicted, do madvise heap flush
         if level == MemoryPressureLevel.CRITICAL:
@@ -657,7 +657,7 @@ class MemoryPressureBroadcaster:
                 ctypes.c_void_p(0),  # addr=0: whole address space
                 ctypes.c_size_t(0),  # length=0: whole address space
                 4,  # MADV_DONTNEED
-            )
+    )
         except Exception:  # noqa: BLE001
             pass
 

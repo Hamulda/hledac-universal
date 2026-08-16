@@ -12,11 +12,7 @@ _warnings.warn(
     stacklevel=2,
 )
 
-
-
-
-
-
+from hledac.universal.utils.mlx_memory._slab import (
     MetalSlabPool,
     release_slab_pool,
 )
@@ -25,5 +21,3 @@ __all__ = [
     "MetalSlabPool",
     "release_slab_pool",
 ]
-
-from _core import aclose

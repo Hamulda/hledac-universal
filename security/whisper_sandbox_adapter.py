@@ -135,7 +135,7 @@ class SeatbeltWhisperAdapter:
             from hledac.universal.security.media_sandbox import (
                 MediaSandboxCoordinator,
                 SANDBOX_ENABLED,
-            )
+    )
             return MediaSandboxCoordinator(enabled=SANDBOX_ENABLED)
         except ImportError:
             return None
@@ -153,14 +153,14 @@ class SeatbeltWhisperAdapter:
                 text="",
                 error="MediaSandboxCoordinator unavailable",
                 sandboxed=False,
-            )
+    )
         
         result = await self._coordinator.run_whisper_transcription(
             audio_path=str(audio_path),
             model_size=model_size,
             language=language,
             timeout_s=timeout_s,
-        )
+    )
         
         return WhisperSandboxResult(
             text=result.text,
@@ -171,7 +171,7 @@ class SeatbeltWhisperAdapter:
             segments=result.segments,
             sandboxed=result.sandboxed,
             seatbelt_used=result.seatbelt_used,
-        )
+    )
     
     @property
     def is_sandboxed(self) -> bool:
@@ -188,7 +188,7 @@ class SeatbeltWhisperAdapter:
             sandboxed=s.whisper_sandboxed,
             fallback=s.whisper_fallback,
             errors=s.errors,
-        )
+    )
 
 
 class DirectWhisperAdapter:
@@ -220,7 +220,7 @@ class DirectWhisperAdapter:
         
         logger.warning(
             "[DirectWhisperAdapter] SECURITY: Running WITHOUT sandbox isolation"
-        )
+    )
         
         try:
             from hledac.universal.brain.whisper_engine import get_whisper_engine
@@ -229,7 +229,7 @@ class DirectWhisperAdapter:
             raw = await safe_wait_for(
                 engine.transcribe(str(audio_path), model_size=model_size, language=language),
                 timeout=timeout_s,
-            )
+    )
             
             if raw is None or not raw.text:
                 self._errors += 1
@@ -237,7 +237,7 @@ class DirectWhisperAdapter:
                     text="",
                     error="engine returned empty result",
                     sandboxed=False,
-                )
+    )
             
             self._fallback += 1
             return WhisperSandboxResult(
@@ -255,7 +255,7 @@ class DirectWhisperAdapter:
                     for s in raw.segments
                 ],
                 sandboxed=False,
-            )
+    )
             
         except asyncio.TimeoutError:
             self._errors += 1
@@ -263,14 +263,14 @@ class DirectWhisperAdapter:
                 text="",
                 error=f"timeout after {timeout_s}s",
                 sandboxed=False,
-            )
+    )
         except Exception as exc:
             self._errors += 1
             return WhisperSandboxResult(
                 text="",
                 error=str(exc),
                 sandboxed=False,
-            )
+    )
     
     @property
     def is_sandboxed(self) -> bool:
@@ -284,7 +284,7 @@ class DirectWhisperAdapter:
             sandboxed=self._sandboxed,
             fallback=self._fallback,
             errors=self._errors,
-        )
+    )
 
 
 # ─── Mock Adapter for Testing ─────────────────────────────────────────────────
@@ -315,7 +315,7 @@ class MockWhisperSandboxAdapter:
     Usage:
         adapter = MockWhisperSandboxAdapter(
             results=[MockWhisperResult(text="hello world")]
-        )
+    )
         result = await adapter.transcribe("test.wav")
         assert result.text == "hello world"
     """
@@ -354,7 +354,7 @@ class MockWhisperSandboxAdapter:
                 text="",
                 error=f"mock error after {self._call_count} calls",
                 sandboxed=True,
-            )
+    )
         
         # Cycle through results
         result_index = (self._call_count - 1) % len(self._results)
@@ -377,7 +377,7 @@ class MockWhisperSandboxAdapter:
             ],
             sandboxed=True,  # Mock always reports sandboxed
             seatbelt_used=True,
-        )
+    )
     
     @property
     def is_sandboxed(self) -> bool:
@@ -391,7 +391,7 @@ class MockWhisperSandboxAdapter:
             sandboxed=max(0, self._call_count - 1),
             fallback=0,
             errors=1 if self._error_after and self._call_count > self._error_after else 0,
-        )
+    )
     
     @property
     def call_count(self) -> int:

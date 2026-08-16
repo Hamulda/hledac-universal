@@ -44,7 +44,7 @@ class TestQoSConstantsExist:
             _QOS_USER_INITIATED,
             _QOS_UTILITY,
             _QOS_BACKGROUND,
-        )
+    )
 
         assert _QOS_USER_INITIATED is not None
         assert _QOS_UTILITY is not None
@@ -56,7 +56,7 @@ class TestQoSConstantsExist:
             _QOS_USER_INITIATED,
             _QOS_UTILITY,
             _QOS_BACKGROUND,
-        )
+    )
 
         assert _QOS_USER_INITIATED == EXPECTED_QOS_VALUES["USER_INITIATED"], \
             f"USER_INITIATED should be 0x{EXPECTED_QOS_VALUES['USER_INITIATED']:02x}, got 0x{_QOS_USER_INITIATED:02x}"
@@ -246,7 +246,7 @@ class TestRustQOSConsistency:
             _QOS_USER_INITIATED,
             _QOS_UTILITY,
             _QOS_BACKGROUND,
-        )
+    )
 
         python_values = {
             "USER_INITIATED": _QOS_USER_INITIATED,
@@ -294,7 +294,7 @@ class TestM1QoSOptimization:
             _QOS_USER_INITIATED,
             _QOS_UTILITY,
             _QOS_BACKGROUND,
-        )
+    )
 
         assert isinstance(_QOS_USER_INITIATED, int)
         assert isinstance(_QOS_UTILITY, int)

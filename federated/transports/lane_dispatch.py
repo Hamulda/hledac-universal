@@ -222,7 +222,7 @@ async def _dispatch_surface(query: str, sprint_id: str) -> list[dict[str, Any]]:
                 },
                 lane="surface",
                 sprint_id=sprint_id,
-            )
+    )
         )
     return findings[:LANE_DISPATCH_MAX_FINDINGS]
 
@@ -265,7 +265,7 @@ async def _dispatch_dark(query: str, sprint_id: str) -> list[dict[str, Any]]:
                 },
                 lane="dark",
                 sprint_id=sprint_id,
-            )
+    )
         )
         if len(findings) >= LANE_DISPATCH_MAX_FINDINGS:
             break
@@ -286,7 +286,7 @@ async def _dispatch_dark(query: str, sprint_id: str) -> list[dict[str, Any]]:
                 },
                 lane="dark",
                 sprint_id=sprint_id,
-            )
+    )
         )
         if len(findings) >= LANE_DISPATCH_MAX_FINDINGS:
             break
@@ -335,7 +335,7 @@ async def _dispatch_archive(query: str, sprint_id: str) -> list[dict[str, Any]]:
                 },
                 lane="archive",
                 sprint_id=sprint_id,
-            )
+    )
         )
         if len(findings) >= LANE_DISPATCH_MAX_FINDINGS:
             break
@@ -399,7 +399,7 @@ class LaneDispatchTransport:
                 logger.debug(
                     "[FED-TRANS] lane_dispatch: unknown lane=%r (known: %s)",
                     lane, sorted(_LANE_DISPATCHERS.keys()),
-                )
+    )
                 return []
             try:
                 async with asyncio.timeout(LANE_DISPATCH_TIMEOUT_S):
@@ -408,7 +408,7 @@ class LaneDispatchTransport:
                 logger.warning(
                     "[FED-TRANS] lane_dispatch: lane=%r timeout after %.1fs",
                     lane, LANE_DISPATCH_TIMEOUT_S,
-                )
+    )
                 return []
             except asyncio.CancelledError:
                 # Re-raise cancellation — it's not an error.
@@ -429,7 +429,7 @@ class LaneDispatchTransport:
             logger.debug(
                 "[FED-TRANS] lane_dispatch: lane=%r findings=%d dur=%.3fs",
                 lane, len(out), elapsed,
-            )
+    )
             return out
         except asyncio.CancelledError:
             raise
@@ -438,7 +438,7 @@ class LaneDispatchTransport:
             logger.warning(
                 "[FED-TRANS] lane_dispatch: lane=%r fail-soft %s: %s dur=%.3fs",
                 lane, type(e).__name__, e, elapsed,
-            )
+    )
             return []
 
     async def close(self) -> None:

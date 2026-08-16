@@ -105,7 +105,7 @@ class TestScalableBloomFilterRemoval:
             "CLAUDE.md invariant #7 violated: ScalableBloomFilter imported in "
             "production code. Use RotatingBloomFilter (bounded, M1 8GB safe).\n"
             + "\n".join(f"  {p.relative_to(REPO_ROOT)}:{ln}  {lt}" for p, ln, lt in violations)
-        )
+    )
 
     def test_scalable_bloom_filter_not_in_bloom_filter_module(self):
         """ScalableBloomFilter must be completely removed from bloom_filter.py."""
@@ -113,7 +113,7 @@ class TestScalableBloomFilterRemoval:
 
         assert not hasattr(bloom_filter, "ScalableBloomFilter"), (
             "ScalableBloomFilter must be removed from utils.bloom_filter"
-        )
+    )
 
     def test_scalable_bloom_filter_not_exported_from_utils(self):
         """ScalableBloomFilter must not be exported from utils.__init__."""

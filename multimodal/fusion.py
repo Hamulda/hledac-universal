@@ -148,7 +148,7 @@ class MambaFusionLazy:
                 nn_mod.Linear(self._d_model, self._d_model),  # type: ignore[call-arg]
                 nn_mod.ReLU(),
                 nn_mod.Linear(self._d_model, self._d_model)  # type: ignore[call-arg]
-            )
+    )
         self._out_proj = nn_mod.Linear(self._d_model, self._output_dim)  # type: ignore[assignment]
         self._initialized = True
 
@@ -294,7 +294,7 @@ class MobileCLIPFusion:
                     model, tok = await self._pool.acquire(
                         _MOBILECLIP_POOL_ID,
                         lambda: _load_mobileclip_from_pool()
-                    )
+    )
                     self._model = model
                     self._tokenizer = tok
                     self._initialized = True
@@ -552,7 +552,7 @@ class IdentityFusion:
         # Find matching identities via cross-modal search
         matched_identities = await self._find_matching_identities(
             face_vector, voice_vector, text_iocs, confidence
-        )
+    )
 
         result = {
             'identity_id': identity_id,
@@ -594,7 +594,7 @@ class IdentityFusion:
                 face_vector,
                 max_results=5,
                 min_similarity=0.5,  # Lower threshold to find any potential matches
-            )
+    )
             
             if not matches:
                 # No matches found - this is a new face
@@ -636,7 +636,7 @@ class IdentityFusion:
                 voice_vector,
                 max_results=5,
                 min_similarity=0.5,  # Lower threshold to find any potential matches
-            )
+    )
             
             if not matches:
                 # No matches found - this is a new voice
@@ -698,7 +698,7 @@ class IdentityFusion:
                     face_vector,
                     max_results=10,
                     min_similarity=0.7,
-                )
+    )
                 for node_id, similarity in face_matches:
                     if similarity >= self._min_confidence:
                         matches.append({
@@ -716,7 +716,7 @@ class IdentityFusion:
                     voice_vector,
                     max_results=10,
                     min_similarity=0.7,
-                )
+    )
                 for node_id, similarity in voice_matches:
                     if similarity >= self._min_confidence:
                         matches.append({
@@ -771,7 +771,7 @@ class IdentityFusion:
                     self._crossmodal_store.crossmodal_store_face(
                         identity['face_id'],
                         face_vector,
-                    )
+    )
                 except Exception:
                     pass
 
@@ -781,7 +781,7 @@ class IdentityFusion:
                     self._crossmodal_store.crossmodal_store_voice(
                         identity['voice_id'],
                         voice_vector,
-                    )
+    )
                 except Exception:
                     pass
 
@@ -792,7 +792,7 @@ class IdentityFusion:
                     value=identity_id,
                     confidence=identity.get('confidence', 0.5),
                     observed_at=now,
-                )
+    )
 
             # 4. Buffer FACE node
             if hasattr(self._graph, 'buffer_face') and face_vector is not None:
@@ -801,7 +801,7 @@ class IdentityFusion:
                     embedding=face_vector,
                     source_image_hash=identity.get('source_image_hash', ''),
                     confidence=identity.get('face_score', 0.9),
-                )
+    )
 
             # 5. Buffer VOICEPRINT node
             if hasattr(self._graph, 'buffer_voiceprint') and voice_vector is not None:
@@ -810,7 +810,7 @@ class IdentityFusion:
                     embedding=voice_vector,
                     source_audio_hash=identity.get('source_audio_hash', ''),
                     confidence=identity.get('voice_score', 0.85),
-                )
+    )
 
             # 6. Link IOC identity to FACE via HAS_FACE relationship
             if hasattr(self._graph, 'link_identity_face'):
@@ -819,7 +819,7 @@ class IdentityFusion:
                     face_id=identity.get('face_id', ''),
                     confidence=identity.get('face_score', 0.9),
                     source_type='multimedia',
-                )
+    )
 
             # 7. Link IOC identity to VOICEPRINT via HAS_VOICEPRINT relationship
             if hasattr(self._graph, 'link_identity_voice'):
@@ -828,7 +828,7 @@ class IdentityFusion:
                     voice_id=identity.get('voice_id', ''),
                     confidence=identity.get('voice_score', 0.85),
                     source_type='multimedia',
-                )
+    )
 
             # 8. Link FACE to VOICEPRINT via CROSS_MODAL relationship
             if hasattr(self._graph, 'link_face_to_voice'):
@@ -848,7 +848,7 @@ class IdentityFusion:
                         confidence=combined_conf,
                         face_weight=face_weight,
                         voice_weight=voice_weight,
-                    )
+    )
         except Exception as e:
             logger.warning(f'IdentityFusion: persist failed: {e}')
 
@@ -877,7 +877,7 @@ class IdentityFusion:
                 face_vector,
                 max_results=max_results,
                 min_similarity=min_similarity,
-            )
+    )
         except Exception:
             return []
 
@@ -906,7 +906,7 @@ class IdentityFusion:
                 voice_vector,
                 max_results=max_results,
                 min_similarity=min_similarity,
-            )
+    )
         except Exception:
             return []
 

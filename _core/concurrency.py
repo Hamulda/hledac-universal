@@ -48,10 +48,9 @@ import asyncio
 import logging
 
 from hledac.universal._core.concurrency_registry import (
-from _core._util import aclose
     ConcurrencyBudgetRegistry,
     ConcurrencyCategory,
-)
+    )
 
 logger = logging.getLogger(__name__)
 

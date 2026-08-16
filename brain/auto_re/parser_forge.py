@@ -225,7 +225,7 @@ class AutoREEngine:
                 format_family="unknown",
                 error="File exceeds 1 MB size limit for AutoRE",
                 stage="A",
-            )
+    )
 
         file_hash = hashlib.sha256(content).hexdigest()
         header16 = content[:16]
@@ -259,7 +259,7 @@ class AutoREEngine:
             ascii_ratio=ascii_ratio,
             file_path=file_path,
             format_family=chosen_family,
-        )
+    )
 
         hermes3_ms = 0.0
         format_hypothesis = ""
@@ -273,7 +273,7 @@ class AutoREEngine:
                 format_family=family_name,
                 error="Hermes3Engine unavailable",
                 stage="B",
-            )
+    )
 
         try:
             hermes3_start = time.monotonic()
@@ -282,7 +282,7 @@ class AutoREEngine:
                 system_msg="You are a forensic binary format analyst. Always output valid JSON in <|constrain|> tags.",
                 max_tokens=1024,
                 temperature=0.3,
-            )
+    )
             hermes3_ms = (time.monotonic() - hermes3_start) * 1000
             logger.info("[AUTO-RE] Stage B: Hermes3 responded in %.1fms", hermes3_ms)
         except Exception as e:
@@ -293,7 +293,7 @@ class AutoREEngine:
                 format_family=family_name,
                 error=f"Hermes3 call failed: {e}",
                 stage="B",
-            )
+    )
 
         # Parse Hermes3 response for <|constrain|> JSON
         try:
@@ -308,7 +308,7 @@ class AutoREEngine:
                 format_family=family_name,
                 error=f"Parse Hermes3 response failed: {e}",
                 stage="B",
-            )
+    )
 
         # ── Stage C: Sandboxed execution ─────────────────────────────────────
         sandbox_ms = 0.0
@@ -328,7 +328,7 @@ class AutoREEngine:
                 error=f"Sandbox execution failed: {e}",
                 stage="C",
                 hermes3_ms=hermes3_ms,
-            )
+    )
 
         # ── Stage D: IOC validation gate ──────────────────────────────────────
         iocs: list[ParsedIOC] = []
@@ -351,7 +351,7 @@ class AutoREEngine:
             stage="D",
             hermes3_ms=hermes3_ms,
             sandbox_ms=sandbox_ms,
-        )
+    )
 
         # ── Stage E: Audit trail ──────────────────────────────────────────────
         await self._save_audit_cache(file_hash, result)
@@ -400,7 +400,7 @@ class AutoREEngine:
             raise ValueError(
                 f"Generated code exceeds {_MAX_CODE_BYTES} bytes "
                 f"(got {len(code_bytes)})"
-            )
+    )
 
     def _validate_forbidden_patterns(self, code: str) -> None:
         """Check code for forbidden patterns."""
@@ -494,7 +494,7 @@ if __name__ == "__main__":
                     data,
                 ),
                 timeout=_SANDBOX_TIMEOUT_S + 1.0,
-            )
+    )
         finally:
             # Clean up wrapper script
             try:
@@ -542,7 +542,7 @@ if __name__ == "__main__":
                 capture_output=True,
                 timeout=_SANDBOX_TIMEOUT_S,
                 env=env,
-            )
+    )
         except subprocess.TimeoutExpired:
             return json.dumps({"error": "timeout"})
         except Exception as e:
@@ -578,7 +578,7 @@ if __name__ == "__main__":
                     ioc_value=str(item.get("ioc_value", "")),
                     confidence=min(float(item.get("confidence", 0.3)), 1.0),
                     context=str(item.get("context", "")),
-                )
+    )
                 for item in parser_output
                 if item.get("ioc_value")
             ]
@@ -594,7 +594,7 @@ if __name__ == "__main__":
         rust_iocs = await loop.run_in_executor(
             None,
             lambda: rust.extract_iocs_simd(combined),
-        )
+    )
 
         # Build set of Rust-confirmed values
         rust_confirmed: set[str] = {v for _, v in rust_iocs}
@@ -628,7 +628,7 @@ if __name__ == "__main__":
         except Exception as e:
             logging.getLogger(__name__).warning(
                 "[AUTO-RE] Stage E: failed to save audit cache: %s", e
-            )
+    )
 
     async def _load_audit_cache(self, file_hash: str) -> AutoREResult | None:
         """Load from audit cache if exists (does NOT re-run parser)."""

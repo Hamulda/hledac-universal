@@ -31,7 +31,7 @@ class TestPrivacyLaneConfig:
             workers=2,
             env_gate="HLEDAC_ENABLE_TOR",
             ram_per_session_mb=80,
-        )
+    )
         
         assert config.name == "tor"
         assert config.workers == 2
@@ -46,7 +46,7 @@ class TestPrivacyLaneConfig:
             name="i2p",
             workers=1,
             env_gate="HLEDAC_ENABLE_I2P",
-        )
+    )
         
         with pytest.raises(AttributeError):
             config.workers = 5  # type: ignore
@@ -69,7 +69,7 @@ class TestPrivacyBudgetAllocator:
         from hledac.universal.runtime.privacy_budget import (
             PrivacyBudgetAllocator,
             PRIVACY_BUDGET_RATIO,
-        )
+    )
 
         # 20 workers -> 15% = 3 workers for privacy
         allocator = PrivacyBudgetAllocator(total_workers=20)
@@ -156,7 +156,7 @@ class TestPrivacyBudgetAllocator:
         from hledac.universal.runtime.privacy_budget import (
             PrivacyBudgetAllocator,
             PRIVACY_BUDGET_RATIO,
-        )
+    )
 
         allocator = PrivacyBudgetAllocator(total_workers=20)
         summary = allocator.get_budget_summary()
@@ -175,7 +175,7 @@ class TestPrivacyBudgetAllocator:
         from hledac.universal.runtime.privacy_budget import (
             PrivacyBudgetAllocator,
             MIN_CLEARNET_WORKERS,
-        )
+    )
 
         # Even with 4 workers total, clearnet should get at least 3
         allocator = PrivacyBudgetAllocator(total_workers=4)

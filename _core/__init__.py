@@ -85,7 +85,7 @@ def _load_locks() -> dict[str, object]:
             get_locks_by_category,
             AsyncLockDCLP,
             make_counter,
-        )
+    )
         _lock_cache = {
             "LockCategory": LockCategory,
             "LockInfo": LockInfo,
@@ -107,7 +107,7 @@ def _load_embeddings() -> dict[str, object]:
             EmbeddingTask,
             apply_task_prefix,
             should_normalize,
-        )
+    )
         _embed_cache = {
             "MLXEmbeddingManager": MLXEmbeddingManager,
             "EmbeddingTask": EmbeddingTask,
@@ -132,7 +132,7 @@ def _load_resource_lifecycle() -> dict[str, object]:
             ResourceLifecycleManager,
             require_rlm,
             get_current_rlm,
-        )
+    )
         _rlm_cache = {
             "ResourceLifecycleManager": ResourceLifecycleManager,
             "require_rlm": require_rlm,
@@ -149,7 +149,7 @@ def _load_system_detector() -> dict[str, object]:
             get_system_detector,
             get_hardware_capabilities,
             HardwareCapabilities,
-        )
+    )
         _sysdet_cache = {
             "SystemDetector": SystemDetector,
             "get_system_detector": get_system_detector,
@@ -183,7 +183,7 @@ def _load_concurrency() -> dict[str, object]:
         from hledac.universal._core.concurrency import (
             ConcurrencyCategory,
             get_semaphore,
-        )
+    )
         _concurrency_cache = {
             "ConcurrencyCategory": ConcurrencyCategory,
             "get_semaphore": get_semaphore,
@@ -201,7 +201,7 @@ def _load_feature_flags() -> dict[str, object]:
             FlagInfo,
             FlagValidationError,
             validate_sprint_flags,
-        )
+    )
         _ff_cache = {
             "FeatureFlags": FeatureFlags,
             "FeatureFlag": FeatureFlag,
@@ -227,7 +227,7 @@ def _load_duckdb_pool() -> dict[str, object]:
             duckdb_ro_connection,
             close_all_pools,
             get_pool_stats,
-        )
+    )
         _duckdb_pool_cache = {
             "duckdb_ro_pool": duckdb_ro_pool,
             "duckdb_rw_pool": duckdb_rw_pool,
@@ -265,7 +265,93 @@ _LOADER_DISPATCH: tuple[tuple[frozenset[str], _load_locks | _load_embeddings | _
     (frozenset(("FeatureFlags", "FeatureFlag", "FlagCategory", "FlagInfo", "FlagValidationError", "validate_sprint_flags")), _load_feature_flags),
     (frozenset(("duckdb_ro_pool", "duckdb_rw_pool", "duckdb_ro_acquire", "duckdb_ro_connection", "close_all_pools", "get_pool_stats")), _load_duckdb_pool),
     (frozenset(("aclose", "aclose_many")), _load_util),
-)
+    )
+
+
+# MODERN-36 PERFORMANCE FIX: Cache cleanup for memory leak prevention
+_CLEARED_CACHES: set[str] = set()
+
+def _clear_core_caches() -> dict[str, int]:
+    """
+    Clear all module-level caches in _core to free memory.
+    
+    Returns:
+        Dict of cleared cache names to number of items cleared.
+    
+    MODERN-36 PERFORMANCE FIX: Call this from shutdown hooks to prevent
+    memory leaks from accumulated lazy-loaded modules. Typically called
+    when the process is exiting or when memory pressure is high.
+    
+    Caches cleared:
+        - _rlm_cache (ResourceLifecycleManager)
+        - _lock_cache (AsyncLockDCLP)
+        - _embed_cache (MLXEmbeddingManager)
+        - _sysdet_cache (SystemDetector)
+        - _concurrency_cache (get_semaphore)
+        - _ff_cache (FeatureFlags)
+        - _duckdb_pool_cache (DuckDB pools)
+        - _uma_cache (Watchdog)
+        - _rgov_cache (Priority)
+        - _util_cache (aclose helpers)
+        - _rb (rust_backend) - MODERN-36 FIX: now also cleared
+        - _main_cache (__main__) - MODERN-36 FIX: now also cleared
+    """
+    global _rlm_cache, _lock_cache, _embed_cache, _sysdet_cache
+    global _concurrency_cache, _ff_cache, _duckdb_pool_cache
+    global _uma_cache, _rgov_cache, _util_cache, _CLEARED_CACHES
+    global _rb, _main_cache  # MODERN-36 FIX: Add these to global
+
+    results = {}
+    
+    def _clear_global(name: str, var: Any) -> int:
+        nonlocal results
+        if var is not None and isinstance(var, dict):
+            count = len(var)
+            results[name] = count
+        else:
+            results[name] = 0
+        return 0
+
+    if _rlm_cache is not None:
+        results["rlm_cache"] = len(_rlm_cache) if isinstance(_rlm_cache, dict) else 0
+        _rlm_cache = None
+    if _lock_cache is not None:
+        results["lock_cache"] = len(_lock_cache) if isinstance(_lock_cache, dict) else 0
+        _lock_cache = None
+    if _embed_cache is not None:
+        results["embed_cache"] = len(_embed_cache) if isinstance(_embed_cache, dict) else 0
+        _embed_cache = None
+    if _sysdet_cache is not None:
+        results["sysdet_cache"] = len(_sysdet_cache) if isinstance(_sysdet_cache, dict) else 0
+        _sysdet_cache = None
+    if _concurrency_cache is not None:
+        results["concurrency_cache"] = len(_concurrency_cache) if isinstance(_concurrency_cache, dict) else 0
+        _concurrency_cache = None
+    if _ff_cache is not None:
+        results["ff_cache"] = len(_ff_cache) if isinstance(_ff_cache, dict) else 0
+        _ff_cache = None
+    if _duckdb_pool_cache is not None:
+        results["duckdb_pool_cache"] = len(_duckdb_pool_cache) if isinstance(_duckdb_pool_cache, dict) else 0
+        _duckdb_pool_cache = None
+    if _uma_cache is not None:
+        results["uma_cache"] = len(_uma_cache) if isinstance(_uma_cache, dict) else 0
+        _uma_cache = None
+    if _rgov_cache is not None:
+        results["rgov_cache"] = len(_rgov_cache) if isinstance(_rgov_cache, dict) else 0
+        _rgov_cache = None
+    if _util_cache is not None:
+        results["util_cache"] = len(_util_cache) if isinstance(_util_cache, dict) else 0
+        _util_cache = None
+    # MODERN-36 FIX: Also clear _rb (rust_backend) and _main_cache (__main__)
+    if _rb is not None:
+        results["rb"] = 1
+        _rb = None
+    if _main_cache is not None:
+        results["main_cache"] = 1
+        _main_cache = None
+
+    _CLEARED_CACHES.update(results.keys())
+    return results
 
 
 def __getattr__(name: str):

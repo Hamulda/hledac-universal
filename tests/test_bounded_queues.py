@@ -47,7 +47,7 @@ class TestToolExecLogBoundedQueue:
                 input_data=b"input_data",
                 output_data=b"output_data",
                 status="success"
-            )
+    )
 
         # Wait for write worker to process
         await asyncio.sleep(0.5)
@@ -73,7 +73,7 @@ class TestToolExecLogBoundedQueue:
                 input_data=b"x",
                 output_data=b"y",
                 status="success"
-            )
+    )
 
         final_overflow = log._overflow_count
 
@@ -93,7 +93,7 @@ class TestToolExecLogBoundedQueue:
             input_data=b"input",
             output_data=b"output",
             status="success"
-        )
+    )
 
         assert event is not None
         assert event.tool_name == "test_tool"
@@ -106,14 +106,14 @@ class TestToolExecLogBoundedQueue:
             enable_persist=True,
             run_id="test_silent",
             silent_failure=True
-        )
+    )
 
         event = log.log(
             tool_name="test_tool",
             input_data=b"input",
             output_data=b"output",
             status="success"
-        )
+    )
 
         assert event is None
 

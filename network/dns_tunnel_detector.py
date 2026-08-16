@@ -10,7 +10,6 @@ Migration (F350M-R):
 All production code should import from recon.dns.dns_tunnel_detector directly.
 """
 from hledac.universal.recon.dns.dns_tunnel_detector import (  # noqa: F401, E402
-from _core import aclose
     DNSTunnelConfig,
     DNSTunnelDetector,
     NGramScore,

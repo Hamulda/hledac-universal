@@ -137,7 +137,7 @@ class VisionEncoder:
                 logger.debug(
                     f'VisionEncoder: scipy.linalg.svd unavailable, using QR fallback. '
                     f'Install with: pip install hledac-universal[ml]'
-                )
+    )
             # Fallback: simple QR-based orthonormalization
             Q, R = np.linalg.qr(random_matrix)
             # Ensure proper sign (positive diagonal for stability)
@@ -441,7 +441,7 @@ class VisionEncoder:
             # Get TIFF representation and convert to numpy via PIL
             tiff_data = ns_rep.representationUsingType_properties_(
                 _AK.NSTIFFFileType, None
-            )
+    )
             if tiff_data is None:
                 raise ValueError('TIFF representation failed')
             import io
@@ -545,7 +545,7 @@ class VisionEncoder:
                 logger.debug(
                     'VisionEncoder: encoded %d CVPixelBuffers in %.3fs (%.3fs/img)',
                     len(pixel_buffers), elapsed, elapsed / len(pixel_buffers) if pixel_buffers else 0
-                )
+    )
                 return results
 
     def _pixelbuffer_to_bytes(self, pixel_buffer: Any) -> bytes:
@@ -581,7 +581,7 @@ class VisionEncoder:
             jpeg_data = rep.representationUsingType_properties_(
                 _AK.NSBitmapImageFileTypeJPEG,
                 {_AK.NSImageCompressionFactor: 0.8}
-            )
+    )
             return bytes(jpeg_data) if jpeg_data else b''
 
         except Exception as exc:
@@ -676,7 +676,7 @@ class VisionEncoder:
 
                             raw_result = await asyncio.get_running_loop().run_in_executor(
                                 _get_coreml_executor(), _inference_direct
-                            )
+    )
                             results.append(raw_result)
                         except Exception as exc:
                             logger.debug('VisionEncoder: Direct CVPixelBuffer encode failed: %s', exc)
@@ -694,5 +694,5 @@ class VisionEncoder:
                 logger.debug(
                     'VisionEncoder: direct encode %d CVPixelBuffers in %.3fs (%.3fs/img)',
                     len(pixel_buffers), elapsed, elapsed / len(pixel_buffers) if pixel_buffers else 0
-                )
+    )
                 return results

@@ -172,7 +172,7 @@ class DriftDetector:
         self._maxlen = int(window_hours * 3600.0 / interval_s)
         self.samples: deque[tuple[float, 'SystemMetrics', float | None]] = deque(
             maxlen=self._maxlen
-        )
+    )
 
     def record(self, metrics: 'SystemMetrics', mlx_latency_ms: float | None = None) -> None:
         """Zaznamená snapshot metrik s volitelnou MLX latencí."""
@@ -224,7 +224,7 @@ class DriftDetector:
             mlx_latency_drift_pct_per_hour=mlx_drift,
             exceeded=len(reasons) > 0,
             exceeded_reasons=reasons,
-        )
+    )
 
     @staticmethod
     def _slope_with_x(x: list[float], y: list[float]) -> float:
@@ -324,10 +324,10 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         self._stop_background_collection()
         await safe_cleanup_component(
             self._advanced_monitoring, 'AdvancedMonitoring', logger, _type='async'
-        )
+    )
         await safe_cleanup_component(
             self._watchdog, 'Watchdog', logger, _type='async'
-        )
+    )
         self._metrics_history.clear()
         self._benchmark_history.clear()
 
@@ -363,7 +363,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 'alert_triggered': result.alert_triggered,
                 'metrics_collected': len(result.metrics),
             },
-        )
+    )
 
     async def _execute_monitoring_decision(self, decision: DecisionResponse) -> MonitoringResult:
         """Route monitoring decision to appropriate backend."""
@@ -399,7 +399,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 summary='Watchdog not available (degraded)',
                 metrics={'watchdog_available': False, 'status': 'degraded'},
                 execution_time=execution_time,
-            )
+    )
         # P7-006 FIX: UmaWatchdog has no perform_health_check() — synthesize from state
         watchdog_state = getattr(self._watchdog, 'last_fired_level', 'unknown')
         is_running = getattr(self._watchdog, 'is_running', False)
@@ -417,7 +417,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             summary=f"Health check: {health_result['status']} status (running={is_running})",
             metrics=health_result,
             execution_time=execution_time,
-        )
+    )
 
     async def _execute_system_monitoring(self) -> MonitoringResult:
         """Execute system-level monitoring via cached mach/getrusage (no psutil syscalls in hot path).
@@ -662,7 +662,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             from hledac.universal.tools.diagnostics.codebase_integrity_validator import (
                 CodebaseIntegrityValidator,
                 ValidationConfig,
-            )
+    )
             config = ValidationConfig(min_lines_of_code=min_lines_of_code, strict_mode=strict_mode)
             validator = CodebaseIntegrityValidator(config)
             target = target_path or os.getcwd()
@@ -806,7 +806,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             from hledac.universal.tools.preserved_logic.monitoring.diagnostics_engine import (  # noqa: F401
                 DiagnosticResult,
                 DiagnosticsEngine,
-            )
+    )
             engine = DiagnosticsEngine(enable_auto_diagnostics=False, m1_optimization=True)
             issues = []
             if component:

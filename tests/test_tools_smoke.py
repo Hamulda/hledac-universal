@@ -182,7 +182,7 @@ def test_script_shellcheck(script_name: str) -> None:
             f"shellcheck failed for {script_name} (exit {result.returncode}):\n"
             f"STDOUT:\n{result.stdout}\n"
             f"STDERR:\n{result.stderr}"
-        )
+    )
 
 
 # =============================================================================

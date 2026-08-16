@@ -101,7 +101,7 @@ class _RustSwarmDAG:
             task_type,
             task_id,
             payload if payload is not None else b"",
-        )
+    )
 
         if not ok:
             logger.warning("[SwarmDAG] Queue full for task_type=%s, task_id=%s", task_type, task_id)
@@ -224,7 +224,7 @@ class PythonFallbackSwarmDAG:
         }
         self._handlers: dict[str, Callable[..., Awaitable[tuple[int, Any]]]] = (
             handlers if handlers is not None else {}
-        )
+    )
         self._worker_tasks: list[asyncio.Task[None]] = []
         self._lock = asyncio.Lock()
 
@@ -270,7 +270,7 @@ class PythonFallbackSwarmDAG:
                 "[SwarmDAG] Queue full for task_type=%s, task_id=%s",
                 task_type,
                 task_id,
-            )
+    )
             return task_id  # submitted=False (same as Rust)
 
         return task_id
@@ -377,7 +377,7 @@ class PythonFallbackSwarmDAG:
             task = asyncio.create_task(
                 self._worker_loop(task_type),
                 name=f"swarm_dag.{task_type}",
-            )
+    )
             self._worker_tasks.append(task)
 
     async def _worker_loop(self, task_type: str) -> None:
@@ -390,7 +390,7 @@ class PythonFallbackSwarmDAG:
                 task_id, payload = await safe_wait_for(
                     queue.get(),
                     timeout=1.0,
-                )
+    )
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -409,7 +409,7 @@ class PythonFallbackSwarmDAG:
                     task_type,
                     task_id,
                     e,
-                )
+    )
                 self.record_completion(task_type, 0)
             finally:
                 queue.task_done()
@@ -493,7 +493,7 @@ def get_domain(
         logger.warning(
             "[SwarmDAG] Rust swarm_dag unavailable (%s) — using PythonFallbackSwarmDAG",
             e,
-        )
+    )
         _swarm_dag_instance = PythonFallbackSwarmDAG(handlers=handlers)
         return _swarm_dag_instance
 

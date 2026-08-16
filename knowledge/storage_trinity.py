@@ -227,7 +227,7 @@ class StorageTrinity:
         if not findings or self._closed:
             return TrinityWriteResult(
                 duckdb=TrinityPhaseResult(phase="duckdb", success=False, records=0)
-            )
+    )
 
         t0 = _time.monotonic()
 
@@ -242,7 +242,7 @@ class StorageTrinity:
             return TrinityWriteResult(
                 duckdb=duckdb_result,
                 total_duration_ms=total_ms,
-            )
+    )
 
         # ------------------------------------------------------------------
         # Phase 2: LMDB metadata (already done inside async_ingest_findings_batch)
@@ -255,7 +255,7 @@ class StorageTrinity:
             success=True,  # Already committed inside DuckDB path
             records=duckdb_result.records,
             duration_ms=0.0,  # No separate timing
-        )
+    )
 
         # ------------------------------------------------------------------
         # Phase 3: LanceDB embeddings (async, fail-safe)
@@ -274,7 +274,7 @@ class StorageTrinity:
             lance=lance_result,
             graph=graph_result,
             total_duration_ms=total_ms,
-        )
+    )
 
     # -----------------------------------------------------------------------
     # Phase 1: DuckDB write
@@ -296,7 +296,7 @@ class StorageTrinity:
                 1 for r in results
                 if getattr(r, "accepted", False) is True
                 or (isinstance(r, dict) and r.get("accepted") is True)
-            )
+    )
             duration_ms = (_time.monotonic() - t0) * 1000.0
 
             if accepted == 0 and len(findings) > 0:
@@ -308,7 +308,7 @@ class StorageTrinity:
                 success=True,
                 records=accepted,
                 duration_ms=duration_ms,
-            )
+    )
 
         except Exception as exc:
             duration_ms = (_time.monotonic() - t0) * 1000.0
@@ -318,7 +318,7 @@ class StorageTrinity:
                 success=False,
                 error=str(exc),
                 duration_ms=duration_ms,
-            )
+    )
 
     # -----------------------------------------------------------------------
     # Phase 3: LanceDB write (async, fail-safe)
@@ -340,7 +340,7 @@ class StorageTrinity:
                 success=True,
                 records=0,
                 error="semantic_store_not_injected",
-            )
+    )
 
         t0 = _time.monotonic()
         try:
@@ -351,7 +351,7 @@ class StorageTrinity:
                 finding_id=self._extract_finding_id(findings),
                 ioc_types=self._extract_ioc_types(findings),
                 ts=self._extract_ts(findings),
-            )
+    )
 
             # Trigger async flush (non-blocking)
             self._schedule_lance_flush()
@@ -362,14 +362,14 @@ class StorageTrinity:
                 success=True,
                 records=len(findings),
                 duration_ms=duration_ms,
-            )
+    )
 
         except Exception as exc:
             duration_ms = (_time.monotonic() - t0) * 1000.0
             logger.warning(
                 "[TRINITY:LANCE] Buffer failed, scheduling rebuild: %s",
                 exc,
-            )
+    )
             # Schedule rebuild for failed entities
             for f in findings:
                 fid = getattr(f, "finding_id", None)
@@ -382,7 +382,7 @@ class StorageTrinity:
                 records=0,
                 error=str(exc),
                 duration_ms=duration_ms,
-            )
+    )
 
     # -----------------------------------------------------------------------
     # LanceDB async flush
@@ -396,7 +396,7 @@ class StorageTrinity:
         self._lance_flush_task = asyncio.create_task(
             self._lance_flush_loop(),
             name="trinity:lance_flush",
-        )
+    )
 
     async def _lance_flush_loop(self) -> None:
         """
@@ -454,7 +454,7 @@ class StorageTrinity:
                 success=True,
                 records=0,
                 error="graph_service_not_injected",
-            )
+    )
 
         t0 = _time.monotonic()
         upserted = 0
@@ -476,7 +476,7 @@ class StorageTrinity:
                     confidence=0.8,  # Canonical write = high confidence
                     source=source,
                     observed_at=ts,
-                )
+    )
                 upserted += 1
 
             duration_ms = (_time.monotonic() - t0) * 1000.0
@@ -485,7 +485,7 @@ class StorageTrinity:
                 success=True,
                 records=upserted,
                 duration_ms=duration_ms,
-            )
+    )
 
         except Exception as exc:
             duration_ms = (_time.monotonic() - t0) * 1000.0
@@ -496,7 +496,7 @@ class StorageTrinity:
                 records=0,
                 error=str(exc),
                 duration_ms=duration_ms,
-            )
+    )
 
     def _extract_ioc_value(self, finding: Any) -> str | None:
         """Extract IOC value from finding (domain, ip, hash, etc.)."""
@@ -637,4 +637,4 @@ class StorageTrinity:
             f"StorageTrinity(duckdb={self._duckdb_store!r}, "
             f"semantic_store={'injected' if self._semantic_store else 'none'}, "
             f"rebuild_pending={len(self._rebuild_pending)})"
-        )
+    )

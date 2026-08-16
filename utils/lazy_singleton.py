@@ -82,7 +82,7 @@ class AsyncLazySingleton:
         self._factory = factory
         self._ctx_var: ContextVar[dict[int, T] | None] = ContextVar(
             f"_AsyncLazySingleton_{id(self)}", default=None
-        )
+    )
 
     def __call__(self) -> T:
         instances = self._ctx_var.get()

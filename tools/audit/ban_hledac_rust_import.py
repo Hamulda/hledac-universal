@@ -205,7 +205,7 @@ def generate_fix(import_type: str, names: tuple[str, ...], alias: str | None = N
         return (
             "from hledac.universal._core.rust_backend import rust",
             f"  # Replace: import hledac_rust_extensions → use rust.raw"
-        )
+    )
     else:
         # from hledac_rust_extensions import X, Y
         if len(names) == 1:
@@ -214,7 +214,7 @@ def generate_fix(import_type: str, names: tuple[str, ...], alias: str | None = N
                 f"from hledac.universal._core.rust_backend import rust\n"
                 f"{symbol} = rust.raw.{symbol}  # None if unavailable",
                 f"  # Replace: {symbol} = rust.raw.{symbol}"
-            )
+    )
         else:
             # Multiple imports - need multiple lines
             lines = ["from hledac.universal._core.rust_backend import rust"]

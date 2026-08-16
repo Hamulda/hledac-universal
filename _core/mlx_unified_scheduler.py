@@ -28,10 +28,13 @@ Problém (P1-03):
     - Reaguje na ConcurrencyPreset z resource_governor pro backpressure
 
 M1 8GB invarianty:
-    - Max 1 MLX LLM současně (serializovaný přes InferenceSemaphore)
+    - Max 1 MLX LLM současně (serializovaný přes MLXInferenceLock)
     - ANE a MLX LLM se vzájemně vylučují (ANE_MLX_Mutex)
     - Embedding batch routing na ANE/GPU podle dostupnosti
     - Memory backpressure při UMAState.WARNING/CRITICAL
+
+ROADMAP-002: Uses MLXInferenceLock for cross-lane serialization instead of
+    getattr to engine's internal semaphore. This is the canonical reference.
 
 Always-on, fail-safe, bounded.
 """
@@ -168,13 +171,14 @@ class MLXUnifiedScheduler:
     - Výsledek: O(1) enqueue (PriorityQueue) → O(1) direct dispatch (deque není potřeba)
 
     Invariants:
-        U.M1: Single LLM inference slot — serializováno přes InferenceSemaphore
+        U.M1: Single LLM inference slot — serializováno přes MLXInferenceLock
         U.M2: ANE/MLX mutual exclusion přes ANE_MLX_Mutex
         U.M3: Token prefix cache plná integrace s LLM submit path
         U.M4: Memory backpressure při WARNING/CRITICAL stavu
         U.M5: Bounded shutdown — fail-soft ≤ 5.0s
         U.M6: Telemetry atomická — bez race conditions
         U.M7: O(1) direct dispatch — žádný heap, žádný mutex v hot path
+        U.M8: Cross-lane serialization via MLXInferenceLock (ROADMAP-002)
     """
     __slots__ = tuple(('_ane_mutex', '_batcher', '_batcher_loaded', '_current_preset', '_embedder', '_embedder_loaded', '_finalizer', '_inference_semaphore', '_lane_metrics', '_llm_engine', '_memory_pressure', '_model_info', '_shutdown', '_stats', '_stats_lock', '_token_cache', '_worker_thread', '_worker_thread_loaded'))
 
@@ -204,10 +208,10 @@ class MLXUnifiedScheduler:
         self._embedder_loaded: bool = False
         self._batcher_loaded: bool = False
         self._worker_thread_loaded: bool = False
-        # ISSUE-010 FIX: Acquire MLX inference semaphore from engine for cross-lane
-        # serialization — embeddings must wait for in-flight LLM inference to complete
-        # before they can use the shared GPU memory bandwidth.
-        self._inference_semaphore = getattr(llm_engine, '_inference_semaphore', None) if llm_engine else None
+        # ROADMAP-002 FIX: Use module-level _get_inference_lock() for canonical semaphore.
+        # FIX Issue #1: Get the singleton instance, not a new MLXInferenceLock()
+        from _core.mlx_inference_lock import _get_inference_lock
+        self._inference_semaphore = _get_inference_lock().semaphore if llm_engine else None
         self._finalizer = weakref.finalize(self, _scheduler_at_exit, self)
         logger.debug('[MLXScheduler] Created — components: engine=%s, embedder=%s, batcher=%s, worker=%s', bool(llm_engine), bool(embedder), bool(batcher), bool(worker_thread))
 
@@ -434,7 +438,7 @@ class MLXUnifiedScheduler:
             name="MLXUnifiedScheduler",
             coro=self._do_shutdown(),
             timeout_s=timeout,
-        )
+    )
 
     async def _do_shutdown(self) -> None:
         """Inner cleanup — called by shutdown() via shutdown_aclose()."""

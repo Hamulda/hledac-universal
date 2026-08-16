@@ -187,7 +187,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 'executor': result.executor,
                 'tasks_executed': 1 if result.executor == 'ghost' else result.result_data.get('task_count', 1),
             },
-        )
+    )
 
     async def _execute_decision(self, decision: DecisionResponse) -> TaskResult:
         """
@@ -493,7 +493,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 DecodingMode,
                 SpeculationConfig,
                 SpeculativeEngine,
-            )
+    )
             mode_map = {'fast': DecodingMode.FAST, 'quality': DecodingMode.QUALITY, 'balanced': DecodingMode.BALANCED}
             decoding_mode = mode_map.get(mode, DecodingMode.BALANCED)
             config = SpeculationConfig()
@@ -553,7 +553,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 DecodingMode,
                 SpeculationConfig,
                 SpeculativeEngine,
-            )
+    )
             config = SpeculationConfig()
             config.adaptive_k = True
             config.min_k = 1

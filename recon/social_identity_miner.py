@@ -284,7 +284,7 @@ class SocialIdentityMiner:
             facet = self._try_platform_match(
                 url, parsed, path, platform, url_re, username_re, is_invite_only,
                 text_sample, finding_id, source,
-            )
+    )
             if facet is not None:
                 return facet
         return None
@@ -343,7 +343,7 @@ class SocialIdentityMiner:
             finding_id=finding_id, platform=platform, username=username, display_name=username,
             profile_url=profile_url, linked_domains=tuple(linked_domains),
             linked_emails=tuple(linked_emails), confidence=confidence, evidence_kind=source,
-        )
+    )
 
     def _extract_urls_from_payload(self, finding: Any) -> list[str]:
         """Extract URLs from finding payload_text."""

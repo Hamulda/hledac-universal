@@ -295,7 +295,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                 'sources_found': result.sources_found,
                 'research_confidence': result.confidence,
             },
-        )
+    )
 
     async def _execute_research_decision(self, decision: DecisionResponse) -> ResearchResult:
         """
@@ -415,7 +415,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         all_sources = []
         for r in results:
             all_sources.append({'source': r.source, 'summary': r.summary, 'confidence': r.confidence, 'execution_time': r.execution_time})
-        all_sources.sort(key=itemgetter("'"), reverse=True)
+        all_sources.sort(key=itemgetter("confidence"), reverse=True)
         best_source = all_sources[0] if all_sources else None
         summary_parts = [f'Multi-source research completed using {len(results)} backends', f'Average confidence: {avg_confidence:.2f}']
         if best_source:
@@ -592,7 +592,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             safe_create_task(
                 store.async_ingest_findings_batch(findings),
                 name="research:ingest_findings",
-            )
+    )
         except Exception as e:
             logger.warning(f'ResearchCoordinator: graph path ingest failed: {e}')
 
@@ -620,7 +620,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         # Phase 3: Find quantum paths
         paths, findings = await self._find_quantum_paths_and_create_findings(
             adj, top_nodes, centrality, query, sprint_id
-        )
+    )
         if findings:
             self._ingest_findings(findings)
 
@@ -782,7 +782,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                 policy="collect",
                 concurrency=2,
                 ctx="citations",
-            )
+    )
             citations, references = citation_results[0], citation_results[1]
             all_related = citations + references
             # Parallel relevance calculation via asyncio.to_thread (GIL released in string ops)
@@ -802,7 +802,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                     policy="collect",
                     concurrency=10,
                     ctx="relevance",
-                )
+    )
                 scored_papers = [
                     (paper, relevance)
                     for (paper, _), relevance in zip(pending, relevance_results, strict=True)

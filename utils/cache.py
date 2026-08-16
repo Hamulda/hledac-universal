@@ -321,7 +321,7 @@ class PyCacheDict[K, V]:
                     f"PyCacheDict(maxsize={self._maxsize}, ttl_s={self._ttl_s}, "
                     f"size={len(self._data)}, hits={self._hits}, misses={self._misses}, "
                     f"evictions={self._evictions}, expirations={self._expirations})"
-                )
+    )
         except Exception:
             return f"PyCacheDict(maxsize={self._maxsize}, ttl_s={self._ttl_s})"
 
@@ -414,7 +414,7 @@ class AsyncPyCacheDict[K, V]:
         # Always a WVD instance when weak_values=True, otherwise None
         self._wvd_ref: weakref.WeakValueDictionary[K, V] | None = (
             weakref.WeakValueDictionary() if weak_values else None
-        )
+    )
         # Lazy lock — NEVER asyncio.Lock() at import time (macOS crash vector)
         self._lock: asyncio.Lock | None = None
         # Stats
@@ -641,7 +641,7 @@ class AsyncPyCacheDict[K, V]:
                 f"size={len(self._data)}, hits={self._hits}, misses={self._misses}, "
                 f"evictions={self._evictions}, expirations={self._expirations}, "
                 f"weak_values={self._weak_values})"
-            )
+    )
         except Exception:
             return f"AsyncPyCacheDict(maxsize={self._maxsize}, ttl_s={self._ttl_s})"
 
@@ -810,7 +810,7 @@ class BoundedLoRACache:
                 f"BoundedLoRACache(maxsize={self._maxsize}, "
                 f"size={len(self._cache)}, hits={self._hits}, "
                 f"misses={self._misses}, evictions={self._evictions})"
-            )
+    )
         except Exception:
             return f"BoundedLoRACache(maxsize={self._maxsize})"
 
@@ -1193,7 +1193,7 @@ class GenerationalCache[K, V]:
                     f"gen0={len(self._gen0)}, gen1={len(self._gen1)}, gen2={len(self._gen2)}, "
                     f"hits={self._hits}, misses={self._misses}, "
                     f"evictions={self._evictions}, promotions={self._promotions})"
-                )
+    )
         except Exception:
             return f"GenerationalCache(maxsize={self._maxsize})"
 
@@ -1561,7 +1561,7 @@ class RefcountEvictionCache[K, V]:
                 orphaned_count = sum(
                     1 for k, (_rc, _) in self._scan_refcounts().items()
                     if self._is_orphaned(k, self._gen0 if k in self._gen0 else self._gen1 if k in self._gen1 else self._gen2)
-                )
+    )
                 return {
                     "name": self._name,
                     "hits": self._hits,
@@ -1590,6 +1590,6 @@ class RefcountEvictionCache[K, V]:
                     f"gen0={len(self._gen0)}, gen1={len(self._gen1)}, gen2={len(self._gen2)}, "
                     f"hits={self._hits}, miss={self._misses}, "
                     f"evict_orphaned={self._evict_orphaned_total})"
-                )
+    )
         except Exception:
             return f"RefcountEvictionCache(name={self._name!r}, maxsize={self._maxsize})"

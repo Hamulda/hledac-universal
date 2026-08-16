@@ -104,7 +104,7 @@ async def collect_runtime_health() -> dict[str, Any]:
                     pressure_level=uma["pressure_level"],
                     metal_gib=uma["metal_gib"],
                     dedup_bloom_pct=uma["dedup_bloom_pct"],
-                )
+    )
         except Exception:  # noqa: BLE001
             # Telemetry hook is best-effort — never fail the health endpoint
             pass

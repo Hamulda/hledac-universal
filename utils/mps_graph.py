@@ -178,7 +178,7 @@ def _fallback_dct(image_data: bytes, width: int, height: int) -> bytes:
         # G2 FIX: Clear message for missing [ml] extra
         logger.debug(
             "scipy.fftpack.dct unavailable: install with: pip install hledac-universal[ml]"
-        )
+    )
         return image_data
     except Exception as e:
         logger.warning(f"DCT fallback failed: {e}")

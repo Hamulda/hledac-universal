@@ -492,7 +492,7 @@ class TestDuckDBChaosResilience:
             query="test query",
             source_type="test",
             confidence=0.9
-        )
+    )
 
         # Mělo by vrátit False, ne crash
         assert result is False
@@ -513,7 +513,7 @@ class TestDuckDBChaosResilience:
             query="test",
             source_type="chaos",
             confidence=0.5
-        )
+    )
 
         assert result is False
 

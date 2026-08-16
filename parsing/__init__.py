@@ -1,10 +1,6 @@
 """parsing — zero-dependency feed parsing (selectolax + orjson)."""
 
-
-
-
-
-
+from hledac.universal.parsing.feed_parser import (
     FeedEntry,
     parse_atom,
     parse_feed,
@@ -12,5 +8,3 @@
 )
 
 __all__ = ["FeedEntry", "parse_atom", "parse_rss", "parse_feed"]
-
-from _core import aclose

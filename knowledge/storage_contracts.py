@@ -121,7 +121,7 @@ class CanonicalFindingContract(Struct, frozen=True):
             ts=self.ts,
             provenance=self.provenance,
             payload_text=self.payload_text,
-        )
+    )
 
 
 def _convert_to_contract(
@@ -239,7 +239,7 @@ def validate_finding_dict(raw: dict[str, Any]) -> CanonicalFindingContract | Non
         _logger.debug(
             "[ARCH-DB-001] WAL dict validation failed | raw_keys=%s",
             list(raw.keys()),
-        )
+    )
     return cast(CanonicalFindingContract | None, result)
 
 
@@ -263,7 +263,7 @@ def validate_wal_record(raw: dict[str, Any]) -> WALRecordContract | None:
         _logger.debug(
             "[ARCH-DB-001] WAL record validation failed | raw_keys=%s",
             list(raw.keys()),
-        )
+    )
     return cast(WALRecordContract | None, result)
 
 
@@ -287,7 +287,7 @@ def validate_entity_embedding(raw: dict[str, Any]) -> EntityEmbeddingContract | 
         _logger.debug(
             "[ARCH-DB-001] Entity embedding validation failed | raw_keys=%s",
             list(raw.keys()),
-        )
+    )
     return cast(EntityEmbeddingContract | None, result)
 
 
@@ -311,7 +311,7 @@ def validate_rag_chunk(raw: dict[str, Any]) -> RAGChunkContract | None:
         _logger.debug(
             "[ARCH-DB-001] RAG chunk validation failed | raw_keys=%s",
             list(raw.keys()),
-        )
+    )
     return cast(RAGChunkContract | None, result)
 
 
@@ -405,7 +405,7 @@ class StorageTrinityValidator:
                     len(ghost_findings),
                     len(duckdb_missing),
                     checked,
-                )
+    )
 
             return {
                 "ghost_findings": ghost_findings,
@@ -514,7 +514,7 @@ class StorageTrinityValidator:
                     len(orphaned),
                     len(missing_emb),
                     checked,
-                )
+    )
 
             return {
                 "orphaned_embeddings": orphaned,

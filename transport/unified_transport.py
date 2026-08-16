@@ -440,7 +440,7 @@ async def fetch_via_unified(url: str, policy: TransportPolicy | None=None, heade
 # at most 2 fallback transports tried concurrently, 8s total timeout.
 _MINI_RACE_TIMEOUT_S: float = min(
     float(os.environ.get("HLEDAC_MINI_RACE_TIMEOUT_S", "8.0")), 15.0
-)
+    )
 
 
 def _is_darknet_url(url: str) -> bool:
@@ -505,7 +505,7 @@ async def fetch_via_unified_with_race_fallback(
         # Darknet: only Tor/I2P transports
         fallback_policies.append(
             ("tor", TransportPolicy(kind=TransportKind.CURL_CFFI_TOR, tls_profile='chrome136', timeout_s=30.0))
-        )
+    )
     else:
         # Clearnet: race httpx and curl_cffi
         if primary_kind != TransportKind.HTTPX_H2:
@@ -526,7 +526,7 @@ async def fetch_via_unified_with_race_fallback(
                     timeout_s=race_timeout, max_bytes=max_bytes,
                 ),
                 timeout=race_timeout,
-            )
+    )
             if fb_result.get("error") is None and fb_result.get("status_code", 0) >= 200:
                 # Tag the winning transport
                 fb_result["_mini_race_winner"] = name
@@ -547,7 +547,7 @@ async def fetch_via_unified_with_race_fallback(
             tasks,
             return_when=asyncio.FIRST_COMPLETED,
             timeout=race_timeout,
-        )
+    )
         for task in done:
             try:
                 fb_result = task.result()

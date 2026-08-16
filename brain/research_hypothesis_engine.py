@@ -1774,7 +1774,7 @@ class HypothesisEngine:
         if hermes_engine is not None:
             return await self._generate_dark_surface_via_hermes(
                 hermes_engine, iocs, transport_str, context_hints
-            )
+    )
         # Fallback path: no LLM
         return self._generate_dark_surface_queries_fallback(iocs, transport_str)
 
@@ -1859,14 +1859,14 @@ class HypothesisEngine:
             f'- IPFS CID z intelligence findings\n'
             f'- Paste site leak korelace\n'
             f'- Darknet forum IOC patterns'
-        )
+    )
         try:
             result = await hermes_engine.generate_structured(
                 prompt=prompt,
                 response_model=_DarkQueryListResponse,
                 max_tokens=1024,
                 system_msg='Jsi OSINT dark surface research assistant.'
-            )
+    )
             # Try DSPy overlay if available
             if DSPY_AVAILABLE and os.environ.get('HLEDAC_ENABLE_DSPY') == '1':
                 result = self._apply_dspy_overlay(result, ioc_brief, transport_str)
@@ -1889,7 +1889,7 @@ class HypothesisEngine:
                 ioc_brief=ioc_brief,
                 available_transports=transport_str,
                 max_queries=self.MAX_DARK_QUERIES_PER_SPRINT
-            )
+    )
             if not (hasattr(pred, 'answer') and pred.answer):
                 return result
             queries_data = msgspec.json.decode(pred.answer)

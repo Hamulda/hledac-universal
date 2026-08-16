@@ -145,7 +145,7 @@ def _set_thread_affinity(mask: int) -> bool:
             ctypes.c_long(0),  # current thread
             ctypes.c_size_t(CPU_MASK_SIZE),
             cpuset
-        )
+    )
         if result == 0:
             return True
         else:
@@ -198,7 +198,7 @@ def _detect_m1_topology() -> dict:
             ["sysctl", "-n", "hw.perflevel0.physicalcpu"],
             capture_output=True,
             text=True
-        )
+    )
         if result.returncode == 0:
             topology["p_cores"] = int(result.stdout.strip())
         
@@ -207,7 +207,7 @@ def _detect_m1_topology() -> dict:
             ["sysctl", "-n", "hw.perflevel1.physicalcpu"],
             capture_output=True,
             text=True
-        )
+    )
         if result.returncode == 0:
             topology["e_cores"] = int(result.stdout.strip())
         
@@ -222,14 +222,14 @@ def _detect_m1_topology() -> dict:
             ["sysctl", "-n", "machdep.cpu.brand_string"],
             capture_output=True,
             text=True
-        )
+    )
         if result.returncode == 0:
             topology["model"] = result.stdout.strip()
         
         logger.info(
             "[CPUAffinity] Detected %s: %d P-cores, %d E-cores",
             topology["model"], topology["p_cores"], topology["e_cores"]
-        )
+    )
         
     except Exception as e:
         logger.warning("[CPUAffinity] Failed to detect topology: %s, using defaults", e)
@@ -439,7 +439,7 @@ def init_mlx_affinity() -> None:
             logger.info(
                 "[CPUAffinity] MLX Metal initialized with P-core affinity "
                 "(%d P-cores)", get_core_topology()["p_cores"]
-            )
+    )
         else:
             logger.warning("[CPUAffinity] Failed to set MLX P-core affinity")
     
@@ -606,7 +606,7 @@ def get_cluster_utilization() -> ClusterUtilization:
             p_core_threads=p_threads,
             e_core_threads=e_threads,
             timestamp=now,
-        )
+    )
         
     except Exception as e:
         logger.warning("[CPUAffinity] Failed to get cluster utilization: %s", e)
@@ -616,7 +616,7 @@ def get_cluster_utilization() -> ClusterUtilization:
             p_core_threads=0,
             e_core_threads=0,
             timestamp=now,
-        )
+    )
 
 
 # Module-level cache for utilization calculation

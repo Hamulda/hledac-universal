@@ -352,7 +352,7 @@ class AsyncLMDBEnv:
                 return open_lmdb_with_guard(
                     pathlib.Path(self._path),
                     map_size=self._map_size,
-                )
+    )
 
             self._env = await asyncio.to_thread(_open)
         return self._env

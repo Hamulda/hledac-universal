@@ -55,7 +55,7 @@ class TestDuckPGQGraphPersistence:
         g2 = DuckPGQGraph()
         paths = session_event_loop.run_until_complete(
             g2.find_paths_between_iocs("path.src.test", "path.dst.test", max_hops=4)
-        )
+    )
         assert len(paths) >= 1, f"No path found between src and dst: {paths}"
         assert paths[0][0] == "path.src.test"
         assert paths[0][-1] == "path.dst.test"
@@ -80,7 +80,7 @@ class TestDuckPGQGraphPersistence:
         result = g.find_connected_batch(
             ["batch.src1.test", "batch.src2.test", "batch.none.test"],
             max_hops=2,
-        )
+    )
         assert isinstance(result, dict), f"Expected dict, got {type(result)}"
         assert "batch.src1.test" in result
         assert isinstance(result["batch.src1.test"], list)

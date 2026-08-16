@@ -93,7 +93,7 @@ class TestJA3ProfileCycling(unittest.TestCase):
                 profile="chrome110",
                 url="https://example.com/path?q=1",
                 used_profile="safari17_0",
-            )
+    )
 
     def test_reset_ja3_cycle_returns_to_zero(self) -> None:
         """reset_ja3_cycle() must zero the counter for deterministic testing."""
@@ -211,7 +211,7 @@ class TestCircuitBreakerPersistenceInMemorySemantics(unittest.TestCase):
         self.assertLessEqual(
             len(circuit_breaker._BREAKERS),
             circuit_breaker.MAX_TRACKED_DOMAINS,
-        )
+    )
 
     def test_state_transitions_still_work(self) -> None:
         """CLOSED → OPEN → HALF_OPEN transitions are unchanged by F265A."""

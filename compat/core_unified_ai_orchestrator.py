@@ -13,7 +13,7 @@ warnings.warn(
     "This shim will be removed in a future sprint.",
     DeprecationWarning,
     stacklevel=2,
-)
+    )
 
 from hledac.universal.brain.unified_research_bridge import UnifiedAIOrchestrator
 from _core import aclose

@@ -51,7 +51,7 @@ class TestSourceAssertions:
                     names = [alias.name for alias in node.names]
                     assert "_derive_next_action" in names, (
                         f"_derive_next_action not in import statement: {names}"
-                    )
+    )
                     return
         pytest.fail("_derive_next_action import from benchmarks.live_measurement_next_action not found")
 
@@ -65,7 +65,7 @@ class TestSourceAssertions:
                     names = [alias.name for alias in node.names]
                     assert "NextActionInput" in names, (
                         f"NextActionInput not in import statement: {names}"
-                    )
+    )
                     return
         pytest.fail("NextActionInput import from benchmarks.live_measurement_next_action not found")
 
@@ -79,7 +79,7 @@ class TestSourceAssertions:
                     names = [alias.name for alias in node.names]
                     assert "_was_family_attempted" in names, (
                         f"_was_family_attempted not in import statement: {names}"
-                    )
+    )
                     return
         pytest.fail("_was_family_attempted import from benchmarks.live_measurement_next_action not found")
 
@@ -102,7 +102,7 @@ class TestSourceAssertions:
         ]
         assert not local_rules, (
             f"Local _rule_* definitions found in live_sprint_measurement.py: {local_rules}"
-        )
+    )
 
     def test_lsm_no_local_was_family_attempted(self):
         """live_sprint_measurement.py does NOT locally define _was_family_attempted."""
@@ -133,7 +133,7 @@ class TestSourceAssertions:
                             expected = {"NextActionInput", "_derive_next_action", "_was_family_attempted"}
                             assert expected.issubset(set(names)), (
                                 f"__all__ missing expected symbols. Found: {names}"
-                            )
+    )
                             return
         pytest.fail("__all__ not found in live_measurement_next_action.py")
 
@@ -270,7 +270,7 @@ class TestBehaviorAssertion:
             total_findings=0,
             ct_findings=0,
             runtime_truth=runtime_truth,
-        )
+    )
 
     def test_same_input_same_output_nam_path(self, nam_module):
         """NAM path produces a well-formed (action, detail) tuple."""
@@ -311,13 +311,13 @@ class TestBehaviorAssertion:
             windup_guard_observation=getattr(inp, "windup_guard_observation", None),
             scheduler_deadline_enforced=getattr(inp, "scheduler_deadline_enforced", False),
             scheduler_deadline_checks=getattr(inp, "scheduler_deadline_checks", 0),
-        )
+    )
         assert isinstance(result, tuple), f"result must be tuple, got {type(result)}"
         action = result[0]
         assert isinstance(action, str), f"action must be str, got {type(action)}"
         assert action == "unknown" or action.startswith("fix_") or action.startswith("clean_"), (
             f"Unexpected action: {action}"
-        )
+    )
 
     def test_same_input_same_output_both_paths(self, nam_module, lsm_module):
         """Identical inputs produce identical (action, detail) tuples via lsm and nam."""
@@ -364,7 +364,7 @@ class TestBehaviorAssertion:
             windup_guard_observation=None,
             scheduler_deadline_enforced=False,
             scheduler_deadline_checks=0,
-        )
+    )
 
         def call(mod, input_inp):
             return mod._derive_next_action(
@@ -403,14 +403,14 @@ class TestBehaviorAssertion:
                 windup_guard_observation=getattr(input_inp, "windup_guard_observation", None),
                 scheduler_deadline_enforced=getattr(input_inp, "scheduler_deadline_enforced", False),
                 scheduler_deadline_checks=getattr(input_inp, "scheduler_deadline_checks", 0),
-            )
+    )
 
         nam_result = call(nam_module, inp)
         lsm_result = call(lsm_module, inp)
 
         assert nam_result == lsm_result, (
             f"Behavior mismatch:\n  NAM result: {nam_result}\n  LSM result: {lsm_result}"
-        )
+    )
 
     def test_was_family_attempted_both_paths(self, nam_module, lsm_module):
         """_was_family_attempted returns same result via both modules."""

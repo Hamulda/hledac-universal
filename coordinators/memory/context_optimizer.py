@@ -30,7 +30,7 @@ from hledac.universal.coordinators.memory._core import (
     ContextItem,
     ContextPriority,
     ResearchPhase,
-)
+    )
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
 from _core import aclose
 
@@ -91,7 +91,7 @@ class ContextOptimizationManager:
         }
         logger.info(
             f'ContextOptimizationManager initialized (hot: {max_hot_tokens}, warm: {max_warm_tokens})'
-        )
+    )
 
     def _serialize_to_json(self, data: Any) -> bytes:
         """Serialize data to JSON bytes using msgspec, compressed with zstd."""
@@ -144,7 +144,7 @@ class ContextOptimizationManager:
             last_accessed=time.time(),
             content_type=content_type,
             confidence=metadata.get('confidence', 0.5),
-        )
+    )
         if priority == ContextPriority.HIGH or phase_weight > 0.8:
             if self.hot_tokens + tokens > self.max_hot_tokens:
                 self._evict_from_hot(tokens)
@@ -217,7 +217,7 @@ class ContextOptimizationManager:
             compressed = lz4.frame.compress(
                 content.encode('utf-8'),
                 compression_level=compression_level,
-            )
+    )
             compressed_size = len(compressed)
             words = content.split()
             critical = ' '.join(words[:50]) if len(words) > 50 else content
@@ -234,7 +234,7 @@ class ContextOptimizationManager:
                 full_compressed=compressed,
                 metadata={'compression_level': compression_level},
                 timestamp=time.time(),
-            )
+    )
             self.stats['compressions'] += 1
             return result
         except ImportError:
@@ -250,7 +250,7 @@ class ContextOptimizationManager:
                 full_compressed=content.encode('utf-8'),
                 metadata={},
                 timestamp=time.time(),
-            )
+    )
 
     def decompress_context(
         self,
@@ -283,7 +283,7 @@ class ContextOptimizationManager:
         items = sorted(
             self.hot_context.items(),
             key=lambda x: (x[1].priority.value, x[1].last_accessed),
-        )
+    )
         freed = 0
         for item_id, item in items:
             if freed >= required_tokens:
@@ -305,7 +305,7 @@ class ContextOptimizationManager:
         items = sorted(
             self.warm_context.items(),
             key=lambda x: (x[1].priority.value, x[1].last_accessed),
-        )
+    )
         freed = 0
         for item_id, item in items:
             if freed >= required_tokens:

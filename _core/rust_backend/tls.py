@@ -172,14 +172,14 @@ class _PythonTlsDomain:
         raise NotImplementedError(
             "JA4 computation requires Rust tls13 module. "
             "Build with: maturin develop --features tls13"
-        )
+    )
 
     async def ja4_from_client_hello_bytes(self, chello_bytes: bytes) -> str:  # noqa: ARG002
         """Python cannot compute JA4 without ClientHello parsing."""
         raise NotImplementedError(
             "JA4 computation requires Rust tls13 module. "
             "Build with: maturin develop --features tls13"
-        )
+    )
 
     async def batch_ja4(
         self,

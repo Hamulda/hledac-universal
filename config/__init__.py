@@ -10,6 +10,7 @@ hledac.universal.config — canonical config namespace for universal package
 All content migrated from hledac/universal/config.py (single-file).
 """
 from .settings import settings, Settings, FetchSettings, MLXSettings, DuckDBSettings, DedupSettings, TransportSettings, MemorySettings, SprintSettings, GraphSettings, SynthesisSettings, CooldownSettings, FeatureGates
+from .settings import HERMES_MODEL_DEFAULT, MODERNBERT_MODEL_DEFAULT, GLINER_MODEL_DEFAULT  # ISSUE-015
 import os
 from dataclasses import dataclass, field
 import msgspec
@@ -23,12 +24,15 @@ class M1Presets:
     NOTE: Hardware limits (memory, thermal, circuit_breaker_threshold) are
     centralized in M1AirConfig (core/config/m1_air_config.py).
     These presets are for research-mode behavior tuning only.
+    
+    ISSUE-015: Model constants now reference canonical values from settings.
     """
     MEMORY_LIMIT_MB = 5500.0
     THERMAL_THRESHOLD_C = 85.0
-    HERMES_MODEL = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
-    MODERNBERT_MODEL = 'mlx-community/answerdotai-ModernBERT-base-6bit'
-    GLINER_MODEL = 'knowledgator/gliner-relex-large-v0.5'
+    # ISSUE-015: Use canonical constants
+    HERMES_MODEL: str = HERMES_MODEL_DEFAULT
+    MODERNBERT_MODEL: str = MODERNBERT_MODEL_DEFAULT
+    GLINER_MODEL: str = GLINER_MODEL_DEFAULT
     MAX_CONCURRENT_AGENTS = 6
     AGENT_TIMEOUT_SECONDS = 25.0
     CONTEXT_SWAP_ENABLED = True

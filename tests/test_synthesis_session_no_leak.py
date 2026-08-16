@@ -45,7 +45,7 @@ class TestSynthesisSessionNoLeak:
             query="test query",
             findings=[{"content": "test"}],
             lifecycle=mock_lifecycle,
-        )
+    )
         session = SynthesisSession(synth_ctx)
         # Inject pre-created runner to avoid actual MLX initialization
         session._runner = mock_runner
@@ -86,7 +86,7 @@ class TestSynthesisSessionNoLeak:
             query="test query",
             findings=[{"content": "test"}],
             lifecycle=mock_lifecycle,
-        )
+    )
         session = SynthesisSession(synth_ctx)
         session._runner = mock_runner
         session._inited = True
@@ -104,7 +104,7 @@ class TestSynthesisSessionNoLeak:
         synth_ctx = SynthesisContext(
             query="test query",
             findings=[{"content": "test"}],
-        )
+    )
         session = SynthesisSession(synth_ctx)
         # _runner is None — never created due to ImportError
         assert session._runner is None
@@ -143,7 +143,7 @@ class TestSynthesisSessionNoLeak:
         synth_ctx = SynthesisContext(
             query="test query",
             findings=[{"content": "test"}],
-        )
+    )
         session = SynthesisSession(synth_ctx)
         session._runner = mock_runner
         session._inited = True

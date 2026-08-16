@@ -122,7 +122,7 @@ class _OpenStorageScanner:
             policy="collect",
             concurrency=5,
             ctx="open_storage:scan_domain",
-        )
+    )
 
         findings: list[dict[str, Any]] = [r for r in results.ok if r is not None]
 
@@ -145,7 +145,7 @@ class _OpenStorageScanner:
             from hledac.universal.network.native_extraction import (
                 extract_from_exposed,
                 is_native_extraction_enabled,
-            )
+    )
         except Exception:
             return []
 
@@ -177,7 +177,7 @@ class _OpenStorageScanner:
             policy="collect",
             concurrency=10,  # TCP probes are cheap, 10 concurrent is fine
             ctx="open_storage:port_probe",
-        )
+    )
 
         if not open_ports:
             return []
@@ -186,7 +186,7 @@ class _OpenStorageScanner:
             "HEIST-08: %d open DB ports on %s: %s",
             len(open_ports), domain,
             [(p, s) for p, s in open_ports],
-        )
+    )
 
         # Phase 2: Native protocol extraction (bounded concurrency)
         findings: list[dict[str, Any]] = []

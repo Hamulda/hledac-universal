@@ -3,13 +3,6 @@ runtime/resource_governor.py — M1ResourceGovernor advisory safety layer
 
 ROLE: Advisory safety layer for branch concurrency, model lease, and renderer lease.
 
-P7-3 SSOT: MISSION_PEAK_RSS_GIB imported from utils.uma_budget.UmaBudget.
-Threshold ladder from UmaBudget (M1 8GB SSOT, 6.25 GiB ceiling):
-    - 5.5 GiB  → soft ceiling (MISSION_PEAK_RSS_GIB, 88% of ceiling)
-    - 5.938 GiB → SOFT_WARN (95% of ceiling)
-    - 6.191 GiB → WARN (99% of ceiling)
-    - 6.25 GiB  → CRITICAL/EMERGENCY (ceiling = 100%)
-
 
 
 
@@ -71,23 +64,7 @@ MODEL_LOADED_BRANCH_CONCURRENCY = 2
 CRITICAL_ALLOW_RENDERER = False
 CRITICAL_ALLOW_MODEL_LOAD = False
 _EMA_ALPHA = 0.3
-# P7-3 SSOT: Import from UmaBudget SSOT, not local definition
-
-
-
-
-
-    MISSION_PEAK_RSS_GIB as _UMA_BUDGET_MISSION_PEAK,
-    UmaBudget,
-)
-MISSION_PEAK_RSS_GIB: float = _UMA_BUDGET_MISSION_PEAK
-
-# MODERN-39 Fix: SSOT threshold imports
-
-from _core import aclose# These replace the hardcoded 6.85 magic number for near-emergency detection.
-# 6.85 was a magic number that bypassed the SSOT UmaBudget thresholds.
-# Derived from THRESHOLD_EMERGENCY_GIB (6.25 GiB) — represents near-ceiling pressure.
-NEAR_EMERGENCY_THRESHOLD_GIB: float = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 6.25 GiB
+MISSION_PEAK_RSS_GIB: float = 5.5
 SIDECAR_DEFAULT_ESTIMATE_MB: int = 128
 # [FINAL]-019: HEAVY_SIDECARS now includes memory cost metadata for budget accounting.
 # In windup mode (WINDUP QoS level), these are skipped to reduce pressure.
@@ -425,8 +402,7 @@ class M1ResourceGovernor:
             fetch_limit = CRITICAL_FETCH_LIMIT
             allow_renderer = CRITICAL_ALLOW_RENDERER
             allow_model_load = CRITICAL_ALLOW_MODEL_LOAD
-            # MODERN-39 Fix: Use SSOT threshold instead of hardcoded 6.85
-            if system_used_gib >= NEAR_EMERGENCY_THRESHOLD_GIB:
+            if system_used_gib >= 6.85:
                 branch_concurrency = CRITICAL_NEAR_EMERGENCY_BRANCH_CONCURRENCY
                 reason = f'UMA {self._uma_state}: near_emergency reduced concurrency'
             else:
@@ -662,8 +638,7 @@ class M1ResourceGovernor:
         if uma_state == UMA_STATE_EMERGENCY:
             return BranchAdmission(allowed=True, reason=f'uma_{uma_state}_reduced_concurrency', uma_state=uma_state, branch_concurrency=1, estimated_mb=estimated_mb)
         elif uma_state == UMA_STATE_CRITICAL:
-            # MODERN-39 Fix: Use SSOT threshold instead of hardcoded 6.85
-            if system_used_gib >= NEAR_EMERGENCY_THRESHOLD_GIB:
+            if system_used_gib >= 6.85:
                 branch_concurrency = 2
             else:
                 branch_concurrency = 3

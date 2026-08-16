@@ -352,7 +352,7 @@ class StreamingEmbedder:
             "cpu",
             _sync_extract_texts,
             findings,
-        )
+    )
 
         # Phase 2: Apply Rust text normalization if available
         norm_texts = _try_rust_text_norm(all_texts)
@@ -361,7 +361,7 @@ class StreamingEmbedder:
         else:
             logger.debug(
                 f"[StreamingEmbed] Rust text norm applied: {len(norm_texts)} texts"
-            )
+    )
 
         # Phase 3: Partition into chunks
         chunks: list[tuple[int, int]] = []  # (start_idx, end_idx)
@@ -399,7 +399,7 @@ class StreamingEmbedder:
                             launch_batch(chunk_idx),
                             name=f"streaming_embed.batch_{chunk_idx}",
                             eager_start=True,
-                        )
+    )
                         pending.add(batch_task)
                         chunk_idx += 1
 
@@ -440,7 +440,7 @@ class StreamingEmbedder:
                             self._abort = True
                             logger.warning(
                                 "[StreamingEmbed] memory pressure detected, aborting after remaining batches"
-                            )
+    )
                             # TaskGroup will cancel remaining children on scope exit
                             break
         except* asyncio.TimeoutError:  # noqa: BLE001
@@ -470,7 +470,7 @@ class StreamingEmbedder:
             _sync_embed_batch,
             texts,
             len(texts),
-        )
+    )
         return (ids, embeddings)
 
     async def _embed_fallback(
@@ -489,7 +489,7 @@ class StreamingEmbedder:
             "cpu",
             _sync_extract_texts,
             findings,
-        )
+    )
 
         norm_texts = _try_rust_text_norm(all_texts)
         if norm_texts is None:
@@ -522,7 +522,7 @@ class StreamingEmbedder:
                             launch_batch(chunk_idx),
                             name=f"streaming_embed.fallback_batch_{chunk_idx}",
                             eager_start=True,
-                        )
+    )
                         pending.add(batch_task)
                         chunk_idx += 1
 
@@ -569,7 +569,7 @@ class StreamingEmbedder:
             "Use _embed_concurrent instead.",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         # Delegate to the current implementation
         async for batch in self._embed_concurrent(findings, batch_size):
             yield batch

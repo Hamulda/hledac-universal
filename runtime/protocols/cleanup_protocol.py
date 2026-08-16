@@ -1,4 +1,5 @@
 """
+from _core import aclose
 runtime/protocols/cleanup_protocol.py — F285: Async Resource Cleanup Protocol
 
 DEPRECATED — Import from core.protocols instead.
@@ -24,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from _core.protocols.cleanup_protocol import (
     shutdown_aclose as _core_shutdown_aclose,
     DEFAULT_ACLOSE_TIMEOUT_S,
-)
+    )
 
 if TYPE_CHECKING:
     from typing import ClassVar
@@ -159,4 +160,4 @@ async def manage_cleanup(
             logger.warning(
                 "[cleanup] errors during managed cleanup: %s",
                 [str(e) for e in errors],
-            )
+    )

@@ -238,13 +238,13 @@ class AutoRECatalog:
             hypothesis_note = (
                 f"Detected format family: {fmt_desc}. "
                 "Use standard library `struct` for binary parsing."
-            )
+    )
         else:
             hypothesis_note = (
                 "Unknown binary format. Analyze the byte structure, entropy, "
                 "and ASCII patterns to generate a hypothesis. Look for magic bytes, "
                 "length prefixes, null-padding patterns, and repeated structures."
-            )
+    )
 
         # Catalog context for Hermes3 (compact description of 200+ known exotic formats)
         catalog_context = self._get_catalog_context()

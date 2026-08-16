@@ -6,11 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-
-
-
-
-
+from hledac.universal._core.global_cache_registry import (
     GlobalCacheRegistry,
     CacheEntry,
     register_cache,
@@ -25,8 +21,7 @@ class TestGlobalCacheRegistry:
     """Test suite for GlobalCacheRegistry."""
 
     def setup_method(self) -> None:
-
-from _core import aclose        """Reset registry state before each test."""
+        """Reset registry state before each test."""
         # Get the singleton and clear it
         registry = GlobalCacheRegistry.get_instance()
         registry._entries.clear()  # type: ignore[attr-defined]

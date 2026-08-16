@@ -159,7 +159,7 @@ class InsightAnalysisResult(msgspec.Struct, gc=False):
         return (
             len(self.insights) + len(self.patterns) + len(self.anomalies) +
             len(self.contradictions) + len(self.gaps) + len(self.hypotheses)
-        )
+    )
 
     @property
     def high_confidence_count(self) -> int:
@@ -611,7 +611,7 @@ class InsightEngine:
                     importance_score=importance_fn(item),
                     tags=tags_fn(item),
                     **extra_kwargs_fn(item),
-                )
+    )
             )
         return results
 
@@ -625,7 +625,7 @@ class InsightEngine:
             importance_fn=lambda _: 0.6,
             tags_fn=lambda p: ["pattern", p.pattern_type],
             filter_fn=lambda p: p.confidence >= self.min_confidence,
-        )
+    )
 
     def _anomalies_to_insights(self, anomalies: list[Anomaly]) -> list[Insight]:
         """Convert anomalies to insights."""
@@ -638,7 +638,7 @@ class InsightEngine:
             tags_fn=lambda a: ["anomaly", a.anomaly_type],
             filter_fn=lambda a: a.severity > 0.5,
             confidence_fn=0.7,
-        )
+    )
 
     def _contradictions_to_insights(self, contradictions: list[Contradiction]) -> list[Insight]:
         """Convert contradictions to insights."""
@@ -651,7 +651,7 @@ class InsightEngine:
             tags_fn=lambda _: ["contradiction"],
             filter_fn=None,
             confidence_fn=lambda c: c.severity,
-        )
+    )
 
     def _gaps_to_insights(self, gaps: list[Gap]) -> list[Insight]:
         """Convert gaps to insights."""
@@ -664,7 +664,7 @@ class InsightEngine:
             tags_fn=lambda g: ["gap", g.area],
             filter_fn=None,
             confidence_fn=0.75,
-        )
+    )
 
     def _hypotheses_to_insights(self, hypotheses: list[Hypothesis]) -> list[Insight]:
         """Convert hypotheses to insights."""
@@ -677,7 +677,7 @@ class InsightEngine:
             tags_fn=lambda _: ["hypothesis"],
             filter_fn=None,
             extra_kwargs_fn=lambda h: {"evidence": h.supporting_evidence},
-        )
+    )
 
     def _rank_insights(self, insights: list[Insight]) -> list[Insight]:
         """Rank insights by composite score."""
@@ -687,7 +687,7 @@ class InsightEngine:
                 insight.confidence * 0.4 +
                 insight.novelty_score * 0.35 +
                 (1.0 if insight.evidence else 0.5) * 0.25
-            )
+    )
 
         # Sort by importance
         return sorted(insights, key=attrgetter("importance_score"), reverse=True)
@@ -838,7 +838,7 @@ class InsightEngine:
             tags_fn=lambda _: ["causal", "relationship"],
             filter_fn=lambda c: c.confidence >= self.min_confidence,
             extra_kwargs_fn=lambda c: {"evidence": c.evidence},
-        )
+    )
 
     # =============================================================================
     # MULTI-LEVEL SYNTHESIS (from multi_level_synthesis.py comments)
@@ -909,7 +909,7 @@ class InsightEngine:
             confidence=0.9,
             quality_score=0.7,
             key_insights=[f"Found {len(facts)} facts"] if facts else []
-        )
+    )
 
     def _synthesis_level_2(
         self,
@@ -932,7 +932,7 @@ class InsightEngine:
             confidence=0.8,
             quality_score=0.75,
             key_insights=[p.description for p in patterns[:3]]
-        )
+    )
 
     def _synthesis_level_3(
         self,
@@ -960,7 +960,7 @@ class InsightEngine:
             confidence=0.75,
             quality_score=0.8,
             key_insights=insights
-        )
+    )
 
     def _synthesis_level_4(
         self,
@@ -987,7 +987,7 @@ class InsightEngine:
             confidence=0.7,
             quality_score=0.85,
             key_insights=insights
-        )
+    )
 
     def _synthesis_level_5(
         self,
@@ -1007,7 +1007,7 @@ class InsightEngine:
             if severe_anomalies:
                 paradigm_insights.append(
                     f"Severe anomaly suggests paradigm shift: {severe_anomalies[0].description[:50]}..."
-                )
+    )
 
         # Check for serendipitous discoveries
         serendipity = self._engineer_serendipity(data, query)
@@ -1024,7 +1024,7 @@ class InsightEngine:
             confidence=0.6,
             quality_score=0.9,
             key_insights=paradigm_insights
-        )
+    )
 
     def _synthesis_to_insights(
         self,

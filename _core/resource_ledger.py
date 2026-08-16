@@ -272,7 +272,7 @@ class ResourceLedger:
                 logger.warning(
                     f"[ResourceLedger] Allocation denied: {resource_type.name} "
                     f"for {owner} (limit={self._get_limit(resource_type)})"
-                )
+    )
                 return False
 
             allocation = ResourceAllocation(
@@ -282,7 +282,7 @@ class ResourceLedger:
                 allocated_at=time.monotonic(),
                 size_bytes=size_bytes,
                 metadata=metadata or {},
-            )
+    )
 
             self._allocations[resource_type][handle] = allocation
             self._owner_allocations[owner].append(allocation)
@@ -296,7 +296,7 @@ class ResourceLedger:
             logger.debug(
                 f"[ResourceLedger] Allocated: {resource_type.name}={handle} "
                 f"for {owner} (total={current}/{self._get_limit(resource_type)})"
-            )
+    )
             return True
 
     def release(
@@ -335,7 +335,7 @@ class ResourceLedger:
             logger.debug(
                 f"[ResourceLedger] Released: {resource_type.name}={handle} "
                 f"from {allocation.owner} (age={allocation.age_s():.1f}s)"
-            )
+    )
             return True
 
     def release_all(self, owner: str) -> int:
@@ -573,13 +573,13 @@ class ResourceLedger:
                     False,
                     f"{resource_type.name} limit exceeded: "
                     f"current={current}, requested={requested}, limit={limit}",
-                )
+    )
 
             if new_total > limit * warn_threshold:
                 logger.warning(
                     f"[ResourceLedger] {resource_type.name} warning: "
                     f"{new_total}/{limit} ({new_total/limit:.0%})"
-                )
+    )
 
         return (True, "admission granted")
 
@@ -629,7 +629,7 @@ class ResourceLedger:
             metal_cache_bytes=metal_cache_bytes,
             threads=threads,
             tmp_volume_bytes=tmp_volume_bytes,
-        )
+    )
 
         if not can_admit:
             raise RuntimeError(f"[ResourceLedger] Admission denied for {owner}: {reason}")
@@ -713,7 +713,7 @@ class ResourceLedger:
             pid,
             owner,
             metadata={"process": process} if process else {},
-        )
+    )
 
     def unregister_child_process(self, pid: int) -> bool:
         """
@@ -844,7 +844,7 @@ class ResourceLedger:
                     result["warnings"].append(
                         f"{resource_type.name} at {utilization:.0%} "
                         f"(threshold={warn_threshold:.0%})"
-                    )
+    )
 
             return result
 

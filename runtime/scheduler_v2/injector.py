@@ -63,7 +63,7 @@ class Injector:
                 query="test",
                 result=SprintSchedulerResult(),
                 duckdb_store_result=InitResult.success(store, 0.0),
-            )
+    )
             object.__setattr__(scheduler, "_ctx", minimal_ctx)
 
         # Backward-compat: also set _duckdb_store directly on scheduler for

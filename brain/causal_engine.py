@@ -21,7 +21,6 @@ INVARIANTS:
   AttributeError.
 """
 import time
-from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from _core import aclose
@@ -35,18 +34,18 @@ class Entity(msgspec.Struct, gc=False):
     entity_id: str
     entity_type: str
     value: str = ''
-    attributes: dict[str, Any] = field(default_factory=dict)
+    attributes: dict[str, Any] = msgspec.field(default_factory=dict)
 
 class EntityCluster(msgspec.Struct, frozen=True, gc=False):
     """Group of related entities (e.g. all hosts in the same ASN)."""
     cluster_id: str
-    entities: list[Entity] = field(default_factory=list)
+    entities: list[Entity] = msgspec.field(default_factory=list)
     cohesion: float = 0.0
 
 class TemporalSequence(msgspec.Struct, frozen=True, gc=False):
     """Ordered sequence of events with timestamps."""
     sequence_id: str
-    events: list[tuple[float, str]] = field(default_factory=list)
+    events: list[tuple[float, str]] = msgspec.field(default_factory=list)
 
     @property
     def entities(self) -> list[str]:

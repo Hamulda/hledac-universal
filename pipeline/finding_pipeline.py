@@ -405,7 +405,7 @@ class FindingPipeline:
                 if ioc_value:
                     self._graph_service.upsert_ioc(
                         ioc_value, ioc_type, confidence, source, observed_at=observed_at
-                    )
+    )
             except Exception as e:
                 logger.warning(f"Graph upsert error: {e}")
 

@@ -13,6 +13,13 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 from _core import aclose
 
+# ISSUE-016 FIX: Import safe_create_task for proper task lifecycle management
+try:
+    from hledac.universal.utils.asyncx._parallel import safe_create_task
+except ImportError:
+    # Fallback if asyncx not available
+    safe_create_task = None  # type: ignore[assignment,misc]
+
 if TYPE_CHECKING:
     pass
 
@@ -72,7 +79,16 @@ def evidence_log_init(
             _loop_needs_close = True
 
         if loop.is_running():
-            _task = asyncio.create_task(elog.initialize())
+            # ISSUE-016 FIX: Use safe_create_task instead of raw asyncio.create_task()
+            # This ensures proper error handling and OTel context propagation
+            if safe_create_task is not None:
+                _task = safe_create_task(elog.initialize(), name="evidence_log_init")
+            else:
+                # Fallback: raw asyncio.create_task with done_callback for error handling
+                _task = asyncio.create_task(elog.initialize())
+                _task.add_done_callback(
+                    lambda t: t.exception() if not t.cancelled() and t.done() else None
+                )
             # Keep strong reference so the task isn't GC'd before completion
             object.__setattr__(elog, "_init_task", _task)
         else:
@@ -98,6 +114,6 @@ def evidence_log_init(
                 "windup_lead_s": windup_lead_s,
             },
             confidence=1.0,
-        )
+    )
     except Exception:  # noqa: BLE001
         pass  # fail-soft: evidence events never block sprint

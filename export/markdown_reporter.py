@@ -45,7 +45,7 @@ _FORENSIC_SOURCE_TYPES: tuple[str, ...] = (
     "steganography_detection",
     "digital_ghost_detection",
     "blockchain_forensics",
-)
+    )
 
 _FORENSIC_LABELS: dict[str, str] = {
     "forensic_analysis": "Forensic Analysis (IOC extraction / enrichment)",
@@ -103,7 +103,7 @@ _ROOT_CAUSE_LABELS: dict[str, str] = {
 _ENTROPY_FIELDS = (
     "entropy_threshold",
     "entropy_min_len",
-)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +460,7 @@ def _render_per_source_health(report: dict[str, Any]) -> str:
         sorted_sources = sorted(
             per_source,
             key=lambda s: str(s.get("feed_url", "")),
-        )
+    )
         for src in sorted_sources:
             url = src.get("feed_url", "unknown")
             label = src.get("label", "")
@@ -521,7 +521,7 @@ def render_forensic_findings_section(report: dict[str, Any]) -> str:
     if cmin is not None and cmax is not None and cavg is not None:
         parts.append(
             f"- **Confidence**: min={cmin:.2f} · max={cmax:.2f} · avg={cavg:.2f}"
-        )
+    )
 
     hist = agg["ioc_histogram"]
     if hist:
@@ -538,7 +538,7 @@ def render_forensic_findings_section(report: dict[str, Any]) -> str:
                 sample_str = "_(no sample)_"
             parts.append(
                 f"| `{_esc(ioc_t)}` | {count} | {sample_str} |"
-            )
+    )
     return "\n".join(parts)
 
 

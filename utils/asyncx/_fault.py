@@ -60,7 +60,7 @@ def _get_resilience():
                 FailureSeverity,
                 get_ledger,
                 SeverityMapper,
-            )
+    )
             _RESILIENCE_MODULE = {
                 "FailureRegistry": FailureRegistry,
                 "FailureSeverity": FailureSeverity,
@@ -83,23 +83,23 @@ def _get_resilience():
 
 _CASCADE_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
     "_cascade_failure_id", default=""
-)
+    )
 
 # Module-level counter for generating unique failure IDs per sprint/execution.
 _FAILURE_COUNTER: contextvars.ContextVar[int] = contextvars.ContextVar(
     "_failure_counter", default=0
-)
+    )
 
 # Failure path for the current cascade — stores (scope, exc_info_str, count).
 # Escalation threshold: after 2 failures in a chain, switch to WARNING.
 _FAILURE_PATH: contextvars.ContextVar[list[tuple[str, str, int]]] = contextvars.ContextVar(
     "_failure_path", default=[]
-)
+    )
 
 # Sentinel: marks that we're already inside a failure log — prevents re-entry.
 _IN_FAILURE_LOG: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "_in_failure_log", default=False
-)
+    )
 
 # Global logger for failure events — use sprint's logger when available.
 _FAILURE_LOGGER = logging.getLogger("hledac.failures")
@@ -294,7 +294,7 @@ class silent_except:
                         severity=severity,
                         error=exc,
                         context={"cascade_id": _CASCADE_CTX.get()},
-                    )
+    )
                 )
                 # Best-effort: add done callback to log if recording fails
                 def _log_if_failed(t: asyncio.Task) -> None:
@@ -304,7 +304,7 @@ class silent_except:
                         _FAILURE_LOGGER.warning(
                             "[REGISTRY] Failed to record failure: %s",
                             recorded_exc,
-                        )
+    )
                 _task.add_done_callback(_log_if_failed)
         except Exception:
             # Silently ignore ledger failures to not compound original error
@@ -327,7 +327,7 @@ class silent_except:
                         self._scope,
                         exc,
                         is_escalated=self._escalate,
-                    )
+    )
                     # Record to registry for orchestrator visibility
                     self._record_to_ledger(exc)
                     if self._default is not ...:
@@ -348,7 +348,7 @@ class silent_except:
                         self._scope,
                         exc,
                         is_escalated=self._escalate,
-                    )
+    )
                     # Record to registry for orchestrator visibility
                     self._record_to_ledger(exc)
                     if self._default is not ...:
@@ -363,7 +363,7 @@ class silent_except:
             f"silent_except(scope={self._scope!r}, "
             f"default={self._default!r}, escalate={self._escalate}, "
             f"record={self._record_to_registry})"
-        )
+    )
 
 
 __all__ = [

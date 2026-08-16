@@ -193,7 +193,7 @@ class DuckDBAuditStore:
                     event.level.value,
                     event.hash,
                 ),
-            )
+    )
         )
 
         if self.config.log_to_console:
@@ -202,7 +202,7 @@ class DuckDBAuditStore:
                 event.event_type.value,
                 event.action,
                 event.resource,
-            )
+    )
 
     async def query(
         self,
@@ -250,7 +250,7 @@ class DuckDBAuditStore:
 
         rows = await asyncio.to_thread(
             lambda: conn.execute(query, params).fetchall()
-        )
+    )
 
         events = []
         for row in rows:
@@ -266,7 +266,7 @@ class DuckDBAuditStore:
                     level=AuditLevel(row[8]),
                     hash=row[9],
                     _hmac_key=self._hmac_key,
-                )
+    )
             )
         return events
 
@@ -307,7 +307,7 @@ class DuckDBAuditStore:
                 f"SELECT COUNT(*) FROM audit_events WHERE {where}",
                 params,
             ).fetchone()[0]
-        )
+    )
 
         # By event type
         type_rows = await asyncio.to_thread(
@@ -315,7 +315,7 @@ class DuckDBAuditStore:
                 f"SELECT event_type, COUNT(*) FROM audit_events WHERE {where} GROUP BY event_type",
                 params,
             ).fetchall()
-        )
+    )
         by_type = {row[0]: row[1] for row in type_rows}
 
         # By level
@@ -324,7 +324,7 @@ class DuckDBAuditStore:
                 f"SELECT level, COUNT(*) FROM audit_events WHERE {where} GROUP BY level",
                 params,
             ).fetchall()
-        )
+    )
         by_level = {row[0]: row[1] for row in level_rows}
 
         return {

@@ -36,7 +36,7 @@ from .components import (
     NullMemoryPressureMonitor,
     NullOperationTracker,
     OperationTracker,
-)
+    )
 from _core import aclose
 
 logger = logging.getLogger(__name__)
@@ -54,13 +54,13 @@ class CoordinatorComponents:
             OperationTracker,
             LoadFactorCalculator,
             MemoryPressureMonitor,
-        )
+    )
 
         components = CoordinatorComponents(
             tracker=OperationTracker(name='test', max_concurrent=10),
             load=LoadFactorCalculator(tracker),
             memory=MemoryPressureMonitor(),
-        )
+    )
     """
     __slots__ = ('tracker', 'load', 'memory')
 
@@ -119,7 +119,7 @@ class UniversalCoordinator(ABC):
             tracker=tracker,
             load=load,
             memory=memory,
-        )
+    )
 
     @abstractmethod
     def get_supported_operations(self) -> list[OperationType]:
@@ -163,7 +163,7 @@ class UniversalCoordinator(ABC):
                     'decision': decision,
                     'type': operation_type,
                 },
-            )
+    )
             exec_result = await self._do_execute_decision(decision)
             elapsed = time_mod.time() - start_time
             operation_result = OperationResult(
@@ -174,7 +174,7 @@ class UniversalCoordinator(ABC):
                 success=exec_result.success,
                 error_message=exec_result.error_message,
                 metadata=exec_result.metadata,
-            )
+    )
         except Exception as e:
             operation_result = OperationResult(
                 operation_id=operation_id,
@@ -183,7 +183,7 @@ class UniversalCoordinator(ABC):
                 execution_time=time_mod.time() - start_time,
                 success=False,
                 error_message=str(e),
-            )
+    )
         finally:
             self.untrack_operation(operation_id)
         self.record_operation_result(operation_result)
@@ -278,7 +278,7 @@ class UniversalCoordinator(ABC):
         self._components.tracker.track(
             operation_id,
             {**operation_data, 'coordinator': self._name}
-        )
+    )
 
     def untrack_operation(self, operation_id: str) -> None:
         """
@@ -391,7 +391,7 @@ class UniversalCoordinator(ABC):
             load_factor=self.get_load_factor(),
             max_concurrent=tracker.max_concurrent,
             current_operations=tracker.active_count,
-        )
+    )
 
     def _get_feature_list(self) -> list[str]:
         """Override in subclasses to report specific features."""

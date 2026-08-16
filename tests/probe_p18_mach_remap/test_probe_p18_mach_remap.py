@@ -64,7 +64,7 @@ class TestFeatureGate:
         from hledac.universal.security.mach_remap import (
             _HLEDAC_ENABLE_MACH_REMAP,
             _MACH_REMOTE_MODULE,
-        )
+    )
         # Force re-read
         import importlib
         import hledac.universal.security.mach_remap as mr
@@ -236,7 +236,7 @@ class TestRemapForSandboxFailSoft:
         mock_mod.vm_remap_file.side_effect = mr.MachRemapError(
             "memory_guard: available < 1.5 GiB",
             "memory_guard",
-        )
+    )
         mr._MACH_REMOTE_MODULE = mock_mod
 
         bridge = mr.MachRemapBridge()
@@ -444,7 +444,7 @@ class TestZeroCopySemantics:
             file_descriptor=3,
             mapped_addr=0x7f0000000000,
             mapped_size=115_343_360,
-        )
+    )
         assert result.child_pid == 9999
         assert result.file_descriptor == 3
         assert result.mapped_addr == 0x7f0000000000
@@ -522,7 +522,7 @@ class TestRunWithZeroCopySandbox:
             str(temp_file_small),
             analysis_cmd=cmd,
             timeout_s=5.0,
-        )
+    )
         # cat should succeed
         assert result.returncode == 0
         assert len(result.stdout) > 0

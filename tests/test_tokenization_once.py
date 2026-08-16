@@ -55,7 +55,7 @@ class TestM03TokenizationOnce:
         assert "prompt_tokens" in params, (
             f"_build_generate_kwargs musí mít prompt_tokens param. "
             f"Aktuální parametry: {params}"
-        )
+    )
 
     def test_deephermes3_stream_tokens_accepts_prompt_tokens(self):
         """_stream_tokens přijímá prompt_tokens parametr"""
@@ -67,7 +67,7 @@ class TestM03TokenizationOnce:
         assert "prompt_tokens" in params, (
             f"_stream_tokens musí mít prompt_tokens param. "
             f"Aktuální parametry: {params}"
-        )
+    )
 
     def test_synthesis_runner_uses_tokens_list(self):
         """synthesis_runner předává List[int] do mlx_lm.generate"""
@@ -79,11 +79,11 @@ class TestM03TokenizationOnce:
         # Ověř že kód používá _input_tokens_list
         assert "_input_tokens_list" in source, (
             "SynthesisRunner musí mít _input_tokens_list pro M-03 fix"
-        )
+    )
         # Ověř že mlx_lm.generate dostává tokens, ne formatted string
         assert "prompt=_input_tokens_list" in source, (
             "mlx_lm.generate musí dostat prompt=_input_tokens_list, ne prompt=formatted"
-        )
+    )
 
     def test_deephermes3_run_inference_signature(self):
         """_run_inference přijímá prompt_tokens"""
@@ -95,7 +95,7 @@ class TestM03TokenizationOnce:
         assert "prompt_tokens" in params, (
             f"_run_inference musí mít prompt_tokens param. "
             f"Aktuální parametry: {params}"
-        )
+    )
 
 
 class TestM03TokenCountInvariant:

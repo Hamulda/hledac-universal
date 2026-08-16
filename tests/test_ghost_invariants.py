@@ -95,20 +95,20 @@ class GatherCallAnalyzer(ast.NodeVisitor):
         is_asyncio_gather = (
             isinstance(node.func.value, ast.Name) and
             node.func.value.id == "asyncio"
-        )
+    )
 
         # Check for safe wrappers
         is_safe_wrapper = isinstance(node.func.value, ast.Name) and node.func.value.id in (
             "safe_gather_ok", "safe_gather_first_ok", "safe_gather_all_ok",
             "parallel_ok", "try_group",
-        )
+    )
 
         if is_asyncio_gather:
             self.raw_calls += 1
             has_return_exceptions = any(
                 kw.arg == "return_exceptions"
                 for kw in node.keywords
-            )
+    )
             if not has_return_exceptions and not is_safe_wrapper:
                 snippet = f"asyncio.gather at line {node.lineno}"
                 self.violations.append((node.lineno, snippet))
@@ -144,7 +144,7 @@ class AsyncioRunInExecutorAnalyzer(ast.NodeVisitor):
             node.func.attr == "run" and
             isinstance(node.func.value, ast.Name) and
             node.func.value.id == "asyncio"
-        )
+    )
         if is_asyncio_run:
             # Check if parent context is run_in_executor (heuristic: check ancestors)
             # We do simple context check via node positioning
@@ -191,7 +191,7 @@ class _AsyncioRunInExecutorVisitor(ast.NodeVisitor):
         is_run_in_executor = (
             isinstance(node.func, ast.Attribute) and
             node.func.attr == "run_in_executor"
-        )
+    )
         if is_run_in_executor:
             for arg in node.args:
                 if isinstance(arg, ast.Call):
@@ -233,7 +233,7 @@ def _find_mx_clear_cache_without_eval() -> list:
                     if line.strip().startswith('#'):
                         continue
                     context_before = "\n".join(lines[max(0, i-10):i])
-                    if "mx.eval([])" not in context_before and "mx\.eval" not in context_before:
+                    if "mx.eval([])" not in context_before and r"mx\.eval" not in context_before:
                         violations.append((str(f.relative_to(ROOT)), i, line.strip()[:80]))
         except Exception:
             pass
@@ -348,7 +348,7 @@ class TestI1AsyncGatherReturnExceptions:
         assert len(violations) == 0, (
             f"Found {len(violations)} asyncio.gather() without return_exceptions=True:\n" +
             "\n".join(f"  {f}:{line} — {s}" for f, line, s in violations[:10])
-        )
+    )
 
     def test_gather_landscape_summary(self, gather_results):
         """Document the gather landscape (always passes)."""
@@ -382,7 +382,7 @@ class TestI5BareExceptForbidden:
         assert len(bare_except_results) == 0, (
             f"Found {len(bare_except_results)} bare except: clauses:\n" +
             "\n".join(f"  {f}:{line} — {s}" for f, line, s in bare_except_results[:10])
-        )
+    )
 
 
 # -----------------------------------------------------------------------
@@ -404,7 +404,7 @@ class TestI7AsyncioRunInThreadPool:
         assert len(asyncio_run_violations) == 0, (
             f"Found {len(asyncio_run_violations)} asyncio.run() in executor context:\n" +
             "\n".join(f"  {f}:{line} — {s}" for f, line, s in asyncio_run_violations[:10])
-        )
+    )
 
 
 # -----------------------------------------------------------------------

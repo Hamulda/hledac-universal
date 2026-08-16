@@ -101,7 +101,7 @@ def _get_rust_mem():
         except ImportError:
             logger.warning(
                 "[ALLOC-LEDGER] Rust memory module unavailable — using Python fallback"
-            )
+    )
             _rust_mem_module = None
     return _rust_mem_module
 
@@ -150,7 +150,7 @@ def acquire(gib: float, subsystem: str | Subsystem) -> bool:
             logger.warning(
                 f"[ALLOC-LEDGER] Allocation rejected: {gib:.2f} GiB for {subsystem} "
                 f"would exceed ceiling ({total / (1024**3):.2f} / {ceiling / (1024**3):.2f} GiB)"
-            )
+    )
         return ok
 
     # Fallback: Python-only mode (no Rust, accept all allocations)
@@ -183,7 +183,7 @@ def release(gib: float, subsystem: str | Subsystem) -> None:
         logger.debug(
             f"[ALLOC-LEDGER] Released {gib:.2f} GiB for {subsystem} "
             f"(now at {new_total / (1024**3):.2f} GiB)"
-        )
+    )
 
 
 def get_stats() -> tuple[float, float, float]:
@@ -204,7 +204,7 @@ def get_stats() -> tuple[float, float, float]:
             total_bytes / (1024**3),
             ceiling_bytes / (1024**3),
             utilization,
-        )
+    )
 
     # Fallback: return zeros
     return (0.0, 0.0, 0.0)

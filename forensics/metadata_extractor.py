@@ -513,7 +513,7 @@ class MetadataCache:
                         file_size INTEGER,
                         metadata TEXT,
                         extracted_at REAL
-                    )
+    )
                 """))
                 await io_bound(lambda: self._conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_extracted_at ON metadata_cache(extracted_at)"
@@ -1073,7 +1073,7 @@ class UniversalMetadataExtractor:
                 num_pages=rust_meta.num_pages,
                 pdf_version=rust_meta.pdf_version,
                 is_encrypted=rust_meta.is_encrypted,
-            )
+    )
             return metadata
         except Exception:  # noqa: BLE001
             pass
@@ -2029,7 +2029,7 @@ def create_metadata_extractor(cache_path: str | None=None, config: Any | None=No
         extractor = create_metadata_extractor(
             cache_path="/tmp/metadata_cache.db",
             config={"enable_gps": True, "enable_reverse_geocode": False}
-        )
+    )
     """
     kwargs = {'cache_path': cache_path}
     if config:

@@ -117,7 +117,7 @@ def _capture_startup_snapshot() -> int:
             "manual-freeze active (Python %s < 3.14.7)",
             _startup_snapshot_count,
             ".".join(str(x) for x in sys.version_info[:3]),
-        )
+    )
         return _startup_snapshot_count
     except Exception as exc:
         logger.debug("[blitz_gc] startup snapshot failed: %s", exc)
@@ -234,7 +234,7 @@ class BlitzGCStrategy:
                 BLITZ_THRESHOLD,
                 result["freeze_method"],
                 result["startup_snapshot_count"],
-            )
+    )
         except Exception as exc:
             logger.warning("[blitz_gc] gc.disable() failed: %s — sprint continues", exc)
 
@@ -367,7 +367,7 @@ class BlitzGCStrategy:
             result["final_thresholds"],
             result["gen2_collected"],
             result["freeze_method"],
-        )
+    )
         return result
 
     # ── Telemetry ───────────────────────────────────────────────────────

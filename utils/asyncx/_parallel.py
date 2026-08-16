@@ -349,7 +349,7 @@ def _check_gathered(
             raise all_errors[0]
         _log.debug(
             "[GHOST] gather BaseExceptionGroup[%d]%s — raising aggregated", len(all_errors), (" " + ctx) if ctx else ""
-        )
+    )
         raise BaseExceptionGroup(f"gather{' ' + ctx if ctx else ''}", all_errors)
 
     return ok_results, other_errors
@@ -389,7 +389,7 @@ def _apply_policy(
                     f"dropped {len(errors)} exceptions "
                     f"(sample: {sample_preview}"
                     f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
-                )
+    )
             return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
 
 
@@ -435,7 +435,7 @@ async def _parallel_taskgroup[T](
                     "[GHOST] parallel(taskgroup) BaseException%s: %s",
                     (" " + ctx) if ctx else "",
                     type(exc).__name__,
-                )
+    )
                 raise exc from None
             errors.append(exc)
         ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
@@ -588,7 +588,7 @@ async def parallel[T](
             ctx=ctx,
             logger_instance=_log,
             names=names,
-        )
+    )
 
     if concurrency is not None:
         sem = asyncio.Semaphore(concurrency)
@@ -653,7 +653,7 @@ async def parallel_ok[T](
             f"dropped {len(errors)} exceptions "
             f"(sample: {sample_preview}"
             f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
-        )
+    )
 
     if re_raise is not None:
         raise re_raise
@@ -690,7 +690,7 @@ async def try_group[*Ts](
         raise BaseExceptionGroup(
             f"try_group{' ' + ctx if ctx else ''}",
             list(eg.exceptions),
-        )
+    )
 
     return tuple(results)  # type: ignore[return-value]
 
@@ -823,7 +823,7 @@ async def safe_gather_fire_and_forget[T](
             "[GHOST] safe_gather_faf re-raising %s%s",
             type(re_raise).__name__,
             (" " + label) if label else "",
-        )
+    )
         raise re_raise
 
     if not errors:
@@ -895,7 +895,7 @@ async def bounded_parallel_map[T, R](
                 _log.debug(
                     f"[GHOST] bounded_parallel_map{' ' + ctx if ctx else ''} "
                     f"item[{idx}] raised {type(e).__name__}: {e}"
-                )
+    )
                 return idx, e
 
     tasks = [safe_create_task(_run(i, item)) for i, item in enumerate(items)]
@@ -1073,6 +1073,129 @@ async def chunked_taskgroup[T, R](
     return all_results
 
 
+# ---------------------------------------------------------------------------
+# ISSUE-009: Unified Async Execution API — Single Entry Point
+# ---------------------------------------------------------------------------
+
+async def execute_parallel[T](
+    tasks: list[Awaitable[T]],
+    *,
+    concurrency: int | ConcurrencyBudgetResolver | None = None,
+    policy: ExceptionPolicy = "collect",
+    timeout: float | None = None,
+    names: Sequence[str] | None = None,
+    ctx: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> list[T] | ParallelResult:
+    """Unified async execution entry point — single API for all parallel workloads.
+
+    ISSUE-009 FIX: Provides a single, consistent API replacing the fragmented
+    asyncio.gather, parallel(), parallel_ok(), safe_gather() ecosystem.
+
+    Exception policies:
+        "collect" — Return ParallelResult with .ok and .errors. All tasks complete.
+                    DEFAULT. Returns ParallelResult.
+        "log"     — Filter exceptions silently, return only successes as list[T].
+        "raise"   — Raise first error or BaseExceptionGroup after completion.
+        "first"   — Fail-fast: raise the first error immediately.
+
+    Concurrency: pass concurrency=N to cap simultaneous tasks (semaphore).
+    Timeout: optional total timeout in seconds.
+
+    Args:
+        tasks:       List of awaitables to run concurrently.
+        concurrency: Max simultaneous tasks. None = unbounded.
+        policy:      Exception handling: "collect" | "log" | "raise" | "first".
+        timeout:     Total timeout in seconds. None = no timeout.
+        names:       Optional task names for dict-based result access.
+        ctx:         Context label for logs.
+        logger_instance: Optional logger override.
+
+    Returns:
+        policy="log":    list[T] of successful results only (exceptions filtered/logged)
+        policy="collect": ParallelResult with .ok and .errors
+        policy="raise"/"first": raises on error, otherwise returns ParallelResult
+
+    Example:
+        # Fire-and-forget with collection
+        result = await execute_parallel([crawl(url) for url in urls])
+
+        # Fail-soft (exceptions filtered)
+        results = await execute_parallel([fetch(url) for url in urls], policy="log")
+
+        # With concurrency limit
+        result = await execute_parallel(tasks, concurrency=10)
+
+    Migration guide:
+        asyncio.gather(*coros)             → execute_parallel(coros, policy="collect")
+        asyncio.gather(*coros, return_exceptions=True) → execute_parallel(coros, policy="collect")
+        parallel_ok(*coros)                → execute_parallel(coros, policy="log")
+        parallel(coros, policy="collect")  → execute_parallel(coros, policy="collect")
+    """
+    return await parallel(
+        tasks,
+        policy=policy,
+        concurrency=concurrency,
+        timeout=timeout,
+        names=names,
+        ctx=ctx,
+        logger_instance=logger_instance,
+    )
+
+
+async def execute_parallel_map[T, R](
+    items: list[T],
+    coro_fn: Callable[[T], Awaitable[R]],
+    *,
+    concurrency: int | ConcurrencyBudgetResolver | None = None,
+    ordered: bool = True,
+    ctx: str = "",
+    logger_instance: logging.Logger | None = None,
+    jitter_sigma_s: float = 0.0,
+    jitter_max_s: float = 2.0,
+) -> list[R | None]:
+    """Unified parallel map — transforms items concurrently with bounded concurrency.
+
+    ISSUE-009 FIX: Provides a single, consistent API for parallel async mapping.
+
+    Transforms a list of items concurrently with explicit concurrency cap.
+    Clean replacement for sequential `for x in xs: await f(x)`.
+
+    Args:
+        items:      List of items to transform.
+        coro_fn:    Async function to apply to each item.
+        concurrency: Max simultaneous tasks. None = ConcurrencyCategory.SCRAPE_GENERAL.
+        ordered:    Preserve original order (default True). False may be faster.
+        ctx:        Context label for logs.
+        logger_instance: Optional logger override.
+        jitter_sigma_s: Gaussian jitter sigma for stagger (0 = disabled).
+        jitter_max_s:   Max jitter sleep seconds.
+
+    Returns:
+        list[R | None] where None indicates failed items (exceptions filtered).
+
+    Example:
+        # Transform URLs concurrently
+        results = await execute_parallel_map(urls, fetch_url, concurrency=10)
+
+        # With jitter for polite crawling
+        results = await execute_parallel_map(urls, fetch_url, jitter_sigma_s=0.5)
+
+    Migration guide:
+        bounded_parallel_map(items, fn) → execute_parallel_map(items, fn)
+    """
+    return await bounded_parallel_map(
+        items,
+        coro_fn,
+        concurrency=concurrency,
+        ordered=ordered,
+        ctx=ctx,
+        logger_instance=logger_instance,
+        jitter_sigma_s=jitter_sigma_s,
+        jitter_max_s=jitter_max_s,
+    )
+
+
 __all__ = [
     # Result DTOs
     "ParallelResult",
@@ -1080,6 +1203,9 @@ __all__ = [
     "RaceFirstSuccessResult",
     "_BoundedExceptionLog",
     "ExceptionPolicy",
+    # ISSUE-009: Unified entry points
+    "execute_parallel",
+    "execute_parallel_map",
     # Core functions
     "parallel",
     "parallel_ok",

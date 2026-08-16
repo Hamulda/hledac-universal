@@ -58,7 +58,7 @@ class TestS02LMDBZeroCopy:
         assert 'key_str = key.decode' not in source, (
             'OLD pattern detected: key_str = key.decode() creates full string. '
             'Use key_part = key[len(prefix):].decode(utf-8) instead'
-        )
+    )
 
     def test_list_sessions_removeprefix(self) -> None:
         """INVARIANT: list_sessions musí používat key[len(prefix):].decode()"""
@@ -68,7 +68,7 @@ class TestS02LMDBZeroCopy:
         assert 'key_str = key.decode' not in source, (
             'OLD pattern: key_str = key.decode() — allocates full string. '
             'Use key[len(prefix):].decode()'
-        )
+    )
 
     # ── Invariant 2: memory alloc profile ───────────────────────────────────
 
@@ -111,7 +111,7 @@ class TestS02LMDBZeroCopy:
         assert not violations, (
             f'OLD pattern found in {len(violations)} location(s):\n'
             + '\n'.join(violations)
-        )
+    )
 
 
 class TestS02DeepSourceRegistry:
@@ -206,4 +206,4 @@ class TestS02DeepSourceRegistry:
         assert speedup >= 0.95, (
             f'Cached Encoder should be faster or equivalent: '
             f'{t_b*1000:.2f} ms vs {t_a*1000:.2f} ms (speedup={speedup:.2f}x)'
-        )
+    )

@@ -124,7 +124,7 @@ class SamplingSpanProcessor:
         processor = SamplingSpanProcessor(
             next_processor=BatchSpanProcessor(DuckDBSpanExporter(...)),
             sample_rate=0.1,
-        )
+    )
         provider.add_span_processor(processor)
     """
 
@@ -164,7 +164,7 @@ class SamplingSpanProcessor:
                 "lmdb.",
                 "cache.",
                 "duckdb.",
-            )
+    )
 
     def on_start(self, span: Span) -> None:
         self._next.on_start(span)
@@ -228,7 +228,7 @@ class SamplingSpanProcessor:
             hash_input = trace_id_bytes + name_bytes
             hash_val = int.from_bytes(
                 hashlib.sha256(hash_input).digest()[:8], "big"
-            )
+    )
             return (hash_val % 1000) < (self._sample_rate * 1000)
         except Exception:
             return True  # Fail-safe: export on error
@@ -315,7 +315,7 @@ class DuckDBSpanExporter(SpanExporter):
                 r["name"], r["status"], r["status_message"],
                 r["start_time_ms"], r["end_time_ms"], r["duration_ms"],
                 r["attributes_json"], r["resource_json"],
-            )
+    )
             for r in batch
         ]
         cursor.executemany(sql, records)
@@ -362,7 +362,7 @@ class DuckDBSpanExporter(SpanExporter):
             {k: str(v) for k, v in span.resource.attributes.items()}
             if span.resource and span.resource.attributes
             else {}
-        )
+    )
 
         return {
             "trace_id": trace_id,
@@ -448,7 +448,7 @@ class QueryBuilder:
         try:
             cutoff_ms = int(
                 (datetime.now(timezone.utc).timestamp() - since_hours * 3600) * 1000
-            )
+    )
             total = self._conn.execute(
                 "SELECT COUNT(*) FROM otel_spans WHERE start_time_ms >= ?",
                 (cutoff_ms,),
@@ -468,7 +468,7 @@ class QueryBuilder:
         try:
             cutoff_ms = int(
                 (datetime.now(timezone.utc).timestamp() - since_hours * 3600) * 1000
-            )
+    )
             count = self._conn.execute(
                 "SELECT COUNT(*) FROM otel_spans WHERE name = ? AND start_time_ms >= ?",
                 (name, cutoff_ms),

@@ -43,7 +43,7 @@ class LanguageDetector:
     def __init__(self, *, fallback_mode: bool = True) -> None:
         raise ImportError(
             "LanguageDetector requires fast-langdetect — install with: uv add fast-langdetect"
-        )
+    )
 
     def detect(self, text: str, *, min_length: int = 10) -> str:
         """Always returns 'unknown'."""

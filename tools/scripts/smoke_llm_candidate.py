@@ -68,7 +68,7 @@ def tiny_generate(model_id: str) -> dict:
             prompt,
             max_tokens=32,
             temp=0.0,
-        )
+    )
         return {
             "status": "ok",
             "model_id": model_id,

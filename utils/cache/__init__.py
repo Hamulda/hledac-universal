@@ -45,14 +45,14 @@ from ._base import (
     CacheMetrics,
     EvictionPolicy,
     CacheStats,
-)
+    )
 
 # ── Synchronous caches ────────────────────────────────────────────────────────
 from ._sync import (
     LRUCache,
     TTLCache,
     SlidingWindowKVCache,
-)
+    )
 
 # ── Async caches ───────────────────────────────────────────────────────────────
 from ._async import (
@@ -60,7 +60,7 @@ from ._async import (
     AsyncCacheError,
     async_cached,
     cached_awaitable,
-)
+    )
 
 # ── Adaptive/ML caches ─────────────────────────────────────────────────────────
 from ._adaptive import (
@@ -70,7 +70,7 @@ from ._adaptive import (
     CacheEntry,
     EvictionStrategy,
     get_global_cache,
-)
+    )
 
 # ── Legacy classes from utils/cache.py ─────────────────────────────────────────
 # Import directly from the file to avoid circular imports
@@ -100,7 +100,7 @@ def _get_legacy_module():
         spec = importlib.util.spec_from_file_location(
             "utils._cache_legacy", 
             "utils/cache.py"
-        )
+    )
         if spec and spec.loader:
             _legacy_cache_module = importlib.util.module_from_spec(spec)
             sys.modules["utils._cache_legacy"] = _legacy_cache_module

@@ -9,11 +9,7 @@ from pathlib import Path
 
 import pytest
 
-
-
-
-
-
+from hledac.universal.knowledge.duckdb_migrator import (
     SchemaMigrator,
     _CURRENT_SCHEMA_VERSION,
     _strip_leading_comments,
@@ -22,8 +18,7 @@ import pytest
 
 # ---------------------------------------------------------------------------
 # Fixtures
-
-from _core import aclose# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def temp_db_path(tmp_path: Path) -> Path:

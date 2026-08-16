@@ -100,7 +100,7 @@ class ToolExecutor:
                 f"[TOOL EXECUTOR] execute_with_limits(tool_name={tool_name!r}, available_capabilities=None) — capability check SKIPPED.",
                 DeprecationWarning,
                 stacklevel=2,
-            )
+    )
         validated = tool.validate_args(args)
         allowed, reason = registry.validate_call(tool_name)
         if not allowed:
@@ -156,7 +156,7 @@ class ToolExecutor:
                             status=status,
                             error=error,
                             correlation=normalized_corr,
-                        )
+    )
                     except Exception as logger_error:
                         import logging
 
@@ -249,7 +249,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=50, time_ms_est=2000, network=True, risk_level=RiskLevel.MEDIUM),
             rate_limits=RateLimits(max_calls_per_run=50, max_parallel=5),
             handler=_web_search_handler,
-        )
+    )
     )
     registry.register(
         Tool(
@@ -260,7 +260,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=100, time_ms_est=500, network=False, risk_level=RiskLevel.LOW),
             rate_limits=RateLimits(max_calls_per_run=1000, max_parallel=10),
             handler=_entity_extraction_handler,
-        )
+    )
     )
     registry.register(
         Tool(
@@ -271,7 +271,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=50, time_ms_est=3000, network=True, risk_level=RiskLevel.MEDIUM),
             rate_limits=RateLimits(max_calls_per_run=30, max_parallel=3),
             handler=_academic_search_handler,
-        )
+    )
     )
     registry.register(
         Tool(
@@ -282,7 +282,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=10, time_ms_est=100, network=False, risk_level=RiskLevel.LOW),
             rate_limits=RateLimits(max_calls_per_run=1000, max_parallel=20),
             handler=_file_read_handler,
-        )
+    )
     )
     registry.register(
         Tool(
@@ -293,7 +293,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=10, time_ms_est=100, network=False, risk_level=RiskLevel.MEDIUM),
             rate_limits=RateLimits(max_calls_per_run=100, max_parallel=5),
             handler=_file_write_handler,
-        )
+    )
     )
     registry.register(
         Tool(
@@ -304,7 +304,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=50, time_ms_est=1000, network=False, risk_level=RiskLevel.HIGH),
             rate_limits=RateLimits(max_calls_per_run=20, max_parallel=1),
             handler=_python_execute_handler,
-        )
+    )
     )
     registry.get_tool("web_search").required_capabilities = {"reranking"}
     registry.get_tool("academic_search").required_capabilities = {"reranking", "entity_linking"}

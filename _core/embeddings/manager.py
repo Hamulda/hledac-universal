@@ -36,7 +36,7 @@ class AdaptiveEmbeddingBatcher:
             initial_batch_size=32,
             min_batch_size=4,
             max_batch_size=128,
-        )
+    )
         async for ids, embeddings in batcher.process_streaming(texts, embedder, memory_provider):
             ...
 
@@ -377,7 +377,6 @@ _PREWARM_LOCK = threading.Lock()
 # All embedding entry points now converge on one canonical source.
 
 from hledac.universal._core.embeddings.legacy import (  # noqa: F401 — re-export for compat
-from _core._util import aclose
     MLXEmbeddingManager,
     get_mlx_embedder,
     get_embedding_manager,  # deprecated alias
@@ -395,4 +394,4 @@ from _core._util import aclose
     _init_lock,
     MLX_AVAILABLE,
     MLX_EMBEDDINGS_AVAILABLE,
-)
+    )

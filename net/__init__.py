@@ -82,7 +82,7 @@ def is_bogon(value: str) -> bool:
             str(ip).startswith("0.") or
             str(ip).startswith("127.") or
             str(ip).startswith("255.255.255.255")
-        )
+    )
     except ValueError:
         return False
 
@@ -251,7 +251,7 @@ def country_from_ip_heuristic(ip: str) -> str:
 
 _DOMAIN_RE = re.compile(
     r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
-)
+    )
 
 
 def is_domain(value: str) -> bool:

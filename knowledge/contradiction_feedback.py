@@ -82,7 +82,7 @@ AUTO_RETRACT_MAX: int = 10  # [META-008] Max sources to auto-retract per audit
 _ENABLE_CONTRADICTION_FEEDBACK: bool = (
     os.environ.get("HLEDAC_ENABLE_CONTRADICTION_FEEDBACK", "1").lower()
     in ("1", "true", "yes", "on")
-)
+    )
 
 
 @dataclass
@@ -231,21 +231,21 @@ class ContradictionFeedbackBridge:
         if self._retract_callback is None:
             logger.debug(
                 "[ContradictionFeedback] Auto-retract skipped: no callback registered"
-            )
+    )
             return []
 
         try:
             from hledac.universal.knowledge.consistency_verifier import (
                 ConsistencyVerifier,
                 get_consistency_verifier,
-            )
+    )
             from hledac.universal.knowledge.source_reliability import (
                 get_source_reliability_tracker,
-            )
+    )
         except ImportError as e:
             logger.debug(
                 "[ContradictionFeedback] Auto-retract modules not available: %s", e
-            )
+    )
             return []
 
         # 1. Run ConsistencyVerifier — computes tri-source voting + ratio
@@ -255,7 +255,7 @@ class ContradictionFeedbackBridge:
         if not decisions:
             logger.debug(
                 "[ContradictionFeedback] Auto-retract: no sources meet criteria"
-            )
+    )
             return []
 
         # 2. Record verdicts in SourceReliabilityTracker for cross-sprint tracking
@@ -266,7 +266,7 @@ class ContradictionFeedbackBridge:
         except Exception as e:
             logger.debug(
                 "[ContradictionFeedback] record_decisions failed (fail-soft): %s", e,
-            )
+    )
 
         # Cap at AUTO_RETRACT_MAX
         decisions = decisions[:AUTO_RETRACT_MAX]
@@ -284,7 +284,7 @@ class ContradictionFeedbackBridge:
                         await tracker.mark_auto_retracted(
                             decision.source_id,
                             sprint_id=sprint_id,
-                        )
+    )
                         logger.info(
                             "[ContradictionFeedback] AUTO-RETRACTED source '%s': "
                             "%s (dissent=%d, ratio=%.3f, facts_retracted=%d)",
@@ -293,24 +293,24 @@ class ContradictionFeedbackBridge:
                             decision.dissent_count,
                             decision.ratio,
                             facts_retracted,
-                        )
+    )
                     else:
                         logger.debug(
                             "[ContradictionFeedback] Auto-retract '%s': "
                             "callback returned 0 facts_retracted",
                             decision.source_id,
-                        )
+    )
                 else:
                     logger.debug(
                         "[ContradictionFeedback] Auto-retract '%s': "
                         "callback returned unexpected: %s",
                         decision.source_id, type(result).__name__,
-                    )
+    )
             except Exception as e:
                 logger.warning(
                     "[ContradictionFeedback] Auto-retract '%s' failed: %s",
                     decision.source_id, e,
-                )
+    )
 
         return retracted
 
@@ -331,11 +331,11 @@ class ContradictionFeedbackBridge:
                 logger.debug(
                     "[ContradictionFeedback] Queue full for %s, dropping %d candidates",
                     name, len(candidates),
-                )
+    )
             except Exception as e:
                 logger.debug(
                     "[ContradictionFeedback] Publish to %s failed: %s", name, e
-                )
+    )
         return notified
 
     async def run_contradiction_audit(
@@ -358,7 +358,7 @@ class ContradictionFeedbackBridge:
                 audit_ts=_time.time(),
                 findings_count=len(findings),
                 quality_gate_passed=True,
-            )
+    )
 
         t0 = _time.monotonic()
         findings = findings[:MAX_FINDINGS_PER_AUDIT]
@@ -372,7 +372,7 @@ class ContradictionFeedbackBridge:
             tasks["adversarial"] = safe_create_task(
                 self._run_adversarial_verifier(findings),
                 name="contradiction:adversarial",
-            )
+    )
             engines_available.append("adversarial")
         except Exception:  # noqa: BLE001
             pass
@@ -382,7 +382,7 @@ class ContradictionFeedbackBridge:
             tasks["insight"] = safe_create_task(
                 self._run_insight_engine(findings),
                 name="contradiction:insight",
-            )
+    )
             engines_available.append("insight")
         except Exception:  # noqa: BLE001
             pass
@@ -392,7 +392,7 @@ class ContradictionFeedbackBridge:
             tasks["dempster_shafer"] = safe_create_task(
                 self._run_dempster_shafer(findings),
                 name="contradiction:dempster_shafer",
-            )
+    )
             engines_available.append("dempster_shafer")
         except Exception:  # noqa: BLE001
             pass
@@ -402,7 +402,7 @@ class ContradictionFeedbackBridge:
             tasks["evidence_network"] = safe_create_task(
                 self._run_evidence_network(findings),
                 name="contradiction:evidence_network",
-            )
+    )
             engines_available.append("evidence_network")
         except Exception:  # noqa: BLE001
             pass
@@ -412,7 +412,7 @@ class ContradictionFeedbackBridge:
             tasks["graph_rag"] = safe_create_task(
                 self._run_graph_rag(findings),
                 name="contradiction:graph_rag",
-            )
+    )
             engines_available.append("graph_rag")
         except Exception:  # noqa: BLE001
             pass
@@ -426,7 +426,7 @@ class ContradictionFeedbackBridge:
             try:
                 result = await safe_wait_for(
                     task, timeout=AUDIT_TIMEOUT_S / max(len(tasks), 1)
-                )
+    )
                 if result:
                     all_signals.extend(result[:MAX_CONTRADICTIONS_PER_ENGINE])
                     engines_run += 1
@@ -437,7 +437,7 @@ class ContradictionFeedbackBridge:
             except Exception as e:
                 logger.debug(
                     "[ContradictionFeedback] %s engine failed: %s", engine_name, e
-                )
+    )
                 engines_failed += 1
 
         # Deduplicate and rank signals by entity
@@ -469,7 +469,7 @@ class ContradictionFeedbackBridge:
                     f"{', '.join(engines_used)}"
                 ),
                 suggested_sources=_suggest_alternative_sources(primary.entity_type),
-            )
+    )
             re_fetch_candidates.append(candidate)
 
         # Sort by severity, cap at max
@@ -480,14 +480,14 @@ class ContradictionFeedbackBridge:
         quality_gate_passed = (
             len(re_fetch_candidates) == 0
             or max((c.severity for c in re_fetch_candidates), default=0) < 0.8
-        )
+    )
         quality_gate_reason = (
             "OK"
             if quality_gate_passed
             else (
                 f"BLOCKED: {len(re_fetch_candidates)} high-severity "
                 f"contradictions require re-fetch"
-            )
+    )
         )
 
         # Publish re-fetch candidates to subscribers
@@ -500,11 +500,11 @@ class ContradictionFeedbackBridge:
         try:
             auto_retracted = await self._run_auto_retraction(
                 findings, all_signals, sprint_id
-            )
+    )
         except Exception as e:
             logger.debug(
                 "[ContradictionFeedback] Auto-retraction failed (fail-soft): %s", e,
-            )
+    )
 
         # Update counters
         async with self._lock:
@@ -528,7 +528,7 @@ class ContradictionFeedbackBridge:
             notified,
             duration_ms,
             quality_gate_reason,
-        )
+    )
 
         return ContradictionAuditResult(
             audit_ts=_time.time(),
@@ -542,7 +542,7 @@ class ContradictionFeedbackBridge:
             quality_gate_passed=quality_gate_passed,
             quality_gate_reason=quality_gate_reason,
             audit_duration_ms=duration_ms,
-        )
+    )
 
     # -- Engine runners (each returns list[ContradictionSignal] or None) ------
 
@@ -560,7 +560,7 @@ class ContradictionFeedbackBridge:
         try:
             from hledac.universal.hledac_hypothesis.adversarial import (
                 AdversarialVerifier,
-            )
+    )
             from hledac.universal.hledac_hypothesis.types.evidence import Evidence
 
             # AdversarialVerifier requires hypothesis_engine — try to get it
@@ -582,7 +582,7 @@ class ContradictionFeedbackBridge:
                     content=f.get("payload_text", "") or "",
                     timestamp=datetime.now(UTC),
                     reliability=f.get("confidence", 0.5),
-                )
+    )
                 for f in findings
                 if f.get("payload_text")
             ][:MAX_FINDINGS_PER_AUDIT]
@@ -607,7 +607,7 @@ class ContradictionFeedbackBridge:
                     claim_a=getattr(c, "claim_a", ""),
                     claim_b=getattr(c, "claim_b", ""),
                     description=getattr(c, "resolution_notes", ""),
-                )
+    )
                 for c in contradictions[:MAX_CONTRADICTIONS_PER_ENGINE]
             ]
         except ImportError:
@@ -647,7 +647,7 @@ class ContradictionFeedbackBridge:
                     contradiction_type="negation",
                     claim_a=getattr(c, "statement_a", ""),
                     claim_b=getattr(c, "statement_b", ""),
-                )
+    )
                 for c in contradictions[:MAX_CONTRADICTIONS_PER_ENGINE]
             ]
         except ImportError:
@@ -683,7 +683,7 @@ class ContradictionFeedbackBridge:
                         mass=conf,
                         source_weight=conf,
                         source_id=finding_id,
-                    )
+    )
 
             if engine.detect_contradiction(threshold=0.5):
                 return [
@@ -693,7 +693,7 @@ class ContradictionFeedbackBridge:
                         severity=min(engine.conflict_mass(), 1.0),
                         contradiction_type="source_conflict",
                         description=f"Conflict mass: {engine.conflict_mass():.3f}",
-                    )
+    )
                 ]
             return None
         except ImportError:
@@ -714,7 +714,7 @@ class ContradictionFeedbackBridge:
         try:
             from hledac.universal.advanced_web.evidence_network_analyzer import (
                 EvidenceNetworkAnalyzer,
-            )
+    )
 
             analyzer = EvidenceNetworkAnalyzer()
             signals: list[ContradictionSignal] = []
@@ -736,7 +736,7 @@ class ContradictionFeedbackBridge:
                                     severity=float(result.get("confidence", 0.5)),
                                     contradiction_type="numeric",
                                     description=str(result.get("reason", "")),
-                                )
+    )
                             )
                     except Exception:
                         continue
@@ -791,7 +791,7 @@ class ContradictionFeedbackBridge:
                             description=(
                                 str(cp)[:200] if cp else "counter-narrative detected"
                             ),
-                        )
+    )
                     )
                 return signals if signals else None
             return None

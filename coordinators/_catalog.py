@@ -31,7 +31,7 @@ Domain Groups:
 """
 import importlib
 from typing import Any
-from core import aclose
+from _core import aclose
 
 _DOMAIN_MODULES: dict[str, dict[str, str]] = {
     'core': {

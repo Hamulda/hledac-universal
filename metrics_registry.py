@@ -156,7 +156,7 @@ class _AsyncBatchFlusher:
             target=self._run_loop,
             name='metrics-flusher',
             daemon=True,
-        )
+    )
         self._thread.start()
         logger.debug('[_AsyncBatchFlusher] started')
     
@@ -391,7 +391,7 @@ class MetricsRegistry:
         # Guard: MAX_SNAPSHOTS must be bounded
         assert MAX_SNAPSHOTS <= 1024, (
             f'MAX_SNAPSHOTS must be <= 1024, got {MAX_SNAPSHOTS}'
-        )
+    )
         
         self._run_dir = run_dir
         self._run_id = run_id
@@ -408,11 +408,11 @@ class MetricsRegistry:
         self._counter_cache: TTLCache[str, _BoundedCounter] = TTLCache(
             max_size=counter_cache_size,
             ttl=ttl_seconds,
-        )
+    )
         self._gauge_cache = LRUCache[str, float](
             max_size=gauge_cache_size,
             thread_safe=True,
-        )
+    )
         
         self._snapshots: deque = deque(maxlen=MAX_SNAPSHOTS)
         self._sprint_events: deque = deque(maxlen=MAX_SPRINT_EVENTS)
@@ -852,7 +852,7 @@ class MetricsRegistry:
                 items_in=items_in,
                 items_out=items_out,
                 error=error,
-            )
+    )
                 
         except ImportError:
             pass
@@ -938,5 +938,5 @@ def get_metrics_registry() -> MetricsRegistry:
         _metrics_registry_singleton = MetricsRegistry(
             run_dir=Path('/tmp/hledac_metrics'),
             run_id='default',
-        )
+    )
     return _metrics_registry_singleton

@@ -49,10 +49,28 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     # Type aliases for evidence and hypothesis structures
     BeliefDict = dict[str, Any]  # Belief dictionary for hypothesis tracking
+    # ISSUE-005 FIX: Forward reference for circular import protection
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+
 import msgspec
 
 from operator import attrgetter, itemgetter
-from hledac.universal.brain.deephermes3_engine import _get_xxh3_hex
+
+# ISSUE-005 FIX: Lazy import to prevent circular dependency
+# _get_xxh3_hex is only used for hashing operations; load only when needed
+_xxh3_hex_fn: Any = None  # Module-level cache for imported function
+
+def _get_xxh3_hex_lazy(text: str) -> str:
+    """Lazy wrapper for _get_xxh3_hex from deephermes3_engine.
+    
+    ISSUE-005 FIX: Uses module-level cache to avoid repeated import overhead.
+    """
+    global _xxh3_hex_fn
+    if _xxh3_hex_fn is None:
+        from hledac.universal.brain.deephermes3_engine import _get_xxh3_hex
+        _xxh3_hex_fn = _get_xxh3_hex
+    return _xxh3_hex_fn(text)
+
 from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.exceptions import InferenceLoopExceeded
 from hledac.universal.utils._patterns import compound_confidence_from_objects  # F320: DRY compound confidence
@@ -86,7 +104,8 @@ class InferenceEvidence(msgspec.Struct, frozen=False, gc=False):
     def __post_init__(self) -> None:
         if not self.evidence_id:
             content = ''.join([self.fact, ':', self.source, ':', str(self.timestamp)])
-            self.evidence_id = _get_xxh3_hex(content)[:12]
+            # ISSUE-005 FIX: Use lazy import wrapper
+            self.evidence_id = _get_xxh3_hex_lazy(content)[:12]
         self.confidence = max(0.0, min(1.0, self.confidence))
 
     def to_dict(self) -> dict[str, Any]:
@@ -120,7 +139,7 @@ class Hypothesis(msgspec.Struct, frozen=False, gc=False):
     def __post_init__(self) -> None:
         if not self.hypothesis_id:
             content = ''.join([self.statement, ':', str(self.created_at)])
-            self.hypothesis_id = _get_xxh3_hex(content)[:12]
+            self.hypothesis_id = _get_xxh3_hex_lazy(content)[:12]
         if self.posterior_probability == 0.0:
             self.posterior_probability = self.prior_probability
         self.prior_probability = max(0.0, min(1.0, self.prior_probability))
@@ -820,7 +839,7 @@ class InferenceEngine:
             gain=0.0,
             last_ioc_time=start_time,
             iocs_found=set(),
-        )
+    )
         start_node._calculate_priority(gain_weight=2.0)
 
         # Priority queue: (priority, node)
@@ -847,7 +866,7 @@ class InferenceEngine:
                 logger.warning(
                     f"BFS exceeded max_total_iterations={self.max_total_iterations}, "
                     f"returning best path found (gain={best_gain:.2f})"
-                )
+    )
                 break
 
             # Pop node with lowest priority (highest potential)
@@ -859,7 +878,7 @@ class InferenceEngine:
                 logger.debug(
                     f"BFS timeout: no IOC for {elapsed_since_ioc:.1f}s at depth {current_node.depth}, "
                     f"pruning path (gain={current_node.gain:.2f})"
-                )
+    )
                 continue
 
             # SOVEREIGN-006: Dead-end pruning - prune if gain < 0.1
@@ -867,7 +886,7 @@ class InferenceEngine:
                 logger.debug(
                     f"BFS dead-end: gain={current_node.gain:.2f} < 0.1 at depth {current_node.depth}, "
                     f"pruning path"
-                )
+    )
                 continue
 
             # Check if we reached target
@@ -923,7 +942,7 @@ class InferenceEngine:
                     gain=new_gain,
                     last_ioc_time=new_last_ioc_time,
                     iocs_found=new_iocs_found,
-                )
+    )
                 new_node._calculate_priority(gain_weight=2.0)
 
                 # Add to priority queue
@@ -998,7 +1017,7 @@ class InferenceEngine:
             merged_attributes = {k: list(v) if len(v) > 1 else list(v)[0] for k, v in merged_attributes.items()}
             avg_similarity = np.mean([similarity_matrix[i, j] for i in cluster for j in cluster if i < j]) if len(cluster) > 1 else 1.0
             evidence_ids = [f.get('evidence_id', '') for f in cluster_fragments if f.get('evidence_id')]
-            entity = ResolvedEntity(entity_id=''.join(['entity_', str(cluster_idx), '_', _get_xxh3_hex(canonical_name)[:8]]), canonical_name=canonical_name, aliases=list(all_names), fragments=cluster_fragments, confidence=avg_similarity, resolution_method='probabilistic_clustering', attributes=merged_attributes, source_evidence=evidence_ids)
+            entity = ResolvedEntity(entity_id=''.join(['entity_', str(cluster_idx), '_', _get_xxh3_hex_lazy(canonical_name)[:8]]), canonical_name=canonical_name, aliases=list(all_names), fragments=cluster_fragments, confidence=avg_similarity, resolution_method='probabilistic_clustering', attributes=merged_attributes, source_evidence=evidence_ids)
             resolved_entities.append(entity)
         logger.info(f'Entity resolution: {len(fragments)} fragments → {len(resolved_entities)} entities')
         return resolved_entities
@@ -1591,7 +1610,7 @@ class MultiHopReasoner:
                     neighbor_entity, relation, hop_confidence,
                     hops, visited, current_confidence, min_confidence,
                     start, end, paths_found,
-                )
+    )
                 if result == "break":
                     break
                 if result is not None:
@@ -1607,7 +1626,7 @@ class MultiHopReasoner:
             raise InferenceLoopExceeded(
                 f"MultiHopReasoner BFS exceeded max_total_iterations={self.inference_engine.max_total_iterations} "
                 f"(loop would burn CPU indefinitely with malformed evidence)"
-            )
+    )
 
     def _rank_neighbors_with_eig(self, neighbors: list, hops: list) -> list:
         """Rank neighbors using EIG calculator if available."""
@@ -1658,7 +1677,7 @@ class MultiHopReasoner:
             relation=relation,
             confidence=hop_confidence,
             evidence=self._get_evidence_for_relation(hops[-1].to_entity if hops else start, neighbor_entity, relation) if hops else "",
-        )
+    )
         new_hops = hops + [hop]
 
         if neighbor_entity == end:

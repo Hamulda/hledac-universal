@@ -172,7 +172,7 @@ class RAGOrchestrator:
             try:
                 results = await self._sqlite_vec_store.search(
                     query_embedding=embedding, top_k=min(10, top_k), threshold=0.0
-                )
+    )
                 stages.append('sqlite_vec_search')
             except Exception as e:
                 errors.append(f'sqlite_vec: {e}')
@@ -185,7 +185,7 @@ class RAGOrchestrator:
                     query_text=sanitized,
                     query_emb=embedding,
                     top_k=min(5, top_k - len(results))
-                )
+    )
                 seen_ids = {r.get('item_id') or r.get('id') for r in results}
                 for r in lancedb_results:
                     rid = r.get('id') or r.get('item_id')

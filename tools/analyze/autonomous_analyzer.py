@@ -323,7 +323,7 @@ class AutoResearchProfile:
             depth=data.get('depth', 'STANDARD'),
             max_time=data.get('max_time', 300.0),
             reasoning=data.get('reasoning', ''),
-        )
+    )
 
 
 # =============================================================================
@@ -519,7 +519,7 @@ class AutonomousAnalyzer:
             privacy_level=privacy_level,
             use_tor=use_tor,
             depth=depth,
-        )
+    )
         
         profile.models_needed = self._determine_models(profile)
         logger.info(f'🎯 AUTONOMOUS DECISION: Models = {profile.models_needed}')
@@ -662,7 +662,7 @@ class AutonomousAnalyzer:
             * depth_multiplier 
             * tot_multiplier 
             * privacy_multiplier
-        )
+    )
         return min(estimated_time, 1800.0)
 
     def _generate_reasoning(self, profile: AutoResearchProfile) -> str:

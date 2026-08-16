@@ -102,7 +102,7 @@ def _key_material_guard(key_bytes: bytearray):
         from hledac.universal.security.ephemeral_wipe import (
             register_mlock_region,
             unregister_mlock_region,
-        )
+    )
     except ImportError:
         register_mlock_region = None  # type: ignore
         unregister_mlock_region = None  # type: ignore
@@ -174,7 +174,7 @@ def _init_security() -> bool:
                 kSecReturnData,
                 kSecAttrAccessible,
                 kSecAttrAccessibleAfterFirstUnlock,
-            )
+    )
             _SecurityFramework = {
                 "SecItemAdd": SecItemAdd,
                 "SecItemCopyMatching": SecItemCopyMatching,
@@ -393,7 +393,7 @@ class KeyManager:
                     "KeyManager requires macOS Keychain (Security framework). "
                     "PyObjC is required: pip install pyobjc-framework-Security. "
                     "Alternatively set HLEDAC_KEY_MANAGER_FALLBACK=1 for development only."
-                )
+    )
 
             sec = _SecurityFramework
             # Try to read existing master key from Keychain
@@ -435,7 +435,7 @@ class KeyManager:
                 raise RuntimeError(
                     f"Keychain SecItemAdd failed with result {add_result}. "
                     f"Cannot store master key securely."
-                )
+    )
 
             # Store salt in LMDB metadata (salt is not sensitive, only used for HKDF)
             self._store_salt_in_lmdb(salt)
@@ -470,7 +470,7 @@ class KeyManager:
             salt=bucket_salt,
             info=bucket_salt,
             length=32,
-        )
+    )
         # ISSUE-P7-001: bytearray for mlock, guard wipes it after use.
         # raw_key_bytes is captured BEFORE guard so return value is correct.
         key_ba = bytearray(raw_key)

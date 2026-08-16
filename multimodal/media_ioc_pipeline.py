@@ -276,7 +276,7 @@ class MediaIocPipeline:
                 file_path=file_path,
                 media_type='audio',
                 error='RAM guard denied',
-            )
+    )
 
         # Phase 1: Decode + Transcribe
         t_decode = _time.monotonic()
@@ -293,7 +293,7 @@ class MediaIocPipeline:
                     file_path=file_path,
                     media_type='audio',
                     error='MediaDecoder not available',
-                )
+    )
 
             async with _DECODE_LOCK:
                 result = await self._decoder.transcribe(file_path)
@@ -315,7 +315,7 @@ class MediaIocPipeline:
                 decode_time_ms=decode_time,
                 total_time_ms=(_time.monotonic() - t_start) * 1000,
                 error=str(exc),
-            )
+    )
 
         decode_transcribe_time = (_time.monotonic() - t_decode) * 1000
 
@@ -344,7 +344,7 @@ class MediaIocPipeline:
             decode_ok=decode_ok,
             transcribe_ok=transcribe_ok,
             ioc_scan_ok=scan_ok,
-        )
+    )
 
     async def process_video(self, file_path: str) -> MediaIocResult:
         """Full video pipeline: decode audio → transcribe → OCR frames → IOC scan.
@@ -366,7 +366,7 @@ class MediaIocPipeline:
                 file_path=file_path,
                 media_type='video',
                 error='RAM guard denied',
-            )
+    )
 
         # Phase 1: Decode + Transcribe + OCR
         t_decode = _time.monotonic()
@@ -385,7 +385,7 @@ class MediaIocPipeline:
                     file_path=file_path,
                     media_type='video',
                     error='MediaDecoder not available',
-                )
+    )
 
             async with _DECODE_LOCK:
                 result = await self._decoder.transcribe_video(file_path)
@@ -409,7 +409,7 @@ class MediaIocPipeline:
                 decode_time_ms=decode_time,
                 total_time_ms=(_time.monotonic() - t_start) * 1000,
                 error=str(exc),
-            )
+    )
 
         decode_transcribe_time = (_time.monotonic() - t_decode) * 1000
 
@@ -444,7 +444,7 @@ class MediaIocPipeline:
             decode_ok=decode_ok,
             transcribe_ok=transcribe_ok,
             ioc_scan_ok=scan_ok,
-        )
+    )
 
     async def process_media(self, file_path: str) -> MediaIocResult:
         """Auto-detect media type and run appropriate pipeline.
@@ -475,7 +475,7 @@ class MediaIocPipeline:
                 file_path=file_path,
                 media_type='unknown',
                 error=f'Unsupported extension: {ext}',
-            )
+    )
 
     # ── IOC Scanning ───────────────────────────────────────────────────────
 
@@ -519,7 +519,7 @@ async def scan_text_for_iocs(
                 scanner = _IocStreamScanner(
                     patterns=list(_IOC_PATTERNS_STR),
                     labels=list(_IOC_PATTERNS_STR),
-                )
+    )
                 # R7: IocStreamScanner dispatched via rayon channel for zero-overhead submit
                 hits = await asyncio.to_thread(scanner.scan_bytes, text_bytes)
 
@@ -528,7 +528,7 @@ async def scan_text_for_iocs(
                     log.debug(
                         '[SILICON-07] IocStreamScanner: %d IoCs in %d bytes',
                         len(iocs), len(text_bytes),
-                    )
+    )
                     return iocs[:200], 'rust_aho_corasick', True
             except Exception as exc:
                 log.debug('[SILICON-07] IocStreamScanner failed: %s', exc)
@@ -640,7 +640,7 @@ _IOC_PATTERNS_STR: tuple[str, ...] = (
     'TTP',
     'IOC',
     'indicator',
-)
+    )
 
 
 def _normalize_stream_hits(hits: list[dict]) -> list[dict[str, Any]]:

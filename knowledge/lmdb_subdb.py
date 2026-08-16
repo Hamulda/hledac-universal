@@ -144,11 +144,11 @@ class UnifiedLMDBStore:
             map_size=self._map_size,
             max_dbs=1,  # Single DB, prefixes isolate namespaces
             critical=True,  # P0-3 Fix: ensure WAL durability
-        )
+    )
         self._initialized = True
         logger.debug(
             f"[LMDB-UNIFIED] Opened at {self._path}, map_size={self._map_size / (1024*1024):.0f}MB"
-        )
+    )
 
     @property
     def env(self) -> Any:
@@ -494,7 +494,7 @@ class UnifiedLMDBStore:
                 max_dbs=1,
                 writemap=False,
                 metasync=False,
-            )
+    )
             new_db = new_env.open_db()
 
             # Copy all live data via cursor iteration
@@ -509,7 +509,7 @@ class UnifiedLMDBStore:
                     logger.debug(
                         "[LMDB-UNIFIED] compact_database: copied %d entries",
                         copied,
-                    )
+    )
 
             # Phase 2: Sync and close temp env (durable write)
             new_env.sync(force=True)
@@ -546,7 +546,7 @@ class UnifiedLMDBStore:
                 writemap=False,
                 metasync=False,
                 mode=0o600,
-            )
+    )
             self._initialized = True
 
             # Cleanup backup
@@ -569,7 +569,7 @@ class UnifiedLMDBStore:
                         writemap=False,
                         metasync=False,
                         mode=0o600,  # FIX: maintain SEC-02 security on restore
-                    )
+    )
                     self._initialized = True
                 except Exception:
                     self._closed = True

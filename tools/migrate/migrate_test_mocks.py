@@ -92,7 +92,7 @@ def find_mock_creations(content: str) -> list[dict]:
                 "pos": match.start(),
                 "end": match.end(),
             }
-        )
+    )
 
     # Find AsyncMock() creations
     for match in re.finditer(r"(\w+)\s*=\s*AsyncMock\s*\(\s*\)", content):
@@ -106,7 +106,7 @@ def find_mock_creations(content: str) -> list[dict]:
                 "pos": match.start(),
                 "end": match.end(),
             }
-        )
+    )
 
     return results
 

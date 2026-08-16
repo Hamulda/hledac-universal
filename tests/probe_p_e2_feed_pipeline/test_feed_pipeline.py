@@ -32,7 +32,7 @@ class TestFeedPipelineImports:
             feed_entry_pipeline_fast,
             feed_batch_pipeline_fast,
             is_feed_pipeline_available,
-        )
+    )
         assert callable(feed_entry_pipeline_fast)
         assert callable(feed_batch_pipeline_fast)
         assert callable(is_feed_pipeline_available)
@@ -351,7 +351,7 @@ class TestWrapperFallback:
         from hledac.universal.utils.patterns.feed_pipeline_wrapper import (
             feed_entry_pipeline_fast,
             feed_batch_pipeline_fast,
-        )
+    )
         
         # Even if Rust unavailable, should not raise
         result = feed_entry_pipeline_fast("<xml/>", patterns=[], labels=[])
@@ -364,7 +364,7 @@ class TestWrapperFallback:
         """Should correctly report availability."""
         from hledac.universal.utils.patterns.feed_pipeline_wrapper import (
             is_feed_pipeline_available,
-        )
+    )
         
         # Just check it runs without error
         result = is_feed_pipeline_available()

@@ -291,7 +291,7 @@ class FederatedBridge:
                         str(action),
                         float(reward),
                         str(next_state),
-                    )
+    )
                     for lane, state, action, reward, next_state in items
                 ]
                 result = qtable_rust.update_batch(rust_items)

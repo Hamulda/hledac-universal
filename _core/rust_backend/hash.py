@@ -57,7 +57,7 @@ class _RustHashDomain:
                 return self._ext.content_hash_64(data)
             result = self._ffi_cb.call_or_fallback(
                 FFI_MODULE_XXHASH, rust_call
-            )
+    )
             if result.success:
                 return result.value  # type: ignore[return-value]
             return _python_xxhash64(data)
@@ -69,7 +69,7 @@ class _RustHashDomain:
                 return self._ext.content_hash_hex(data)
             result = self._ffi_cb.call_or_fallback(
                 FFI_MODULE_XXHASH, rust_call
-            )
+    )
             if result.success:
                 return result.value  # type: ignore[return-value]
             return _python_xxhash64_hex(data)

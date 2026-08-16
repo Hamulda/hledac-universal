@@ -239,7 +239,7 @@ class _EventRegistry:
                     outcome=event.outcome,
                     file=event.file,
                     line=event.line,
-                )
+    )
                 self._aggregation[key] = aggregated
                 
                 # Also record to ExceptionDiagnostics for full diagnostics
@@ -257,7 +257,7 @@ class _EventRegistry:
                     oldest_key = min(
                         self._aggregation.keys(),
                         key=lambda k: self._aggregation[k].first_seen
-                    )
+    )
                     del self._aggregation[oldest_key]
 
                 self._aggregation[key] = event
@@ -360,7 +360,7 @@ class _ExcEventContext:
             outcome="swallowed",
             file=file,
             line=line,
-        )
+    )
 
         # Register and potentially suppress
         registered = _EventRegistry().register(event)
@@ -382,7 +382,7 @@ class _ExcEventContext:
                 msg = (
                     f"{event.severity.tag} {event.scope}: {event.exc_type} "
                     f"(suppressed {event.suppressed_count}x, total {event.count})"
-                )
+    )
             else:
                 return  # Skip log for rate-limited event
         else:
@@ -401,7 +401,7 @@ class _ExcEventContext:
                 f"{event.severity.tag} {event.scope}: {event.exc_type}: {event.exc_message}",
                 exc_info=(event.severity in (Severity.P0_CRITICAL, Severity.P1_ERROR)),
                 extra=extra,
-            )
+    )
 
 
 def exc_event(
@@ -536,7 +536,7 @@ class SeverityConfig:
             p4_threshold=int(os.environ.get("HLEDAC_SEVERITY_P4_THRESHOLD", 20)),
             p3_sample_rate=float(os.environ.get("HLEDAC_SEVERITY_P3_SAMPLE", 0.1)),
             p4_sample_rate=float(os.environ.get("HLEDAC_SEVERITY_P4_SAMPLE", 0.01)),
-        )
+    )
 
 
 # Global configuration (can be replaced at runtime)

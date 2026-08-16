@@ -12,22 +12,12 @@ from urllib.parse import urlparse
 import aiofiles
 
 from .base import Transport, TransportConfig, TransportResult
+from _core import aclose
 logger = logging.getLogger(__name__)
 from hledac.universal.utils.safe_swallow import safe_swallow
-
-
-
-
-
-    TransportAdmission,
-    cleanup_child_process,
-    cleanup_process_tree,
-    get_resource_ledger,
-)
 MAX_CIRCUIT_REQUESTS: int = 3
 _TOR_TRANSPORT_SINGLETON: 'TorTransport | None' = None
 
-from _core import aclose
 def get_tor_transport_singleton() -> 'TorTransport | None':
     """Return the module-level TorTransport singleton or None."""
     return _TOR_TRANSPORT_SINGLETON
@@ -50,16 +40,8 @@ class TorUnavailableError(RuntimeError):
     """Raised when .onion fetch attempted without running Tor."""
 
 class TorTransport(Transport):
-    """
-    Tor transport with integrated Resource Ledger management.
-
-    M1 Resource Ceiling Drift Fix: All Tor resources (FDs, Mach ports,
-    child processes) are now tracked via ResourceLedger for guaranteed
-    cleanup and admission control.
-    """
-
     available: bool = True
-    __slots__ = tuple(('_circuit_failures', '_circuit_lock', '_circuit_request_count', '_circuits_created', '_domain_circuits', '_httpx', '_httpx_socks', '_max_circuit_requests', '_ready', '_session_direct', '_session_tor', 'available', 'control_port', 'data_dir', 'handlers', 'hidden_service_dir', 'http_port', 'http_server', 'onion_address', 'security_level', 'socks_port', 'tor_process', '_ledger', '_resource_active'))
+    __slots__ = tuple(('_circuit_failures', '_circuit_lock', '_circuit_request_count', '_circuits_created', '_domain_circuits', '_httpx', '_httpx_socks', '_max_circuit_requests', '_ready', '_session_direct', '_session_tor', 'available', 'control_port', 'data_dir', 'handlers', 'hidden_service_dir', 'http_port', 'http_server', 'onion_address', 'security_level', 'socks_port', 'tor_process'))
 
     def __init__(self, data_dir: str | None=None, control_port: int=9051, socks_port: int=9050):
         self.available = True
@@ -98,41 +80,11 @@ class TorTransport(Transport):
         self._circuits_created: int = 0
         self._circuit_failures: int = 0
 
-        # M1 Resource Ledger: Initialize resource tracking
-        self._ledger = get_resource_ledger()
-        self._resource_active = False
-
         # Weakref finalizer for GC safety net
         self._finalizer = weakref.finalize(self, self._cleanup)
 
     async def start(self) -> bool:
-        """
-        Spustit Tor daemon s resource admission kontrolou.
-
-        M1 Resource Ceiling Drift Fix: Requests resource admission before
-        acquiring any resources. Guarantees cleanup via context manager.
-        """
-        # M1 Resource Admission: Check if we can start Tor
-        can_start, reason = TransportAdmission.can_start_transport("tor", self._ledger)
-        if not can_start:
-            logger.warning(f"[TorTransport] Cannot start: {reason}")
-            return False
-
-        # M1 Resource Admission: Acquire resources via context manager
-        with TransportAdmission.for_transport("tor", self._ledger):
-            result = await self._start_internal()
-
-            # Mark resources as active for cleanup tracking
-            if result:
-                self._resource_active = True
-                # Register Tor PID with ledger
-                if self.tor_process and self.tor_process.pid:
-                    self._ledger.register_child_process(self.tor_process.pid, "tor")
-
-            return result
-
-    async def _start_internal(self) -> bool:
-        """Internal start logic without resource admission."""
+        """Spustit Tor daemon autonomně. Vrátí True pokud circuit established."""
         tor_bin = shutil.which('tor')
         if not tor_bin:
             logger.error('tor binary not found — install: brew install tor')
@@ -250,25 +202,29 @@ class TorTransport(Transport):
         return await self.is_circuit_established()
 
     async def stop(self) -> None:
-        """
-        Graceful Tor shutdown with resource cleanup.
-
-        M1 Resource Ceiling Drift Fix: Properly terminates child processes
-        and releases all resources via ResourceLedger.
-        """
+        """Graceful Tor shutdown."""
         from hledac.universal.paths import TOR_ROOT
         from hledac.universal.utils.secure_zero import wipe_tor_identity
 
         # G1: Secure wipe of Tor identity material before shutdown
         wipe_tor_identity(self.onion_address)
 
-        # M1 Resource Cleanup: Terminate Tor process via ledger
         pid_path = TOR_ROOT / 'tor.pid'
         if pid_path.exists():
             try:
                 pid = int(pid_path.read_text().strip())
-                # M1: Use cleanup_process_tree for proper child cleanup
-                await cleanup_process_tree(pid, self._ledger, timeout_s=10.0)
+                os.kill(pid, signal.SIGTERM)
+                for _ in range(20):
+                    await asyncio.sleep(0.5)
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
+                else:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:  # noqa: BLE001
+                        pass
             except Exception as e:
                 logger.warning(f'Tor stop: {e}')
             finally:
@@ -280,32 +236,20 @@ class TorTransport(Transport):
                     await self.tor_process.wait()
             except TimeoutError:
                 self.tor_process.kill()
-
-        # Close HTTP sessions
         if self._session_direct:
             await self._session_direct.aclose()
         if self._session_tor and self._session_tor is not self._session_direct:
             await self._session_tor.aclose()
-
-        # Close HTTP server
         if self.http_server:
             self.http_server.close()
-
-        # M1 Resource Cleanup: Release all remaining resources for "tor"
-        self._ledger.release_all("tor")
-        self._resource_active = False
-
-        logger.info('[TorTransport] Stopped and resources released')
+        logger.info('Tor stopped')
 
     def telemetry(self) -> dict:
         """Sprint F214Q B.3: Export circuit telemetry for MetricsRegistry."""
         return {'circuits_created': self._circuits_created, 'circuit_failures': self._circuit_failures}
 
     def _cleanup(self) -> None:
-        """
-        Called by weakref.finalize when TorTransport is garbage collected.
-
-        M1 Resource Ceiling Drift Fix: Also releases resources from ledger.
+        """Called by weakref.finalize when TorTransport is garbage collected.
 
         This is a last-resort safety net. Proper cleanup should use stop() explicitly.
         """
@@ -316,11 +260,6 @@ class TorTransport(Transport):
                 wipe_tor_identity(onion_addr)
         except Exception as e:
             safe_swallow("tor_transport_cleanup_Exception", logger=logger, exc=e)
-
-        # M1 Resource Cleanup: Release all resources for this transport
-        ledger = getattr(self, "_ledger", None)
-        if ledger is not None:
-            ledger.release_all("tor")
 
         if getattr(self, "tor_process", None) is not None or getattr(self, "http_server", None) is not None:
             logger.warning(f"TorTransport: stop() not called before GC — Tor process or HTTP server may leak. "
@@ -482,14 +421,10 @@ class TorTransport(Transport):
         except Exception:  # noqa: BLE001
             pass
         await self._maybe_rotate_circuit(domain=domain)
-        # P0-2 MODERN-02 FIX: Pass proxies directly instead of using dead env var.
-        # The CURL_CFFI_PROXY env var was never read by curl_cffi_fetch.py —
-        # this was the root cause of .onion/.i2p leak via Clearnet.
-        # Now passing SOCKS5H proxy directly for DNS-on-proxy semantics.
-        from .curl_cffi_fetch import _TOR_CURL_PROXY
-        proxies = {"http": _TOR_CURL_PROXY, "https": _TOR_CURL_PROXY}
+        from hledac.universal._core.env_config import ENV
+        os.environ['CURL_CFFI_PROXY'] = ENV.get_str('TOR_SOCKS_PROXY_URL', 'socks5h://127.0.0.1:9050')
         try:
-            result = await fetch_via_curl_cffi(url=config.url, timeout_s=config.timeout_s, max_bytes=config.max_bytes, proxies=proxies)
+            result = await fetch_via_curl_cffi(url=config.url, timeout_s=config.timeout_s, max_bytes=config.max_bytes)
             from .base import TransportResult
             return TransportResult(url=config.url, final_url=result.get('final_url', config.url), status_code=result.get('status_code', 0), content_type=result.get('content_type', ''), fetched_bytes=len(result.get('content', b'')), error=result.get('error'), failure_stage=result.get('failure_stage'), network_error_kind=result.get('network_error_kind'), selected_transport='tor')
         except Exception as e:

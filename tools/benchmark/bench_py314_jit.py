@@ -51,7 +51,7 @@ def check_jit(python: Path) -> JTStatus:
             capture_output=True,
             text=True,
             timeout=10,
-        )
+    )
         has_jit = result.stdout.strip()
     except Exception as e:
         return JTStatus(False, f"subprocess check failed: {e}")
@@ -62,7 +62,7 @@ def check_jit(python: Path) -> JTStatus:
             "sys.jit attribute NOT_FOUND. "
             "Python 3.14.4 was built WITHOUT --with-jit. "
             "PYTHON_JIT=1 has no effect on this interpreter.",
-        )
+    )
 
     try:
         result = subprocess.run(
@@ -71,7 +71,7 @@ def check_jit(python: Path) -> JTStatus:
             capture_output=True,
             text=True,
             timeout=10,
-        )
+    )
         jit_flag = result.stdout.strip()
         if jit_flag in ("0", "False"):
             return JTStatus(False, f"sys.flags.jit={jit_flag} — JIT not active")
@@ -106,7 +106,7 @@ def _run_py(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=str(PROJECT_ROOT),
-        )
+    )
         _stdout, _stderr = proc.communicate(timeout=timeout)
         wall_s = time.perf_counter() - t0
         exit_code = proc.returncode
@@ -204,7 +204,7 @@ def bench_content_miner(python: Path, env: dict[str, str] | None) -> BenchResult
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=str(PROJECT_ROOT),
-        )
+    )
         _stdout, stderr_data = proc.communicate(timeout=60)
         wall_s = time.perf_counter() - t0
         stderr_text = stderr_data.decode(errors="replace")
@@ -289,7 +289,7 @@ def main() -> int:
                 f"delta={delta:+.3f}s ({pct:+.1f}%)  "
                 f"rss_default={d.rss_kb}KB  rss_jit={j.rss_kb}KB  "
                 f"rss_delta={rss_delta:+d}KB"
-            )
+    )
             if j.wall_s < d.wall_s:
                 any_improvement = True
         elif d:

@@ -84,7 +84,7 @@ def batch_hamming_scores(
             candidates_packed,
             num_candidates,
             num_bytes,
-        )
+    )
         return list(result)
 
     # MLX fallback path — popcount via lookup table
@@ -118,7 +118,7 @@ def batch_hamming_scores_batched(
             num_queries,
             num_candidates,
             num_bytes,
-        )
+    )
         return [list(r) for r in result]
 
     # MLX fallback — call batch_hamming_scores for each query

@@ -104,7 +104,7 @@ class EntropyAlert:
             timestamp=data.get("timestamp", time.time()),
             metadata=data.get("metadata", {}),
             contradiction_source_id=data.get("contradiction_source_id"),
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +210,7 @@ class SeverityPriorityQueue:
                 await asyncio.wait_for(
                     self._queue.put((incoming_priority, alert)),
                     timeout=timeout,
-                )
+    )
                 return True
             except asyncio.TimeoutError:  # noqa: BLE001
                 # Timeout waiting for space — try overflow strategy
@@ -410,7 +410,7 @@ class EntropyFetchBridge:
                                 "queue contents): entity=%s risk=%s",
                                 alert.entity_id,
                                 alert.risk_level,
-                            )
+    )
                     except Exception as e:
                         # Fail-soft: log and continue to other subscribers
                         self._stats["alerts_dropped"] += 1
@@ -418,7 +418,7 @@ class EntropyFetchBridge:
                             "[ENTROPY_BRIDGE] Failed to deliver alert to %s: %s",
                             subscriber_id,
                             e,
-                        )
+    )
 
             self._stats["alerts_emitted"] += 1
             return delivered
@@ -456,7 +456,7 @@ class EntropyFetchBridge:
                         "[ENTROPY_BRIDGE] Subscriber limit reached (%d), rejecting %s",
                         self.MAX_SUBSCRIBERS,
                         subscriber_id,
-                    )
+    )
                     return False
 
                 # ISSUE-022-03 FIX: If plain asyncio.Queue is passed (backward compat),
@@ -473,7 +473,7 @@ class EntropyFetchBridge:
                         "(FIFO strategy). Prefer SeverityPriorityQueue for "
                         "severity-aware overflow.",
                         subscriber_id,
-                    )
+    )
 
                 self._subscribers[subscriber_id] = queue
                 self._stats["subscribers_added"] += 1
@@ -637,7 +637,7 @@ def calculate_entropy(
         logger.debug(
             "[ENTROPY] calculate_entropy received unsupported type %s",
             type(data).__name__,
-        )
+    )
         return 0.0
 
     if len(data) == 0:
@@ -701,7 +701,7 @@ def calculate_entropy_detailed(
             total_symbols=0,
             is_low_entropy=True,
             is_high_entropy=False,
-        )
+    )
 
     if len(data) == 0:
         return EntropyStats(
@@ -711,7 +711,7 @@ def calculate_entropy_detailed(
             total_symbols=0,
             is_low_entropy=True,
             is_high_entropy=False,
-        )
+    )
 
     import math
 
@@ -809,7 +809,7 @@ class UncertaintyQuantifier:
         self._stats['quantify_calls'] += 1
         stats = calculate_entropy_detailed(
             text if isinstance(text, (str, bytes)) else str(text),
-        )
+    )
 
         if stats.normalized > self._normalized_threshold:
             self._stats['high_entropy_flags'] += 1
@@ -851,7 +851,7 @@ class UncertaintyQuantifier:
             entropy_bits = -mean_logprob / math.log(2)  # convert nats → bits
             implied_confidence = max(
                 0.0, min(1.0, 1.0 - (entropy_bits / self._max_entropy_bits)),
-            )
+    )
             is_high = entropy_bits > self._high_entropy_threshold
 
             if is_high:
@@ -861,11 +861,11 @@ class UncertaintyQuantifier:
                 round(entropy_bits, 3),
                 round(implied_confidence, 3),
                 is_high,
-            )
+    )
         except Exception as e:
             logger.debug(
                 "[ENTROPY] quantify_from_logprobs failed (fail-soft): %s", e,
-            )
+    )
             return (0.0, 1.0, False)
 
     def assess_confidence_divergence(
@@ -887,7 +887,7 @@ class UncertaintyQuantifier:
         """
         entropy_bits, implied_conf, _ = self.quantify_from_logprobs(
             logprobs, self_reported_confidence=self_reported,
-        )
+    )
         divergence = abs(self_reported - implied_conf)
 
         if divergence < 0.2:

@@ -17,11 +17,7 @@ Author: Issue #22
 """
 
 
-
-
-
-
-
+from .ring_mmap_ipc import (
     RingMMapIPC,
     RingMMap,
     RingMMapChannel,
@@ -32,6 +28,5 @@ __all__ = [
     "RingMMapIPC",
     "RingMMap",
     "RingMMapChannel",
-
-from _core import aclose    "run_worker",
+    "run_worker",
 ]

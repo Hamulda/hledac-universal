@@ -300,11 +300,11 @@ class MetalHNSWBuilder:
                 f"ef_construction={ef_construction}, "
                 f"gpu_batch={self._gpu_batch}, "
                 f"device_mem={self._device_memory_mb:.1f}MiB/batch"
-            )
+    )
         else:
             logger.debug(
                 "[METAL-HNSW] GPU disabled — using CPU USearch fallback"
-            )
+    )
 
     # ── GPU capability probe ─────────────────────────────────────────
 
@@ -348,7 +348,7 @@ class MetalHNSWBuilder:
                         f"[METAL-HNSW] Insufficient UMA headroom "
                         f"({headroom / 1024**2:.0f}MiB < "
                         f"{needed / 1024**2:.0f}MiB) — GPU disabled"
-                    )
+    )
                     return False
             except Exception:  # noqa: BLE001
                 # Can't probe — assume OK, let runtime handle OOM
@@ -394,7 +394,7 @@ class MetalHNSWBuilder:
             try:
                 from hledac.universal.utils.mlx_cache import (
                     get_dynamic_metal_cache_limit,
-                )
+    )
                 cache_limit = get_dynamic_metal_cache_limit()
                 if cache_limit < self._device_memory_mb * 1024 * 1024 * 3:
                     return False
@@ -432,7 +432,7 @@ class MetalHNSWBuilder:
         if len(vectors) != len(ids):
             raise ValueError(
                 f"Vector count ({len(vectors)}) != ID count ({len(ids)})"
-            )
+    )
 
         N = len(vectors)
         if N == 0:
@@ -463,7 +463,7 @@ class MetalHNSWBuilder:
             connectivity=self._M,
             expansion_add=exp_add,
             expansion_search=min(exp_add, 100),
-        )
+    )
 
         # GPU path only for cosine/cos metric (kernels assume L2-normalized inputs)
         if self._gpu_enabled and self._metric in ("cos", "cosine"):
@@ -473,7 +473,7 @@ class MetalHNSWBuilder:
                 logger.debug(
                     f"[METAL-HNSW] GPU skipped: metric={self._metric} "
                     f"not supported (GPU kernels are cosine-only)"
-                )
+    )
             self._build_cpu(index, vectors, ids, label_offset)
 
         self._stats["build_time_s"] = time.monotonic() - t0
@@ -484,7 +484,7 @@ class MetalHNSWBuilder:
             f"(gpu={self._gpu_enabled}, "
             f"gpu_batches={self._stats['gpu_batches']}, "
             f"cpu_fallbacks={self._stats['cpu_fallbacks']})"
-        )
+    )
 
         return index
 
@@ -558,7 +558,7 @@ class MetalHNSWBuilder:
                 logger.debug(
                     f"[METAL-HNSW] GPU batch {batch_idx} failed: {e} — "
                     f"falling back to sequential insertion order"
-                )
+    )
                 self._stats["cpu_fallbacks"] += 1
                 # Clean up GPU on error too
                 try:
@@ -625,10 +625,10 @@ class MetalHNSWBuilder:
             # Normalize
             q_norm = queries / (
                 np.linalg.norm(queries, axis=1, keepdims=True) + 1e-8
-            )
+    )
             c_norm = candidates / (
                 np.linalg.norm(candidates, axis=1, keepdims=True) + 1e-8
-            )
+    )
 
             # Memory budget check
             est_bytes = queries.shape[0] * candidates.shape[0] * 4
@@ -646,7 +646,7 @@ class MetalHNSWBuilder:
                 dist_np = np.array(result)
                 self._stats["gpu_distance_calls"] += (
                     queries.shape[0] * candidates.shape[0]
-                )
+    )
                 self._stats["gpu_batches"] += 1
                 return dist_np
             finally:
@@ -667,10 +667,10 @@ class MetalHNSWBuilder:
         """CPU fallback: numpy batch cosine distance (NEON SIMD)."""
         q_norm = queries / (
             np.linalg.norm(queries, axis=1, keepdims=True) + 1e-8
-        )
+    )
         c_norm = candidates / (
             np.linalg.norm(candidates, axis=1, keepdims=True) + 1e-8
-        )
+    )
         sims = q_norm @ c_norm.T
         return 1.0 - sims.astype(np.float32)
 
@@ -719,11 +719,11 @@ def build_usearch_from_lancedb(
         if row_count < 100:
             logger.debug(
                 f"[METAL-HNSW] Too few rows ({row_count}), skipping"
-            )
+    )
             return (
                 None, [],
                 {"skipped": True, "reason": "too_few_rows", "count": row_count},
-            )
+    )
 
         data = table.to_lance().to_table(
             columns=["finding_key", "vector"]
@@ -738,7 +738,7 @@ def build_usearch_from_lancedb(
         # Stack into numpy (single allocation — avoids per-vector np.array)
         vecs = np.array(
             [np.array(v, dtype=np.float32) for v in vectors_raw]
-        )
+    )
         keys = list(keys_raw)
 
         # Build with GPU acceleration (labels are positional: 0, 1, 2, ...)
@@ -749,7 +749,7 @@ def build_usearch_from_lancedb(
             max_elements=max_elements,
             metric="cos",
             dtype="f32",
-        )
+    )
 
         index = builder.build(vecs, keys, label_offset=0)
         stats = builder.get_stats()
@@ -758,7 +758,7 @@ def build_usearch_from_lancedb(
             f"[METAL-HNSW] LanceDB build: {len(keys)} vectors "
             f"in {stats['build_time_s']:.2f}s "
             f"(gpu={stats['gpu_enabled']})"
-        )
+    )
 
         return (index, keys, stats)
 

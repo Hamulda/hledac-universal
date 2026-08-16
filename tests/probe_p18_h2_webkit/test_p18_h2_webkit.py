@@ -75,7 +75,7 @@ class TestH2SafariPresetRustExtension:
         
         assert initial_window == 4_194_304, (
             f"Safari 18.0 INITIAL_WINDOW_SIZE should be 4,194,304, got {initial_window}"
-        )
+    )
 
     def test_safari17_settings_known_values(self):
         """Verify Safari 17.4 SETTINGS values."""
@@ -90,7 +90,7 @@ class TestH2SafariPresetRustExtension:
         
         assert max_header_list == 80_000, (
             f"Safari 17.4 MAX_HEADER_LIST_SIZE should be 80,000, got {max_header_list}"
-        )
+    )
 
     def test_safari18_no_priority(self):
         """Verify Safari 18.0 does NOT send PRIORITY frames (RFC 9218 strict)."""
@@ -104,7 +104,7 @@ class TestH2SafariPresetRustExtension:
         increment = self._get_webkit_window_increment()
         assert increment == 1_048_304, (
             f"Safari WINDOW_UPDATE increment should be 1,048,304, got {increment}"
-        )
+    )
 
     def test_needs_webkit_preset_safari(self):
         """Verify needs_webkit_preset returns True for Safari profiles."""
@@ -206,7 +206,7 @@ class TestPublicFetcherTelemetry:
         from hledac.universal.fetching.public_fetcher import (
             get_webkit_transport_stats,
             _reset_webkit_transport_telemetry,
-        )
+    )
 
         _reset_webkit_transport_telemetry()
         stats = get_webkit_transport_stats()
@@ -243,7 +243,7 @@ class TestH2SettingsFingerprint:
                 get_webkit_initial_window_size,
                 get_curl_default_initial_window_size,
                 get_webkit_profiles,
-            )
+    )
             return _g18, _g16, get_webkit_initial_window_size, get_curl_default_initial_window_size, get_webkit_profiles
         except ImportError:
             pytest.skip("h2_safari_preset Rust extension not built")

@@ -112,7 +112,7 @@ class DnsCache:
             ips = await loop.run_in_executor(
                 None,
                 lambda: rust.dns.resolve_async(real_host, "A"),
-            )
+    )
             return ips if ips else None
         except Exception:
             return None

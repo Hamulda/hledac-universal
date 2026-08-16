@@ -31,7 +31,7 @@ class TestScanCtFix:
         config = SprintSchedulerConfig(
             sprint_duration_s=5,
             aggressive_mode=True,
-        )
+    )
         assert config.sprint_duration_s == 5
         assert config.aggressive_mode is True
 
@@ -41,7 +41,7 @@ class TestScanCtFix:
         config = SprintSchedulerConfig(
             sprint_duration_s=3,
             aggressive_mode=False,
-        )
+    )
         scheduler = SprintScheduler(config)
 
         # Verify basic attributes
@@ -103,7 +103,7 @@ class TestDurationCapFix:
         """SprintSchedulerConfig should store sprint_duration_s"""
         config = SprintSchedulerConfig(
             sprint_duration_s=30,  # 30 second sprint
-        )
+    )
         scheduler = SprintScheduler(config)
 
         # Verify config has duration
@@ -114,7 +114,7 @@ class TestDurationCapFix:
         config = SprintSchedulerConfig(
             sprint_duration_s=60,
             windup_lead_s=10,
-        )
+    )
         assert config.windup_lead_s == 10
 
 
@@ -176,7 +176,7 @@ class TestSmokeIntegration:
         """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
         config = SprintSchedulerConfig(
             sprint_duration_s=5,
-        )
+    )
         scheduler = SprintScheduler(config)
 
         # Basic sanity check

@@ -118,7 +118,7 @@ class TrackedTask:
                 except Exception as callback_err:
                     logger.warning(
                         f"[TrackedTask] Exception callback failed for {self._name}: {callback_err}"
-                    )
+    )
             logger.debug(f"[TrackedTask] Completed with error: {self._name}")
         else:
             logger.debug(f"[TrackedTask] Completed: {self._name}")

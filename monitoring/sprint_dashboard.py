@@ -196,7 +196,7 @@ class SprintDashboard:
             (f' {emoji} [{phase}]', style),
             f'  │  {self.sprint_id}  │  {elapsed_s:.0f}s elapsed  │  {remaining:.0f}s left',
             'white'
-        )
+    )
         table.add_row(title_text)
 
         # Progress row

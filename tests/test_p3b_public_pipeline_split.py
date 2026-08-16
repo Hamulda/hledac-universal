@@ -14,7 +14,7 @@ from pipeline.public_constants import (
     _QUALITY_TIER_OK,
     _QUALITY_TIER_WEAK,
     _QUALITY_TIER_SKIP,
-)
+    )
 
 from pipeline.public_patterns import (
     _make_finding_id,
@@ -23,18 +23,18 @@ from pipeline.public_patterns import (
     _js_confidence_from_verdict,
     _enrich_text_with_metadata,
     _pattern_context,
-)
+    )
 
 from pipeline.public_discovery import (
     FetchPolicy,
     generate_bootstrap_urls,
     generate_rescue_urls,
     generate_keyword_bootstrap_urls,
-)
+    )
 
 from pipeline.public_acceptance import (
     _build_public_finding,
-)
+    )
 
 from pipeline import PipelinePageResult, PipelineRunResult
 from _core import aclose
@@ -121,7 +121,7 @@ class TestPublicPatterns:
             extracted_text="A critical vulnerability has been identified..." * 50,
             discovery_score=0.9,
             discovery_reason="search",
-        )
+    )
         assert tier in (_QUALITY_TIER_VERY_GOOD, _QUALITY_TIER_GOOD, _QUALITY_TIER_OK)
 
     def test_score_page_quality_weak(self):
@@ -133,7 +133,7 @@ class TestPublicPatterns:
             query="rare query",
             extracted_text="short",
             discovery_score=0.1,
-        )
+    )
         assert tier in (_QUALITY_TIER_WEAK, _QUALITY_TIER_SKIP)
 
     def test_js_confidence_from_verdict(self):
@@ -151,7 +151,7 @@ class TestPublicPatterns:
             title="<b>Title</b>",
             snippet="Snippet text",
             extracted_text="Body content here",
-        )
+    )
         assert "Title" in result
         assert "Snippet text" in result
         assert "Body content" in result
@@ -231,7 +231,7 @@ class TestPipelineStructs:
             matched_patterns=3,
             accepted_findings=2,
             stored_findings=2,
-        )
+    )
         assert result.url == "http://example.com"
         assert result.fetched is True
         assert result.matched_patterns == 3
@@ -246,7 +246,7 @@ class TestPipelineStructs:
             stored_findings=4,
             patterns_configured=10,
             pages=(),
-        )
+    )
         assert result.query == "test query"
         assert result.discovered == 10
         assert result.fetched == 8

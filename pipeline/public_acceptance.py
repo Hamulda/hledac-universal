@@ -109,7 +109,7 @@ async def _build_public_finding(
             ts=time.time(),
             provenance=provenance,
             payload_text=payload_text,
-        )
+    )
         return (finding,)
     except Exception:
         return ()

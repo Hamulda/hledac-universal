@@ -323,7 +323,7 @@ class WaybackDiffMiner:
             archive_domain=_extract_archive_domain(WAYBACK_CDX_API), attempted=True,
             raw_count=self._stats.get('cdx_snapshots_collected', 0), built_count=len(all_events),
             accepted_count=None, error=error, timeout=timeout, duration_s=elapsed
-        )
+    )
 
     def _extract_error_info(self, gathered_errors: list) -> tuple[str | None, bool]:
         """Extract error and timeout info from gathered errors."""

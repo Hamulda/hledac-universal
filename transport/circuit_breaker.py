@@ -303,7 +303,7 @@ class CircuitBreaker:
             raw = _JITTER_RNG.uniform(
                 _JITTER_MIN_MULTIPLIER * self.recovery_timeout,
                 _JITTER_MAX_MULTIPLIER * self.recovery_timeout,
-            )
+    )
             # Floor = 10% of timeout to avoid sub-millisecond jitter for very small timeouts
             floor = _JITTER_MIN_FRACTION * self.recovery_timeout
             return max(raw, floor)
@@ -331,7 +331,7 @@ class CircuitBreaker:
                         # firing simultaneously when the circuit transitions to HALF_OPEN.
                         retry_after_s=self._jittered_retry_after(),
                         reason="circuit_half_open_recovery_probe",
-                    )
+    )
                 # F285-JITTER: return jittered retry_after to stagger incoming requests
                 remaining = self.recovery_timeout - (time.monotonic() - self._last_failure_time)
                 jittered_after = self._jittered_retry_after() if remaining > 0 else 0.0
@@ -341,7 +341,7 @@ class CircuitBreaker:
                 try:
                     from hledac.universal.monitoring.alert_manager import (
                         check_circuit_breaker_alert,
-                    )
+    )
                     from hledac.universal.utils.asyncx import safe_create_task
                     safe_create_task(
                         check_circuit_breaker_alert(
@@ -350,7 +350,7 @@ class CircuitBreaker:
                             recovery_timeout=self.recovery_timeout,
                         ),
                         otel_trace=False,
-                    )
+    )
                 except Exception:  # noqa: BLE001 — fail-soft, alert is best-effort
                     pass
 
@@ -360,7 +360,7 @@ class CircuitBreaker:
                     state="open",
                     retry_after_s=jittered_after,
                     reason="circuit_open_failure_threshold_exceeded",
-                )
+    )
             if self._state == CBState.HALF_OPEN:
                 if self._half_open_probes >= CIRCUIT_HALF_OPEN_PROBES:
                     prev = self._state
@@ -376,7 +376,7 @@ class CircuitBreaker:
                         state="closed",
                         retry_after_s=max(0.0, self.recovery_timeout - (time.monotonic() - self._last_failure_time)),
                         reason="circuit_half_open_max_probes_reached",
-                    )
+    )
                 self._half_open_probes += 1
                 # CB-01 FIX: Apply jitter to half-open probe failure.
                 # After record_failure() bumped recovery_timeout (exponential backoff),
@@ -389,14 +389,14 @@ class CircuitBreaker:
                     state="half_open",
                     retry_after_s=jittered,
                     reason="circuit_half_open_probe_allowed",
-                )
+    )
             return CircuitDecision(
                 allowed=True,
                 domain=self.domain,
                 state="closed",
                 retry_after_s=0.0,
                 reason="circuit_closed",
-            )
+    )
 
     def record_success(self):
         # FIX Issue B: capture event OUTSIDE lock to prevent deadlock if callback calls get_breaker()
@@ -519,7 +519,7 @@ class CircuitBreaker:
                 recovery_timeout_s=self.recovery_timeout,
                 opened_at_monotonic=self._opened_at_monotonic,
                 last_failure_kind=self._last_failure_kind,
-            )
+    )
 
 
 # E5 FIX: OrderedDict → PyCacheDict — replaces cachetools.LRUCache.
@@ -799,7 +799,7 @@ class ModelCircuitBreaker:
                 logger.warning(
                     f"ModelCircuitBreaker OPEN: model={self.model_id!r} "
                     f"after {self._failure_count} failures, last={self._last_failure_kind!r}"
-                )
+    )
 
     def record_success(self) -> None:
         """Reset breaker on successful inference."""
@@ -924,7 +924,7 @@ class TransportCircuitBreaker:
                         state="half_open",
                         retry_after_s=0.0,
                         reason="transport_circuit_half_open_recovery",
-                    )
+    )
                 jitter = _JITTER_RNG.uniform(
                     _JITTER_MIN_MULTIPLIER * self.recovery_timeout,
                     _JITTER_MAX_MULTIPLIER * self.recovery_timeout,
@@ -935,7 +935,7 @@ class TransportCircuitBreaker:
                     state="open",
                     retry_after_s=jitter,
                     reason="transport_circuit_open_overload",
-                )
+    )
             if self._state == CBState.HALF_OPEN:
                 if self._half_open_probes >= CIRCUIT_HALF_OPEN_PROBES:
                     self._transition_to(CBState.CLOSED)
@@ -945,7 +945,7 @@ class TransportCircuitBreaker:
                         state="closed",
                         retry_after_s=0.0,
                         reason="transport_circuit_half_open_max_probes",
-                    )
+    )
                 self._half_open_probes += 1
                 return CircuitDecision(
                     allowed=True,
@@ -953,14 +953,14 @@ class TransportCircuitBreaker:
                     state="half_open",
                     retry_after_s=0.0,
                     reason="transport_circuit_half_open_probe",
-                )
+    )
             return CircuitDecision(
                 allowed=True,
                 domain=f"transport:{self.transport}",
                 state="closed",
                 retry_after_s=0.0,
                 reason="transport_circuit_closed",
-            )
+    )
 
     def record_success(self) -> None:
         """Reset breaker on successful fetch."""
@@ -1103,7 +1103,7 @@ def domain_breaker_check(domain: str) -> CircuitDecision:
             state="unknown",
             retry_after_s=0.0,
             reason="empty_domain_skip",
-        )
+    )
     # R23: Try Rust first (authoritative, lock-free)
     rust_result = rust_circuit_is_open(domain)
     if rust_result is not None:
@@ -1115,7 +1115,7 @@ def domain_breaker_check(domain: str) -> CircuitDecision:
                 state="open",
                 retry_after_s=BASE_RECOVERY_TIMEOUT_S,
                 reason="circuit_open_rust",
-            )
+    )
         else:
             return CircuitDecision(
                 allowed=True,
@@ -1123,7 +1123,7 @@ def domain_breaker_check(domain: str) -> CircuitDecision:
                 state="closed",
                 retry_after_s=0.0,
                 reason="circuit_closed_rust",
-            )
+    )
     # R23: Rust unavailable — fallback to Python (never happens in production)
     breaker = get_breaker(domain)
     return breaker.check_circuit()

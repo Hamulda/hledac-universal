@@ -67,7 +67,7 @@ PROFILE_MEMORY_BUDGET: int = 5 * 1024 * 1024  # 5 MB
 # Sentence boundary regex (handles . ! ? with quote/brace edges)
 _SENTENCE_BOUNDARY: re.Pattern[str] = re.compile(
     r'(?<=[.!?])(?:\s+)(?=[A-Z\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF])',
-)
+    )
 
 # Function words — high-frequency low-semantic-content markers of writing style
 _FUNCTION_WORDS: frozenset[str] = frozenset({
@@ -309,14 +309,14 @@ class StylometryAnalyzer:
             if vocab_a and vocab_b and vec_a is not None and vec_b is not None:
                 scores[dim_key] = self._compare_ngram_vectors(
                     vec_a, vocab_a, vec_b, vocab_b,
-                )
+    )
             else:
                 scores[dim_key] = 0.0
 
         # 2. Function word distribution similarity
         scores['function_words'] = self._compare_function_words(
             profile_a.function_word_dist, profile_b.function_word_dist,
-        )
+    )
 
         # 3. Sentence structure similarity
         scores['sentence_structure'] = self._compare_sentence_structure(profile_a, profile_b)
@@ -327,12 +327,12 @@ class StylometryAnalyzer:
         # 5. Punctuation similarity
         scores['punctuation'] = self._compare_punctuation(
             profile_a.punctuation_frequency, profile_b.punctuation_frequency,
-        )
+    )
 
         # 6. Typo pattern similarity
         scores['typo_patterns'] = self._compare_typo_patterns(
             profile_a.typo_scores, profile_b.typo_scores,
-        )
+    )
 
         # Weighted aggregation
         total_weight = 0.0
@@ -463,7 +463,7 @@ class StylometryAnalyzer:
             total_sentences=total_sentences,
             text_length=text_length,
             created_at=created_at,
-        )
+    )
 
     # ------------------------------------------------------------------
     # Dimension comparison helpers
@@ -495,7 +495,7 @@ class StylometryAnalyzer:
             ratio_len = min(
                 profile_a.avg_sentence_length / profile_b.avg_sentence_length,
                 profile_b.avg_sentence_length / profile_a.avg_sentence_length,
-            )
+    )
             ratios.append(ratio_len * 0.5)
 
         # Sentence complexity similarity
@@ -509,7 +509,7 @@ class StylometryAnalyzer:
             ratio_wl = min(
                 profile_a.avg_word_length / profile_b.avg_word_length,
                 profile_b.avg_word_length / profile_a.avg_word_length,
-            )
+    )
             ratios.append(ratio_wl * 0.2)
 
         return sum(ratios) if ratios else 0.0

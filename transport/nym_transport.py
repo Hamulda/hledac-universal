@@ -146,7 +146,7 @@ class NymTransport(Transport):
                     self.nym_client_path, '--id', 'hledac', '--config-dir',
                     str(self.data_dir), '--port', str(self.websocket_port),
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                )
+    )
             except FileNotFoundError:
                 logger.info('[Nym] nym-client not found at %s — transport disabled', self.nym_client_path)
                 self.available = False
@@ -423,7 +423,7 @@ class NymTransport(Transport):
                 payload=message.get('data', {}).get('payload', {}),
                 signature=message.get('data', {}).get('signature', ''),
                 msg_id=msg_id,
-            )
+    )
             try:
                 async with asyncio.timeout(timeout):
                     await reply_event.wait()

@@ -78,7 +78,7 @@ class TestManifestGeneration:
         assert _MANIFEST_PATH.exists(), (
             f"Manifest not found at {_MANIFEST_PATH}. "
             "Run: python rust_extensions/ffi_type_manifest.py"
-        )
+    )
     
     def test_manifest_version(self, manifest):
         """Manifest should have correct version."""
@@ -139,7 +139,7 @@ class TestPyClassSlots:
                     assert field["name"] in slots, (
                         f"Field {field['name']} in {full_name} has has_get=True "
                         f"but is not in slots list"
-                    )
+    )
 
 
 class TestFunctionSignatures:
@@ -174,7 +174,7 @@ class TestPyiGeneration:
         assert _PYI_PATH.exists(), (
             f"PYI stub not found at {_PYI_PATH}. "
             "Run: python rust_extensions/ffi_type_manifest.py"
-        )
+    )
     
     def test_pyi_header_comments(self, pyi_content):
         """PYI should have auto-generation header."""
@@ -194,7 +194,7 @@ class TestPyiGeneration:
             class_name = class_data["name"]
             assert f"class {class_name}:" in pyi_content, (
                 f"Class {class_name} not found in .pyi stub"
-            )
+    )
     
     def test_pyi_function_definitions(self, pyi_content, manifest):
         """PYI should contain function definitions for all PyFunctions."""
@@ -207,7 +207,7 @@ class TestPyiGeneration:
             # Function may be prefixed with 'async '
             assert f"def {func_name}(" in pyi_content or f"async def {func_name}(" in pyi_content, (
                 f"Function {func_name} not found in .pyi stub"
-            )
+    )
 
 
 # ============================================================================
@@ -225,13 +225,13 @@ class TestBuildIntegration:
             capture_output=True,
             text=True,
             timeout=60
-        )
+    )
         
         assert result.returncode == 0, (
             f"ffi_type_manifest.py failed:\n"
             f"stdout: {result.stdout}\n"
             f"stderr: {result.stderr}"
-        )
+    )
     
     def test_stub_validator_runs(self):
         """stub_validator.py should run without errors."""
@@ -240,7 +240,7 @@ class TestBuildIntegration:
             capture_output=True,
             text=True,
             timeout=10
-        )
+    )
         
         # stub_validator.py is a module, so we just check it can be imported
         # The actual validation runs in CI via maturin hook
@@ -282,7 +282,7 @@ class TestRuntimeSlotsValidation:
                 
                 assert hasattr(ext, class_name), (
                     f"Class {class_name} not found in compiled extension"
-                )
+    )
         except ImportError:
             pytest.skip("Extension not available")
     
@@ -302,7 +302,7 @@ class TestRuntimeSlotsValidation:
                 
                 assert hasattr(ext, func_name), (
                     f"Function {func_name} not found in compiled extension"
-                )
+    )
         except ImportError:
             pytest.skip("Extension not available")
 
@@ -327,7 +327,7 @@ class TestTypeCompatibility:
         
         assert len(unknown_types) == 0, (
             f"Found fields with unknown types: {unknown_types}"
-        )
+    )
     
     def test_validation_rules_present(self, manifest):
         """Manifest should contain validation rules."""
@@ -352,7 +352,7 @@ class TestCLI:
             capture_output=True,
             text=True,
             timeout=10
-        )
+    )
         
         assert result.returncode == 0
         assert "FFI contract validator" in result.stdout
@@ -372,10 +372,10 @@ class TestMaturinHook:
         
         assert "develop-hooks" in content, (
             "pyproject.toml missing [tool.maturin.develop-hooks]"
-        )
+    )
         assert "ffi_validate" in content, (
             "pyproject.toml missing ffi_validate hook"
-        )
+    )
     
     def test_hook_command_correct(self):
         """Hook command should reference stub_validator.maturin_develop_hook."""
@@ -384,7 +384,7 @@ class TestMaturinHook:
         
         assert "stub_validator.maturin_develop_hook" in content, (
             "Hook command should call stub_validator.maturin_develop_hook"
-        )
+    )
 
 
 # ============================================================================

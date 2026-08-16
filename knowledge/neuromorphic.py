@@ -17,7 +17,6 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from enum import Enum
@@ -111,7 +110,7 @@ class MemoryPattern(Struct):
     neuron_activations: Any  # np.ndarray at runtime
     timestamp: float
     strength: float = 1.0
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
     def decay(self, decay_rate: float = 0.01) -> None:
         """Apply exponential decay to memory strength."""
@@ -208,7 +207,7 @@ class NeuromorphicMemoryManager:
             "NeuromorphicMemoryManager initialized: %s neurons, %.1f%% connectivity",
             n_neurons,
             connectivity * 100,
-        )
+    )
 
     def _init_synaptic_weights(self, n_neurons: int, connectivity: float) -> Any:
         """Initialize sparse synaptic weight matrix."""
@@ -228,7 +227,7 @@ class NeuromorphicMemoryManager:
             weights = _sp.csr_matrix(
                 (data.astype(_np.float32), (rows, cols)),
                 shape=(n_neurons, n_neurons),
-            )
+    )
             # Symmetrize
             weights = (weights + weights.T) / 2
             # No self-connections
@@ -335,7 +334,7 @@ class NeuromorphicMemoryManager:
             timestamp=time.time(),
             strength=1.0,
             metadata={"zone": zone.value},
-        )
+    )
 
         self._patterns[pattern_id] = pattern
 

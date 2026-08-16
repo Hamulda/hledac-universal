@@ -55,7 +55,7 @@ def _open_lmdb_env() -> Any | None:
             map_size=2 * 1024 * 1024,  # 2 MB — 500 entries max
             readahead=False,
             critical=True,  # POTENTIAL-1 Fix: auth cookies need durability
-        )
+    )
         return env
     except Exception:  # noqa: BLE001 — fail-soft
         return None
@@ -244,7 +244,7 @@ class ClearanceCookieJar:
                 len(cookies),
                 domain,
                 ttl,
-            )
+    )
             return True
 
         except Exception:  # noqa: BLE001 — fail-soft
@@ -260,7 +260,7 @@ class ClearanceCookieJar:
             domain,
             {"datadome": datadome_cookie},
             ttl_s=self.DATADOME_TTL_S,
-        )
+    )
 
     def delete(self, domain: str) -> bool:
         """Delete cookies for domain."""

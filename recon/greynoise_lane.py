@@ -30,7 +30,7 @@ from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     domain_breaker_record_failure,
     domain_breaker_record_success,
-)
+    )
 from hledac.universal.utils.asyncx import bounded_parallel_map
 from hledac.universal.utils.rate_limiters import get_limiter
 
@@ -175,7 +175,7 @@ async def query_greynoise_ip(
                                 ts=ts_now,
                                 provenance=("greynoise_intel", ip, "not_found"),
                                 payload_text=f"{ip} classification=not_found message='IP not in GreyNoise database'",
-                            )
+    )
                         ], {}
                     if resp.status_code == 429:
                         logger.warning("[GREYNOISE] Community API rate limit hit")

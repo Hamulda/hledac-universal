@@ -114,7 +114,7 @@ class DiscoveryStage:
             if public_bootstrap_enabled:
                 from hledac.universal.pipeline.live_public_pipeline import (
                     generate_bootstrap_urls,
-                )
+    )
                 bootstrap_urls = generate_bootstrap_urls(query, max_urls=_MAX_BOOTSTRAP_URLS)
                 telemetry["bootstrap_candidates"] = len(bootstrap_urls)
                 for url in bootstrap_urls:
@@ -187,7 +187,7 @@ class DiscoveryStage:
             discovery_scores=discovery_scores,
             fetch_blocked_reasons=fetch_blocked_reasons,
             errors=errors,
-        )
+    )
 
         return batch, telemetry
 
@@ -199,7 +199,7 @@ def _generate_rescue_hits(query: str, max_urls: int = 8) -> list[Any]:
         from hledac.universal.pipeline.live_public_pipeline import (
             _is_threat_query,
             generate_rescue_urls,
-        )
+    )
 
         if not _is_threat_query(query):
             return []

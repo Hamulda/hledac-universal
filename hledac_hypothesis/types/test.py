@@ -10,13 +10,17 @@ Extracted from hledac_hypothesis._types (C4 Sprint Refactoring).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, UTC
 from enum import Enum
 from typing import Any
 
 import msgspec
-from dataclasses import dataclass, field
 from _core import aclose
+
+
+def _utc_now() -> datetime:
+    """Module-level factory for UTC now — required for msgspec default_factory."""
+    return datetime.now(UTC)
 
 
 class TestType(Enum):
@@ -35,9 +39,9 @@ class TestResult(msgspec.Struct, gc=False):
     test_type: str
     result: str  # passed, failed, inconclusive
     confidence: float
-    evidence_collected: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.now)
+    evidence_collected: list[str] = msgspec.field(default_factory=list)
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
+    timestamp: datetime = msgspec.field(default_factory=_utc_now)
 
     def __post_init__(self) -> None:
         if isinstance(self.timestamp, str):
@@ -53,12 +57,6 @@ class TestDesign(msgspec.Struct, gc=False):
     expected_outcome_if_false: str = ""
     priority: float = 0.5  # 0-1, higher = test sooner
     cost_estimate: float = 1.0  # Estimated computational cost
-
-
-def _utc_now() -> datetime:
-    """Module-level factory for UTC now — required for msgspec default_factory."""
-    from datetime import UTC
-    return datetime.now(UTC)
 
 
 class FalsificationResult(msgspec.Struct, gc=False):

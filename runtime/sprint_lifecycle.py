@@ -185,7 +185,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
             f"See future_owner in docstring for migration path.",
             DeprecationWarning,
             stacklevel=3,
-        )
+    )
 
     def add_phase_exit_callback(
         self,
@@ -242,7 +242,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
             raise InvalidPhaseTransitionError(
                 f"Cannot transition from {self._current_phase.name} to {phase.name}. "
                 f"Phases must advance monotonically."
-            )
+    )
         self._transition_to_unlocked(phase, now)
 
     # ── tick ─────────────────────────────────────────────────────────────────
@@ -345,7 +345,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
                     self._active_phase_elapsed_s,
                     self._cognitive_saturation_detector._unique_reports,
                     self._cognitive_saturation_detector._count_unique_in_window(now),
-                )
+    )
                 return True
         except Exception:
             pass
@@ -429,7 +429,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
                     "remaining=%.1fs, effective_trigger=%.1fs, "
                     "pre_loop_cost=%.1fs, windup_lead=%.1fs.",
                     remaining, _effective_trigger, self.pre_loop_cost_s, self.windup_lead_s
-                )
+    )
                 return False
         # DEBUG: Log if remaining is unexpectedly high (potential bug)
         if remaining > self.sprint_duration_s * 0.9:
@@ -439,7 +439,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
                 "effective_trigger=%.1fs",
                 id(self), self.first_cycle_ran,
                 remaining, self.sprint_duration_s, _effective_trigger
-            )
+    )
         return remaining <= _effective_trigger
 
     def set_first_cycle_ran(self) -> None:
@@ -502,7 +502,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         if self._current_phase != SprintPhase.WINDUP:
             raise InvalidPhaseTransitionError(
                 f"EXPORT may only follow WINDUP, not {self._current_phase.name}."
-            )
+    )
         self._export_started = True
         self._transition_to_unlocked(SprintPhase.EXPORT, now)
 
@@ -512,7 +512,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
             raise InvalidPhaseTransitionError(
                 f"TEARDOWN may only follow EXPORT or WINDUP (abort), "
                 f"not {self._current_phase.name}."
-            )
+    )
         self._teardown_started = True
         self._transition_to_unlocked(SprintPhase.TEARDOWN, now)
 
@@ -780,7 +780,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
             "current_phase == SprintPhase.ACTIVE. See future_owner in docstring for migration path.",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         return self._current_phase == SprintPhase.ACTIVE
 
     # ── COMPAT: is_winding_down property ─────────────────────────────────────
@@ -810,7 +810,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
             "See future_owner in docstring for migration path.",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         return self._current_phase in (
             SprintPhase.WINDUP,
             SprintPhase.EXPORT,

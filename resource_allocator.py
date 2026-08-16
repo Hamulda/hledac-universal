@@ -30,8 +30,8 @@ import time
 from dataclasses import dataclass
 import msgspec
 from typing import Any, Self
-from hledac.universal.core.psutil_shim import PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
-from hledac.universal.core.psutil_shim import process as _process
+from hledac.universal._core.psutil_shim import PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
+from hledac.universal._core.psutil_shim import process as _process
 from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB, UmaBudget
 from hledac.universal.fetching.memory_budget_gate import _rss_gib as _cached_rss_gib
 from hledac.universal.utils.config_introspection import safe_attr_get
@@ -200,11 +200,11 @@ class ResourceAllocator:
                 logger.critical(
                     f"[MEM-UMA-002-HARD] RSS {current_rss:.2f} GiB >= HARD limit "
                     f"({self.RSS_HARD_LIMIT_GIB} GiB)"
-                )
+    )
                 raise MemoryError(
                     f"M1 8GB SWAP limit: RSS={current_rss:.2f}GiB >= "
                     f"{self.RSS_HARD_LIMIT_GIB}GiB"
-                )
+    )
 
             # SOFT LIMIT: >= THRESHOLD_WARN ~5.94 GiB — reduce concurrency by 50%
             if current_rss >= self.RSS_SOFT_LIMIT_GIB:
@@ -219,17 +219,17 @@ class ResourceAllocator:
                         f"[MEM-UMA-002-SOFT] RSS {current_rss:.2f} GiB >= SOFT limit "
                         f"({self.RSS_SOFT_LIMIT_GIB} GiB) — reduced concurrency "
                         f"{old_limit} -> {new_limit}"
-                    )
+    )
                 # Cancel lowest priority task to free memory immediately
                 if self.active_requests:
                     lowest = max(
                         self.active_requests.values(), key=attrgetter("priority")
-                    )
+    )
                     self.cancel(lowest.request_id)
                     logger.info(
                         f"[MEM-UMA-002-SOFT] Cancelled {lowest.request_id} "
                         f"to free memory (RSS: {current_rss:.2f} GiB)"
-                    )
+    )
         except MemoryError:
             raise
         except Exception:  # noqa: BLE001 — best-effort; throttling failure is non-fatal
@@ -254,12 +254,12 @@ class ResourceAllocator:
                 logger.critical(
                     f"[MEM-UMA-002-HARD] RSS {current_rss:.2f} GiB >= HARD limit "
                     f"({self.RSS_HARD_LIMIT_GIB} GiB) — emergency heap flush"
-                )
+    )
                 await self._emergency_heap_flush()
                 raise MemoryError(
                     f"M1 8GB SWAP limit exceeded: RSS={current_rss:.2f}GiB >= "
                     f"{self.RSS_HARD_LIMIT_GIB}GiB. Sprint abort required."
-                )
+    )
 
             # SOFT LIMIT: throttle with hysteresis-based recovery
             if current_rss >= self.RSS_SOFT_LIMIT_GIB:
@@ -281,7 +281,7 @@ class ResourceAllocator:
                         f"[MEM-UMA-002-RECOVER] RSS {current_rss:.2f} GiB < "
                         f"{self.RSS_SOFT_LIMIT_GIB - hysteresis_gap:.1f} GiB "
                         f"(hysteresis). Restored concurrency (was level={old_level})"
-                    )
+    )
         except MemoryError:
             raise
         except Exception:  # noqa: BLE001 — best-effort; throttling failure is non-fatal
@@ -318,7 +318,7 @@ class ResourceAllocator:
                     final_rss = proc.memory_info().rss / (1024 ** 3)
                     logger.info(
                         f"[MEM-UMA-002] Emergency flush done. RSS: {final_rss:.2f} GiB"
-                    )
+    )
         except Exception as e:  # noqa: BLE001 — best-effort; flush failure is non-fatal
             logger.error(f"[MEM-UMA-002] Emergency heap flush failed: {e}")
 
@@ -547,5 +547,5 @@ def clear_mlx_cache_if_needed(threshold_mb: float=500.0) -> bool:
         pass
     return False
 from hledac.universal.utils.concurrency import FETCH_SEMAPHORE, adjust_fetch_workers
-from core import aclose
+from _core import aclose
 __all__ = ['FETCH_SEMAPHORE', 'adjust_fetch_workers', 'AdaptiveSemaphore']

@@ -85,7 +85,7 @@ class ScanStage:
             matched_pattern_labels=matched_pattern_labels,
             entry_dedup_hits=[False] * len(input_batch.entry_urls),  # filled by dedup stage
             errors=errors,
-        )
+    )
 
         return batch, telemetry
 
@@ -96,7 +96,7 @@ class ScanStage:
             matched_pattern_labels=[],
             entry_dedup_hits=[],
             errors=[],
-        )
+    )
 
 
 def _get_rust_feed_domain() -> Any | None:
@@ -127,7 +127,7 @@ async def _rust_scan_batch(
                 text,
                 entry_url,
                 idx,
-            )
+    )
             # Result is (entry_idx, entry_url, combined_hits, 0, 0, assembly_phase)
             if result and len(result) >= 3:
                 combined_hits = result[2]

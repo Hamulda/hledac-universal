@@ -103,7 +103,7 @@ async def main():
                         title=result.get("title"),
                         source=result.get("source", "searxng"),
                         relevance_score=result.get("score", 0.0),
-                    )
+    )
                     total_findings += 1
                 except Exception as e:
                     print(f"    ! shadow_record_finding error: {e}")

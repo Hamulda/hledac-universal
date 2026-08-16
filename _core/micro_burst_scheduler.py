@@ -143,7 +143,7 @@ class MicroBurstScheduler:
         logger.debug(
             '[PHYSICS-01] MicroBurstScheduler started: GPU=%.0fms IO=%.0fms cycle=%.0fms',
             _BURST_GPU_MS, _BURST_IO_MS, _BURST_CYCLE_MS,
-        )
+    )
 
     def get_phase(self) -> BurstPhase:
         """
@@ -199,7 +199,7 @@ class MicroBurstScheduler:
         logger.debug(
             '[PHYSICS-01] Phase: %s → %s (transition #%d)',
             old_phase.name, new_phase.name, self._phase_transitions,
-        )
+    )
 
     def reset(self) -> None:
         """Reset to initial state (for testing or sprint re-initialisation)."""

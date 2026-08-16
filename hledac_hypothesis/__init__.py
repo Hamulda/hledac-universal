@@ -52,11 +52,7 @@ logger = logging.getLogger(__name__)
 # ── Eager: only type constants and lane registry (no MLX/numpy/DSPy) ───────────
 from hledac.universal.runtime.lane_registry import LANE_REGISTRY
 
-
-
-
-
-
+from ._types import (
     CO_OCCURRENCE_FP16,
     MAX_CAUSAL_ENTITIES,
     MAX_CAUSAL_FINDINGS,
@@ -86,8 +82,7 @@ from hledac.universal.runtime.lane_registry import LANE_REGISTRY
 )
 
 # ── Lazy __getattr__ — all submodules loaded on first use ──────────────────────
-
-from _core import aclose_SUPMOD_LAZY: tuple[str, ...] = (
+_SUPMOD_LAZY: tuple[str, ...] = (
     "AdversarialVerifier",
     "CausalReasoner",
     "SimpleNodeAblationExplainer",

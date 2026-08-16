@@ -91,7 +91,7 @@ class TestF21PhashFallback:
         hamming_different = int(np.sum(va != vd))
         assert hamming_different > hamming_similar, (
             f"different pair ({hamming_different}) should exceed similar pair ({hamming_similar})"
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_encode_batch_fallback_uses_phash(self, mock_governor):

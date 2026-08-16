@@ -443,12 +443,12 @@ class ProfileGenerator:
             platform=platform,
             profile_id="",
             generated_at=0.0,
-        )
+    )
         profile = msgspec.structs.replace(
             profile,
             profile_id=profile.fingerprint_hash(),
             generated_at=time.time(),
-        )
+    )
 
         self._current_profile = profile
         self._profile_timestamp = time.time()
@@ -597,7 +597,7 @@ class _EvasionScriptGenerator:
             script=script,
             fingerprint_hash=self._fp_hash,
             version=version,
-        )
+    )
 
     # ═══════════════════════════════════════════════════════════════════
     # APEX-1005: Canvas — CSPRNG + Box-Muller Gaussian noise

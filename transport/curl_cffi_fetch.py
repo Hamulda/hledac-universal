@@ -132,7 +132,7 @@ from ._tcp_keepalive import (
     KEEPALIVE_IDLE_S,
     KEEPALIVE_INTERVAL_S,
     KEEPALIVE_MAX_PROBES,
-)
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +271,7 @@ def _route_tld_to_proxy(url: str, proxies: dict[str, str] | None) -> dict[str, s
             f"a Clearnet connection with local DNS resolution = DEANONYMIZATION. "
             f"Fix: Ensure TorTransport or I2PTransport passes proxies={{'http':_TOR_CURL_PROXY,"
             f"'https':_TOR_CURL_PROXY}} for .onion URLs, or configure I2P proxy for .i2p."
-        )
+    )
 
     # Verify both http and https schemes are configured for darknet
     # (Darknet can be accessed via http://...onion even if URL uses http://)
@@ -281,7 +281,7 @@ def _route_tld_to_proxy(url: str, proxies: dict[str, str] | None) -> dict[str, s
             f"proxies={proxies} — missing 'http' and/or 'https' scheme. "
             f"Darknet URLs can be http:// or https:// and require both schemes. "
             f"Fix: proxies={{'http':proxy_url,'https':proxy_url}}"
-        )
+    )
 
     # Validate proxy URL uses socks5h:// (critical for DNS security)
     for scheme in ("http", "https"):
@@ -292,7 +292,7 @@ def _route_tld_to_proxy(url: str, proxies: dict[str, str] | None) -> dict[str, s
                     f"MODERN-02: Darknet URL '{url}' using non-socks5h proxy "
                     f"'{proxy_url}' for scheme '{scheme}'. This may cause local DNS "
                     f"resolution. Recommended: socks5h:// for DNS-on-proxy semantics."
-                )
+    )
 
     return proxies
 
@@ -515,7 +515,7 @@ def _ja3_log(*, profile: str, url: str, used_profile: str) -> None:
             profile,
             used_profile,
             url,
-        )
+    )
     except Exception:  # noqa: BLE001
         pass
 
@@ -648,12 +648,12 @@ def _run_eviction_pass(now: float) -> _EvictionMetrics:
                 safe_create_task(
                     session.aclose(),
                     name=f"curl_cffi:evict:profile:{profile}",
-                )
+    )
             elif hasattr(session, "aclose"):
                 safe_create_task(
                     session.aclose(),
                     name=f"curl_cffi:evict:profile:{profile}",
-                )
+    )
             metrics.profile_evicted += 1
 
     # ── Host sessions (age based) ───────────────────────────────────────────
@@ -670,12 +670,12 @@ def _run_eviction_pass(now: float) -> _EvictionMetrics:
             safe_create_task(
                 session.aclose(),
                 name=f"curl_cffi:evict:host:{cache_key[0]}",
-            )
+    )
         elif hasattr(session, "aclose"):
             safe_create_task(
                 session.aclose(),
                 name=f"curl_cffi:evict:host:{cache_key[0]}",
-            )
+    )
         metrics.host_evicted += 1
 
     # ── Resolved sessions (age based) ────────────────────────────────────────
@@ -692,12 +692,12 @@ def _run_eviction_pass(now: float) -> _EvictionMetrics:
             safe_create_task(
                 session.aclose(),
                 name=f"curl_cffi:evict:resolved:{cache_key[0]}",
-            )
+    )
         elif hasattr(session, "aclose"):
             safe_create_task(
                 session.aclose(),
                 name=f"curl_cffi:evict:resolved:{cache_key[0]}",
-            )
+    )
         metrics.resolved_evicted += 1
 
     return metrics
@@ -770,7 +770,7 @@ async def _eviction_loop() -> None:
             logger.debug(
                 "[NEXUS-018-010] Session eviction error (continuing)",
                 exc_info=True,
-            )
+    )
 
 
 def _ensure_eviction_started() -> None:
@@ -852,7 +852,7 @@ async def _get_or_create_resolved_session(
                         safe_create_task(
                             session.aclose(),
                             name=f"curl_cffi:resolved_expire:{host}",
-                        )
+    )
                 except Exception:  # noqa: BLE001
                     pass
                 del _resolved_sessions[cache_key]
@@ -880,7 +880,7 @@ async def _get_or_create_resolved_session(
             timeout=timeout_s,
             max_clients=10,
             curl_options=_session_curl_options,
-        )
+    )
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001
@@ -899,7 +899,7 @@ async def _get_or_create_resolved_session(
                         safe_create_task(
                             old_session.aclose(),
                             name=f"curl_cffi:resolved_evict:{oldest_key[0]}",
-                        )
+    )
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -1122,7 +1122,7 @@ async def async_get_curl_cffi_session_for_host(
                         safe_create_task(
                             session.aclose(),
                             name=f"curl_cffi:host_expire:{host}",
-                        )
+    )
                 except Exception:  # noqa: BLE001
                     pass
                 del _host_sessions[cache_key]
@@ -1145,7 +1145,7 @@ async def async_get_curl_cffi_session_for_host(
                         safe_create_task(
                             old_session.aclose(),
                             name=f"curl_cffi:host_evict:{oldest_key[0]}",
-                        )
+    )
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -1227,7 +1227,7 @@ async def _get_or_create_session(profile: str) -> Any | None:
                 logger.debug(
                     f"[NEXUS-018-01] WebKit HTTP/2 preset applied for: {profile} "
                     f"(INITIAL_WINDOW_SIZE=4194304, no_priority=True)"
-                )
+    )
             
             _session_kwargs: dict[str, Any] = {
                 "impersonate": profile,
@@ -1374,7 +1374,7 @@ async def _create_curl_session(
         try:
             session, used_profile = await _get_or_create_resolved_session(
                 resolve, profile, timeout_s
-            )
+    )
             _ja3_log(profile=profile, url=url, used_profile=used_profile)
             return session, used_profile, None
         except asyncio.CancelledError:
@@ -1387,12 +1387,12 @@ async def _create_curl_session(
                 network_error_kind="other",
                 selected_transport="curl_cffi",
                 tls_impersonate=profile,
-            )
+    )
     else:
         try:
             ok, session, used_profile, _host = await async_get_curl_cffi_session_for_host(
                 url, profile
-            )
+    )
             _ja3_log(profile=profile, url=url, used_profile=used_profile)
             if not ok or session is None:
                 return None, used_profile, _make_error_result(
@@ -1402,7 +1402,7 @@ async def _create_curl_session(
                     network_error_kind="other",
                     selected_transport="curl_cffi",
                     tls_impersonate=used_profile,
-                )
+    )
             return session, used_profile, None
         except asyncio.CancelledError:
             raise
@@ -1414,7 +1414,7 @@ async def _create_curl_session(
                 network_error_kind="other",
                 selected_transport="curl_cffi",
                 tls_impersonate=profile,
-            )
+    )
 
 
 # F350M-R: Extracted response processing helper for fetch_via_curl_cffi
@@ -1509,7 +1509,7 @@ def _archive_warc_response(
                 timestamp=_warc_ts,
                 http_response=content_bytes,
                 content_type="application/http;msgtype=response",
-            )
+    )
             if _warc_prov is not None:
                 _warc_archived = True
                 # ISSUE F5-FIX: Persist full byte-seek tuple for court-admissible replay
@@ -1554,7 +1554,7 @@ async def _retry_on_eaddrinuse(
                 logger.debug(
                     f"[ISSUE-P6-001] EADDRINUSE (Errno {_EADDRINUSE_ERRNO}) for {url} — "
                     f"retrying after {backoff_s:.2f}s (attempt {attempt + 1}/{_MAX_EADDRINUSE_RETRIES})"
-                )
+    )
                 await asyncio.sleep(backoff_s)
                 continue
             raise
@@ -1580,7 +1580,7 @@ def _handle_ja3_ban(
             f"[F-02] JA3 ban (HTTP {status}) for {url} — "
             f"retrying with rotated profile (attempt {attempt + 1}/{_MAX_JA3_RETRIES}) "
             f"after {backoff_s:.1f}s backoff"
-        )
+    )
         return backoff_s
     return None
 
@@ -1672,7 +1672,7 @@ async def _fetch_with_ja3_retry(
             proxies=proxies,
             http_version=http_version,
             resolve=resolve,
-        )
+    )
 
         if should_retry and backoff_s is not None:
             last_result = result
@@ -1728,10 +1728,10 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
             _cache_get,
             _cache_put,
             _resolve_enabled,
-        )
+    )
         from .http3_lane import (
             extract_host as _http3_extract_host,
-        )
+    )
 
         _use_extract_host = url_ops.extract_host if hasattr(url_ops, "extract_host") else _http3_extract_host
     except Exception:  # noqa: BLE001
@@ -1757,7 +1757,7 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
             timeout=4.0,
             max_clients=2,
             curl_options=_session_curl_options,
-        )
+    )
         try:
             # ISSUE-044: asyncio.wait_for → asyncio.timeout (Python 3.11+)
             # PEP 654 asyncio.TimeoutError is NOT subclass of CancelledError,
@@ -1800,7 +1800,7 @@ def decode_curl_cffi_result(result: dict, *, max_bytes: int = 5 * 1024 * 1024) -
             content,
             http_charset=result.get("http_charset_hint"),
             max_bytes=max_bytes,
-        )
+    )
     except Exception as e:  # noqa: BLE001
         logger.debug("decode_curl_cffi_result failed (fail-soft): %s", e)
         return None
@@ -1849,7 +1849,7 @@ async def fetch_via_tor_curl_cffi(
                     network_error_kind="validation_error",
                     selected_transport="tor_curl_cffi",
                     tls_impersonate=profile,
-                )
+    )
         except Exception:  # noqa: BLE001
             # rust_extensions unavailable (build not present) — skip validation
             pass
@@ -1880,7 +1880,7 @@ async def fetch_via_tor_curl_cffi(
                 profile=profile,
                 proxies=proxies,
                 ttl_s=3600,  # Darknet content: 1h freshness window
-            )
+    )
         except Exception:  # noqa: BLE001
             # Fallback to uncached on any error
             pass
@@ -1938,7 +1938,7 @@ async def fetch_via_i2p_curl_cffi(
                 profile=profile,
                 proxies=proxies,
                 ttl_s=7200,  # I2P content: 2h freshness window (more stable than Tor)
-            )
+    )
         except Exception:  # noqa: BLE001
             # Fallback to uncached on any error
             pass
@@ -1992,7 +1992,7 @@ async def fetch_via_curl_cffi(
             logger.info(
                 '[NEXTGEN-02] Fetch SKIPPED — domain already abandoned: %s reason=%s url=%s',
                 _domain, _reason, url,
-            )
+    )
             return _make_error_result(
                 url,
                 error=f"domain_abandoned:{_reason}",
@@ -2000,7 +2000,7 @@ async def fetch_via_curl_cffi(
                 network_error_kind="abandoned",
                 selected_transport="curl_cffi",
                 tls_impersonate=profile,
-            )
+    )
 
     # NEXTGEN-02: Rust anti_analysis quick probe (if available)
     try:
@@ -2020,7 +2020,7 @@ async def fetch_via_curl_cffi(
                     '[NEXTGEN-02] Fetch ABANDONED — anti_analysis detected challenge: '
                     'url=%s evasion_type=%s confidence=%.2f reason=%s',
                     url, _probe_result.evasion_type, _confidence, _evasion_reason,
-                )
+    )
                 return _make_error_result(
                     url,
                     error=f"anti_analysis_abandoned:{_evasion_reason}",
@@ -2028,7 +2028,7 @@ async def fetch_via_curl_cffi(
                     network_error_kind="challenge_detected",
                     selected_transport="curl_cffi",
                     tls_impersonate=profile,
-                )
+    )
     except ImportError:
         # Rust anti_analysis not available — proceed without pre-fetch check
         pass
@@ -2047,7 +2047,7 @@ async def fetch_via_curl_cffi(
             network_error_kind="other",
             selected_transport="curl_cffi",
             tls_impersonate=profile,
-        )
+    )
 
     return await _fetch_with_ja3_retry(
         url=url,
@@ -2303,7 +2303,7 @@ async def fetch_via_curl_cffi_cached(
                 sha256=sha_hex,
                 status_code=status,
                 content_type=content_type,
-            )
+    )
         except Exception:  # noqa: BLE001
             pass
     return result
@@ -2364,7 +2364,7 @@ async def _execute_curl_fetch_attempt(
                 ),
                 False,
                 None,
-            )
+    )
 
         result = _process_curl_response(response, max_bytes, url, used_profile)
 
@@ -2432,7 +2432,7 @@ async def dns_resolve_via_rust(hostname: str, qtype: str = "A") -> list[str]:
                 None,
                 family=socket.AF_UNSPEC,
                 type=socket.SOCK_STREAM,
-            )
+    )
         except Exception:  # noqa: BLE001
             return []
 

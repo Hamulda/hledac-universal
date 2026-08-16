@@ -1,9 +1,9 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-08-14T12:32:19.096479+00:00",
+  "generated_at": "2026-08-16T15:33:43.565507+00:00",
   "capability": "NEXTGEN-05",
   "description": "Build-time FFI type-safety manifest",
-  "__source_hash__": "ed1f38cda823443379199623c1055cb7478f7bc43182353a0440f1675bd2b64b",
+  "__source_hash__": "9e540f8b52c10caab6289ad1ed5a2442229f862ca09cf8e3d3af2b99956daa67",
   "classes": {
     "warc_parser.WarcCertificate": {
       "module": "warc_parser",

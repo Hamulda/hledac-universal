@@ -18,11 +18,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-
-
-
-
-
+from hledac.universal.cache.adaptive_cache import (
     AdaptiveCache,
     AdaptiveCacheConfig,
     CacheStats,
@@ -42,7 +38,6 @@ import pytest
 class TestAdaptiveCacheConfig:
     """Test AdaptiveCacheConfig defaults."""
 
-from _core import aclose
     def test_default_config(self):
         config = AdaptiveCacheConfig()
         assert config.max_bytes_normal == _MAX_CACHE_BYTES_NORMAL

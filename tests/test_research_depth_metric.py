@@ -30,18 +30,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
-
-
-
-
+from hledac.universal.export.sprint_exporter import (
     _SOURCE_TIER,
     _compute_research_depth,
 )
 
 # =============================================================================
-
-from _core import aclose# Contract: output shape is stable
+# Contract: output shape is stable
 # =============================================================================
 
 

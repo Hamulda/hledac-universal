@@ -201,13 +201,13 @@ class BoundedInferencePipeline:
         # ── Bounded channels (backpressure) ──
         self._input_queue: asyncio.Queue[PipelineItem] = asyncio.Queue(
             maxsize=_INPUT_QUEUE_MAX
-        )
+    )
         self._prep_to_inf: asyncio.Queue[PipelineItem] = asyncio.Queue(
             maxsize=_PREP_TO_INF_MAX
-        )
+    )
         self._inf_to_post: asyncio.Queue[PipelineItem] = asyncio.Queue(
             maxsize=_INF_TO_POST_MAX
-        )
+    )
 
         # ── Worker tasks (lazy, created on first submit) ──
         self._prep_tasks: list[asyncio.Task[None]] = []
@@ -253,7 +253,7 @@ class BoundedInferencePipeline:
             max_tokens=max_tokens,
             system_msg=system_msg,
             thinking=thinking,
-        )
+    )
         return await future
 
     async def submit_nonblocking(
@@ -288,7 +288,7 @@ class BoundedInferencePipeline:
             thinking=thinking,
             temperature=temperature if temperature is not None else 0.1,
             max_tokens=max_tokens if max_tokens is not None else 1024,
-        )
+    )
 
         # Backpressure: blocks when input queue is full
         await self._input_queue.put(item)
@@ -326,7 +326,7 @@ class BoundedInferencePipeline:
                     if not item.future.done():
                         item.future.set_exception(
                             RuntimeError('pipeline shutdown')
-                        )
+    )
                 except asyncio.QueueEmpty:
                     break
 
@@ -352,7 +352,7 @@ class BoundedInferencePipeline:
                 logger.debug(
                     '[Pipeline] shutdown timed out after %.1fs',
                     _PIPELINE_SHUTDOWN_S,
-                )
+    )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -376,17 +376,17 @@ class BoundedInferencePipeline:
         for i in range(_PREP_WORKERS):
             t = asyncio.create_task(
                 self._prep_worker(i), name=f'pipeline:prep-{i}'
-            )
+    )
             self._prep_tasks.append(t)
 
         self._inf_task = asyncio.create_task(
             self._inference_worker(), name='pipeline:inf'
-        )
+    )
 
         for i in range(_POST_WORKERS):
             t = asyncio.create_task(
                 self._post_worker(i), name=f'pipeline:post-{i}'
-            )
+    )
             self._post_tasks.append(t)
 
         self._started = True
@@ -394,7 +394,7 @@ class BoundedInferencePipeline:
             '[Pipeline] workers started: %d prep, 1 inf, %d post',
             _PREP_WORKERS,
             _POST_WORKERS,
-        )
+    )
 
     # ── Stage 1: Prep Workers ──────────────────────────────────────
 
@@ -430,7 +430,7 @@ class BoundedInferencePipeline:
                         'internal monologue inside <think> </think> tags, and '
                         'then provide your solution or response to the problem.'
                         '\n\n' + system
-                    )
+    )
 
                 # Run prep in dedicated thread pool
                 formatted, _, _, prefix_tokens = await loop.run_in_executor(
@@ -444,7 +444,7 @@ class BoundedInferencePipeline:
                     self._engine._prefix_cache_maxsize,
                     self._engine._prefix_cache_stats,
                     MAX_PROMPT_CHARS,
-                )
+    )
 
                 item.formatted_prompt = formatted
                 item.prompt_tokens = prefix_tokens
@@ -492,7 +492,7 @@ class BoundedInferencePipeline:
                     if not item.future.done():
                         item.future.set_exception(
                             RuntimeError('formatted_prompt is None')
-                        )
+    )
                     self._prep_to_inf.task_done()
                     self._stats['failed'] = int(self._stats['failed']) + 1
                     continue
@@ -500,7 +500,7 @@ class BoundedInferencePipeline:
                 try:
                     gen_tokens = self._engine._tokenizer.encode(
                         item.formatted_prompt
-                    )
+    )
                 except Exception:
                     gen_tokens = None
 
@@ -511,7 +511,7 @@ class BoundedInferencePipeline:
                         self._engine.config.context_window
                         - item.max_tokens
                         - 50
-                    )
+    )
                     if len(gen_tokens) > _max_total:
                         _max_prompt_tokens = max(1, _max_total)
                         _max_chars = int(_max_prompt_tokens * 3.5)
@@ -523,22 +523,22 @@ class BoundedInferencePipeline:
                                 or 'You are a helpful research assistant.'
                             ),
                             user_msg=truncated,
-                        )
+    )
                         try:
                             gen_tokens = self._engine._tokenizer.encode(
                                 formatted
-                            )
+    )
                         except Exception:
                             gen_tokens = None
                         logger.warning(
                             '[Pipeline] TOKEN-OVERFLOW truncated → %d tokens',
                             len(gen_tokens) if gen_tokens else 0,
-                        )
+    )
 
                 # Resolve KV cache prefix
                 prefix_cache = self._engine._resolve_kv_cache(
                     item.system_msg, formatted
-                )
+    )
 
                 # Submit inference via routing layer (handles MLXWorkerThread
                 # / main-thread / ThreadPoolExecutor fallback automatically)
@@ -553,7 +553,7 @@ class BoundedInferencePipeline:
                     None,   # adapter_path
                     gen_tokens,
                     None,   # logits_processors
-                )
+    )
 
                 item.raw_text = result[0]  # (response, kv_cache_after)
                 item.inferred_at = time.monotonic()
@@ -574,11 +574,11 @@ class BoundedInferencePipeline:
             except TimeoutError:
                 logger.warning(
                     '[Pipeline] inference timeout for %s', item.request_id
-                )
+    )
                 if not item.future.done():
                     item.future.set_exception(
                         TimeoutError(f'inference timeout after {_INF_TIMEOUT_S}s')
-                    )
+    )
                 self._stats['failed'] = int(self._stats['failed']) + 1
             except Exception as e:
                 logger.debug('[Pipeline] inference error: %s', e)
@@ -612,7 +612,7 @@ class BoundedInferencePipeline:
                     if not item.future.done():
                         item.future.set_exception(
                             RuntimeError('raw_text is None')
-                        )
+    )
                     self._stats['failed'] = int(self._stats['failed']) + 1
                     self._inf_to_post.task_done()
                     continue
@@ -628,7 +628,7 @@ class BoundedInferencePipeline:
                 self._update_ema('total_avg_ms', total_ms)
                 self._stats['completed'] = (
                     int(self._stats['completed']) + 1
-                )
+    )
 
             except asyncio.CancelledError:
                 break
@@ -660,7 +660,7 @@ class BoundedInferencePipeline:
             f'prep_q={self._prep_to_inf.qsize()}, '
             f'post_q={self._inf_to_post.qsize()}'
             f')'
-        )
+    )
 
 
 __all__ = ['BoundedInferencePipeline', 'PipelineItem']

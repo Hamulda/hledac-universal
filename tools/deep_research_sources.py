@@ -55,7 +55,7 @@ async def rdap_lookup(domain: str, timeout_s: float = 8.0) -> dict | None:
         response = await session.get(
             RDAP_DOMAIN + quote(domain, safe=""),
             timeout=httpx.Timeout(timeout_s),
-        )
+    )
         if response.status_code >= 400:
             return None
         data: dict = await response.json()
@@ -93,7 +93,7 @@ async def urlscan_search(query: str, size: int = 10, timeout_s: float = 8.0) -> 
             params=params,
             headers=headers,
             timeout=httpx.Timeout(timeout_s),
-        )
+    )
         response.raise_for_status()
         data: dict = await response.json()
     except Exception:
@@ -113,5 +113,5 @@ async def urlscan_search(query: str, size: int = 10, timeout_s: float = 8.0) -> 
                 "provider": "urlscan_search",
                 "source": "urlscan",
             }
-        )
+    )
     return out

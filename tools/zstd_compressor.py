@@ -40,7 +40,7 @@ def _ensure_rust_dict_bindings() -> None:
             compress_page_dict,
             register_zstd_dict,
             unregister_zstd_dict,
-        )
+    )
         _rust_compress_dict = compress_page_dict
         _rust_register_dict = register_zstd_dict
         _rust_unregister_dict = unregister_zstd_dict

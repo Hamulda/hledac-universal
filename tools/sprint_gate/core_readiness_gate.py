@@ -172,13 +172,13 @@ def _compile_file(path: Path) -> CompileResult:
             path=str(path),
             ok=False,
             errors=[f"SyntaxError: {e.msg} at line {e.lineno}, offset {e.offset}"]
-        )
+    )
     except Exception as e:
         return CompileResult(
             path=str(path),
             ok=False,
             errors=[f"{type(e).__name__}: {e}"]
-        )
+    )
 
 
 def _compile_directory(root: Path) -> tuple[list[CompileResult], list[str]]:

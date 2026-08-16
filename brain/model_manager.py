@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
     from hledac.universal.brain.modernbert_adapter import ModernBertAdapter
     from hledac.universal.brain.coreml_embedder import CoreMLEmbedder
-    from hledac.universal.core.model_runtime import ModelLifecycle
+    from hledac.universal._core.model_runtime import ModelLifecycle
 
 from hledac.universal.brain.model_inference_guard import check_model_allowed, record_model_failure, record_model_success
 from hledac.universal.brain.quantization_selector import QuantizationSelector
@@ -47,7 +47,7 @@ T = TypeVar('T')
 # C1 FIX: Import from SSOT instead of hardcoded False
 # Uses importlib.metadata.version("mlx") detection — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 _MLXCEL_DETECTED: bool = False
 
 def _detect_mlxcel() -> bool:
@@ -357,8 +357,8 @@ class ModelManager:
         self._ane_embedder = None
         self._mlx_embedder = None
         self._model_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        from hledac.universal.core.psutil_shim import PSUTIL_AVAILABLE
-        from hledac.universal.core.psutil_shim import psutil as _ps
+        from hledac.universal._core.psutil_shim import PSUTIL_AVAILABLE
+        from hledac.universal._core.psutil_shim import psutil as _ps
         self._psutil = _ps
         self._psutil_available = PSUTIL_AVAILABLE
 
@@ -442,11 +442,11 @@ class ModelManager:
             RuntimeError: Pokud je memory pressure příliš vysoký.
         """
         try:
-            from hledac.universal.core.resource_governor import (
+            from hledac.universal._core.resource_governor import (
                 UMA_STATE_CRITICAL,
                 UMA_STATE_EMERGENCY,
                 sample_uma_status,
-            )
+    )
         except ImportError:
             return
         try:
@@ -672,7 +672,7 @@ class ModelManager:
         if model_type != ModelType.HERMES:
             return
         try:
-            from hledac.universal.core.resource_governor import sample_uma_status
+            from hledac.universal._core.resource_governor import sample_uma_status
             uma = sample_uma_status()
             selector = QuantizationSelector()
             budget = selector.select(uma, requested_model='hermes')
@@ -989,7 +989,7 @@ class ModelManager:
             f"5. ## Doporučení (Recommendations)\n"
             f"6. ## Metadata (timestamp, version)\n\n"
             f"Piš v češtině, buď konkrétní a stručný."
-        )
+    )
 
         async with self.acquire_model_ctx('hermes') as engine:
             try:
@@ -998,7 +998,7 @@ class ModelManager:
                     temperature=0.3,
                     max_tokens=2048,
                     system_msg='Jsi OSINT research assistant. Vytvářej strukturované reporty v češtině.',
-                )
+    )
             except Exception as e:
                 logger.warning(f'[GENERATE_REPORT] Generation failed: {e}')
                 report = f'# Report Generation Failed\n\nError: {e}'

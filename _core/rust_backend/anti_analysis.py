@@ -126,7 +126,7 @@ class _RustAntiAnalysisDomain:
         """
         return await self._ext.tls_fingerprint_challenge_detect_async(
             host, port, timeout_ms=timeout_ms, sni=sni
-        )
+    )
 
     async def http2_settings_anomaly_detect_async(
         self,
@@ -150,7 +150,7 @@ class _RustAntiAnalysisDomain:
         """
         return await self._ext.http2_settings_anomaly_detect_async(
             host, port, timeout_ms=timeout_ms
-        )
+    )
 
     async def early_honeypot_probe_async(
         self,
@@ -174,7 +174,7 @@ class _RustAntiAnalysisDomain:
         """
         return await self._ext.early_honeypot_probe_async(
             url, timeout_ms=timeout_ms, profile=profile
-        )
+    )
 
     def mark_host_abandoned(self, domain: str, reason: str) -> None:
         """
@@ -246,7 +246,7 @@ class _PythonAntiAnalysisDomain:
             confidence=0.0,
             evasion_type="none",
             probe_time_ms=0.0,
-        )
+    )
 
     async def tls_fingerprint_challenge_detect_async(
         self,
@@ -263,7 +263,7 @@ class _PythonAntiAnalysisDomain:
             ja4="",
             anomaly_flags=[],
             raw_indicators=[],
-        )
+    )
 
     async def http2_settings_anomaly_detect_async(
         self,
@@ -279,7 +279,7 @@ class _PythonAntiAnalysisDomain:
             expected_window_size=65535,
             actual_window_size=None,
             mismatch_details="",
-        )
+    )
 
     async def early_honeypot_probe_async(
         self,
@@ -298,7 +298,7 @@ class _PythonAntiAnalysisDomain:
             hidden_elements=0,
             probe_url=url,
             total_time_ms=0.0,
-        )
+    )
 
     def mark_host_abandoned(self, domain: str, reason: str) -> None:
         """No-op in Python fallback."""
@@ -310,7 +310,7 @@ class _PythonAntiAnalysisDomain:
             reason=None,
             abandoned_at=None,
             trust_score=1.0,
-        )
+    )
 
     def clear_abandoned_hosts(self) -> None:
         """No-op in Python fallback."""

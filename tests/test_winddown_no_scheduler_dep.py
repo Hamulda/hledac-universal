@@ -69,7 +69,7 @@ class TestSC07WinddownNoSchedulerDep:
         assert params == ["self", "ctx", "lifecycle", "query"], (
             f"run() signature changed: {params}. "
             "Must be (ctx, lifecycle, query) — no implicit scheduler coupling."
-        )
+    )
 
     def test_winddown_orchestrator_no_scheduler_coupling(self) -> None:
         """WinddownOrchestrator must not store or reference scheduler (SC-07).
@@ -83,7 +83,7 @@ class TestSC07WinddownNoSchedulerDep:
             assert attr != "_scheduler", (
                 f"Found _scheduler in __slots__: {WinddownOrchestrator.__slots__}. "
                 "SC-07 fix requires complete removal of scheduler coupling."
-            )
+    )
 
         # WinddownOrchestrator should be instantiable with no args
         orch = WinddownOrchestrator()

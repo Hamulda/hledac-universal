@@ -16,11 +16,7 @@ Pro nový kód preferujte importy z recon.stealth přímo:
 from __future__ import annotations
 
 # Re-export everything from the new stealth package for backwards compatibility
-
-
-
-
-
+from hledac.universal.recon.stealth import (
     # Models
     Alert,
     AlertRule,
@@ -51,8 +47,7 @@ from __future__ import annotations
 )
 
 # backwards-compatible module-level state (used by some internal code)
-
-from _core import aclose_PATCHED_SURFACES: set[str] = set()
+_PATCHED_SURFACES: set[str] = set()
 _UNPATCHED_SURFACES: set[str] = set()
 
 __all__ = [

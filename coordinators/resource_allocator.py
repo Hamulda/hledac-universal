@@ -27,7 +27,7 @@ warnings.warn(
     "Import from coordinators.resource.resource_coordinator instead.",
     DeprecationWarning,
     stacklevel=2,
-)
+    )
 import asyncio
 import logging
 import os
@@ -241,7 +241,7 @@ class IntelligentResourceAllocator:
                 logger.debug(
                     "ML prediction model unavailable: scikit-learn not installed. "
                     "Install with: pip install hledac-universal[ml]"
-                )
+    )
             self._prediction_model = None
         return self._prediction_model
 
@@ -265,7 +265,7 @@ class IntelligentResourceAllocator:
                     logger.debug(
                         "Anomaly detector unavailable: scikit-learn not installed. "
                         "Install with: pip install hledac-universal[ml]"
-                    )
+    )
                 self._anomaly_detector = None
         return self._anomaly_detector
 
@@ -284,7 +284,7 @@ class IntelligentResourceAllocator:
                     logger.debug(
                         "StandardScaler unavailable: scikit-learn not installed. "
                         "Install with: pip install hledac-universal[ml]"
-                    )
+    )
                 self._scaler = None
         return self._scaler
 

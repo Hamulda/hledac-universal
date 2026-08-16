@@ -105,7 +105,7 @@ def _tokenize_texts(texts: list, tokenizer, max_len: int = 512) -> list:
                 truncation=True,
                 max_length=max_len,
                 return_tensors='np'
-            )
+    )
             # Convert to list of arrays
             return list(encoded['input_ids'])
         return texts
@@ -149,7 +149,7 @@ def _mlx_embed(tokens: mx.array, model, hidden_size: int) -> mx.array:
         embed_matrix = mx.random.uniform(
             low=-0.1, high=0.1,
             shape=(vocab_size, embedding_dim)
-        )
+    )
 
         # Clamp tokens to valid range
         safe_tokens = mx.clip(tokens, 0, vocab_size - 1)
@@ -185,7 +185,7 @@ if MLX_AVAILABLE:
                     return x @ mx.random.uniform(
                         low=-0.1, high=0.1,
                         shape=(x.shape[-1], hidden)
-                    )
+    )
                 return _compiled_embed_inner
 
             _compiled_embed = _create_embed_fn()

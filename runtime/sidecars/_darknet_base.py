@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 # across all adapter instances within the same async context (sprint).
 _global_capability_cache: contextvars.ContextVar[dict[str, tuple[str, str]]] = (
     contextvars.ContextVar("_global_capability_cache", default=None)
-)
+    )
 
 
 def _get_global_capability_cache() -> dict[str, tuple[str, str]]:
@@ -101,7 +101,7 @@ class DarknetSidecarAdapter(SchedulerBackedSidecarAdapter):
             "_capability_checked",
             "_capability_cached",
             "_capability_reason",
-        )
+    )
     )
 
     def __init__(self) -> None:
@@ -150,14 +150,14 @@ class DarknetSidecarAdapter(SchedulerBackedSidecarAdapter):
             logger.debug(
                 "%s: no protocol specified (clearnet sidecar) — proceeding",
                 self.sidecar_id,
-            )
+    )
             return True
 
         # Import here to avoid circular dependency
         from hledac.universal.transport.capability_registry import (
             TransportCapability,
             get_capability,
-        )
+    )
 
         try:
             capability, reason = await get_capability(self.protocol)
@@ -166,7 +166,7 @@ class DarknetSidecarAdapter(SchedulerBackedSidecarAdapter):
                 "%s: capability detection failed: %s",
                 self.sidecar_id,
                 e,
-            )
+    )
             self._capability_cached = TransportCapability.UNAVAILABLE
             self._capability_reason = f"Detection error: {e}"
             self._capability_checked = True
@@ -185,7 +185,7 @@ class DarknetSidecarAdapter(SchedulerBackedSidecarAdapter):
                 "%s: capability READY (%s) — proceeding",
                 self.sidecar_id,
                 reason,
-            )
+    )
             return True
 
         if capability == TransportCapability.STUB:
@@ -194,13 +194,13 @@ class DarknetSidecarAdapter(SchedulerBackedSidecarAdapter):
                     "%s: [STUB] Skipping — %s",
                     self.sidecar_id,
                     reason,
-                )
+    )
                 return False
             logger.warning(
                 "%s: [STUB] Proceeding despite stub — %s",
                 self.sidecar_id,
                 reason,
-            )
+    )
             return True
 
         if capability == TransportCapability.UNAVAILABLE:
@@ -209,13 +209,13 @@ class DarknetSidecarAdapter(SchedulerBackedSidecarAdapter):
                     "%s: [UNAVAILABLE] Skipping — %s",
                     self.sidecar_id,
                     reason,
-                )
+    )
                 return False
             logger.info(
                 "%s: [UNAVAILABLE] Proceeding anyway — %s",
                 self.sidecar_id,
                 reason,
-            )
+    )
             return True
 
         if capability == TransportCapability.MISSING_IMPLEMENTATION:
@@ -224,13 +224,13 @@ class DarknetSidecarAdapter(SchedulerBackedSidecarAdapter):
                     "%s: [MISSING_IMPLEMENTATION] Skipping — %s",
                     self.sidecar_id,
                     reason,
-                )
+    )
                 return False
             logger.info(
                 "%s: [MISSING_IMPLEMENTATION] Proceeding anyway — %s",
                 self.sidecar_id,
                 reason,
-            )
+    )
             return True
 
         # Unknown state
@@ -238,7 +238,7 @@ class DarknetSidecarAdapter(SchedulerBackedSidecarAdapter):
             "%s: Unknown capability state '%s' — defaulting to skip",
             self.sidecar_id,
             capability,
-        )
+    )
         return False
 
     async def run_async(self, ctx: SidecarContext) -> list:

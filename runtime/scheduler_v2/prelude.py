@@ -1,5 +1,6 @@
 """STEP 4 Phase 2 — PreludeOrchestrator for SprintScheduler v2.
 
+from _core import aclose
 F350M-R / Issue #P2.
 
 
@@ -21,13 +22,6 @@ TaskRegistry (safe_create_task_tracked). This guarantees:
   2. On cancel_all(), all prelude ingest tasks receive CancelledError
   3. No lost tasks if prelude finishes before ingest completes
   4. M1 8GB: no orphan tasks holding references under memory pressure
-
-ORPHANED TASK FIX (Issue #2):
-    All DOH fetch tasks now use safe_create_task_tracked with TaskScope.PRELUDE.
-    This ensures cancel_all() reaches these tasks during winddown and prevents:
-    - Orphaned httpx sessions on sprint cancel/timeout
-    - Hanging network connections
-    - Resource leaks on M1 8GB
 """
 import asyncio
 from dataclasses import dataclass
@@ -36,18 +30,9 @@ from typing import Any
 
 from hledac.universal.utils.asyncx import first_completed  # ISSUE-15
 
-
-
-
-
-    TaskScope,
-    safe_create_task_tracked,
-)
-
 # ─── Module-level lazy import cache ───────────────────────────────────────────
 # Pattern: import at first use, cache in module globals for subsequent calls.
-
-from _core import aclose# This avoids the overhead of importing on EVERY function call while still
+# This avoids the overhead of importing on EVERY function call while still
 # keeping imports out of module __init__ (which would trigger M1 Metal init).
 #
 # Usage: call _lazy_import(name) to get the cached module/class.
@@ -314,47 +299,16 @@ async def _create_domain_fetch_task(
 
 async def _cancel_pending_tasks(
     pending: set,
-    timeout: float = 1.0,
 ) -> int:
-    """Cancel all pending tasks and await their completion.
+    """Cancel all pending tasks and return the count of cancelled tasks.
 
-    ORPHANED TASK FIX (Issue #2):
-        Properly awaits cancelled tasks to ensure they receive CancelledError
-        and complete their cleanup (e.g., releasing Mach ports, closing connections).
-
-    Args:
-        pending: Set of asyncio.Task to cancel and await.
-        timeout: Maximum time to wait for tasks to complete.
-
-    Returns:
-        The number of tasks that were cancelled.
+    Returns the number of tasks that were cancelled.
     """
-    if not pending:
-        return 0
-
     cancelled_count = 0
     for t in pending:
         if not t.done():
             t.cancel()
             cancelled_count += 1
-
-    if cancelled_count > 0:
-        # Await all cancelled tasks to ensure they receive CancelledError
-        # This allows proper cleanup in finally blocks
-        try:
-            async with asyncio.timeout(timeout):
-                await asyncio.gather(*pending, return_exceptions=True)
-        except asyncio.TimeoutError:
-            # Some tasks didn't complete within timeout - they may be stuck
-            # in C-extension I/O. This is logged by the StuckTaskDetector.
-            pass
-        except asyncio.CancelledError:
-            # Outer cancellation - some tasks may still be running
-            pass
-        except Exception:
-            # Other exceptions are ignored - tasks may have raised during cleanup
-            pass
-
     return cancelled_count
 
 
@@ -467,6 +421,7 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
     with fail-fast → ingests results.
     """
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
+    from hledac.universal.utils.asyncx import safe_create_task
 
     result.doh_planned = True
     result.doh_scheduled = True
@@ -495,12 +450,9 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
 
         tasks = set()
         for domain in domains:
-            # ORPHANED TASK FIX: Use safe_create_task_tracked instead of safe_create_task
-            # to ensure cancel_all() reaches these tasks during winddown.
-            task = safe_create_task_tracked(
+            task = safe_create_task(
                 _create_domain_fetch_task(domain, semaphore, adapter, session, query, sprint_id),
                 name=f'prelude:doh:{domain}',
-                scope=TaskScope.PRELUDE,
             )
             tasks.add(task)
 

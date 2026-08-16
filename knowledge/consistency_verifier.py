@@ -169,19 +169,19 @@ class ConsistencyVerifier:
                     len(decisions),
                     len(tri_vote_decisions),
                     len(ratio_decisions),
-                )
+    )
                 for d in decisions:
                     logger.info(
                         "[ConsistencyVerifier] RETRACT %s: %s (dissent=%d, ratio=%.3f)",
                         d.source_id, d.reason, d.dissent_count, d.ratio,
-                    )
+    )
 
             return decisions
 
         except Exception as e:
             logger.debug(
                 "[ConsistencyVerifier] check_batch failed (fail-soft): %s", e,
-            )
+    )
             return []
 
     # ------------------------------------------------------------------
@@ -357,15 +357,15 @@ class ConsistencyVerifier:
                     # AdversarialVerifier tracks source via claim context
                     source_id = self._extract_source_from_claim(
                         getattr(signal, "claim_a", "")
-                    )
+    )
                     if not source_id:
                         source_id = self._extract_source_from_claim(
                             getattr(signal, "claim_b", "")
-                        )
+    )
                 elif engine == "insight":
                     source_id = self._extract_source_from_claim(
                         getattr(signal, "claim_a", "")
-                    )
+    )
                 elif engine == "dempster_shafer":
                     # DS signals are holistic — skip per-source extraction
                     continue
@@ -379,7 +379,7 @@ class ConsistencyVerifier:
                 if source_id:
                     source_contradictions[source_id] = (
                         source_contradictions.get(source_id, 0) + 1
-                    )
+    )
             except Exception:
                 continue
 
@@ -390,7 +390,7 @@ class ConsistencyVerifier:
                 f.get("source_type")
                 or f.get("source_id")
                 or f.get("source", "unknown")
-            )
+    )
             source_total_claims[source] = source_total_claims.get(source, 0) + 1
 
         # Check ratio

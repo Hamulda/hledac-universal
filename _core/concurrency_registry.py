@@ -44,13 +44,21 @@ MODERN-36: Task Reference and Cancel Support
 - cancel_waiting(category): cancel all tasks waiting on semaphore
 - get_waiting_tasks(category): introspection for debugging
 - Context-aware acquisition tracking for leak detection
+
+ROADMAP-003: Thread-Safety with contextvars
+- Per-context async lock isolation using ContextVar (Python 3.14+ pattern)
+- Hybrid approach: threading.Lock for sync init + ContextVar for async isolation
+- Eliminates race conditions in concurrent get() and adjust_for_state() calls
 """
 import asyncio
+import contextvars
 import logging
+import sys
 import threading
 import time
 import weakref
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from hledac.universal.utils.asyncx import safe_wait_for
@@ -141,7 +149,7 @@ class TaskTrackedSemaphore:
             acquired_at=time.monotonic(),
             category=ConcurrencyCategory.HTTP_LANE,  # Will be set by registry
             name=current_task.get_name() if current_task else "unknown",
-        )
+    )
         
         await self._sem.acquire()
         async with self._lock:
@@ -211,7 +219,7 @@ class TaskTrackedSemaphore:
             acquired_at=time.monotonic(),
             category=ConcurrencyCategory.HTTP_LANE,
             name=current_task.get_name() if current_task else "unknown",
-        )
+    )
         
         try:
             if timeout:

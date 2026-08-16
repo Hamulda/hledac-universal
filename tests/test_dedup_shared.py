@@ -20,11 +20,7 @@ import sys
 
 import pytest
 
-
-
-
-
-
+from hledac.universal.tools.url_dedup import (
     get_default_bloom_filter,
     reset_default_bloom_filter,
 )
@@ -33,7 +29,6 @@ import pytest
 class TestDedupSharedSingleton:
     """Test that all pipeline components share the same BloomFilter singleton."""
 
-from _core import aclose
     def setup_method(self) -> None:
         """Reset singleton before each test."""
         reset_default_bloom_filter()

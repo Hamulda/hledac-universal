@@ -31,7 +31,7 @@ from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.network.freenet_client import (
     filter_sites_by_keyword,
     get_enumeration_semaphore,
-)
+    )
 from hledac.universal.utils.asyncx import parallel_ok
 from _core import aclose
 
@@ -170,18 +170,18 @@ async def fetch_zeronet_site(
                         logger.warning(
                             "ZeroNet response too large: %s bytes for %s",
                             content_length, address,
-                        )
+    )
                         return None
                 content = resp.text
                 if len(content.encode("utf-8")) > max_size:
                     logger.warning(
                         "ZeroNet response too large after decode: %s", address,
-                    )
+    )
                     return None
                 return content
             logger.debug(
                 "ZeroNet fetch failed: status %s for %s", resp.status_code, address,
-            )
+    )
             return None
     except (httpx.TimeoutException, asyncio.TimeoutError):
         logger.debug("ZeroNet fetch timeout: %s", address)
@@ -269,7 +269,7 @@ class ZeroNetSiteEnumerator:
                         if "<title" in content.lower():
                             title_match = re.search(
                                 r"<title[^>]*>([^<]+)", content, re.IGNORECASE,
-                            )
+    )
                             if title_match:
                                 title = title_match.group(1).strip()[:200]
                         # Discover cross-linked sites
@@ -331,7 +331,7 @@ async def zeronet_to_findings(query: str) -> list[CanonicalFinding]:
                 ts=time.time(),
                 provenance=(f"zeronet://{site['address']}",),
                 payload_text=site.get("content_preview", "")[:4096],
-            )
+    )
             findings.append(finding)
     except Exception as e:
         logger.debug("ZeroNet to findings failed: %s", e)

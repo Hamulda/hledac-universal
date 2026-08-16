@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 import sys
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -250,7 +250,7 @@ def get_SidecarOrchestrator() -> type:
             result_sink=result,
             governor=governor,
             scheduler=scheduler,
-        )
+    )
     """
     return _lazy_import_class(
         "hledac.universal.runtime.sidecar_orchestrator",
@@ -298,7 +298,7 @@ def get_all_service_status() -> dict[str, LazyServiceInfo]:
                 available=cls is not None,
                 class_path=f"{module_path}.{class_name}",
                 error=_FAILED_IMPORTS.get(cache_key),
-            )
+    )
             continue
 
         # Check if module spec exists (fast, no import)
@@ -309,7 +309,7 @@ def get_all_service_status() -> dict[str, LazyServiceInfo]:
                 available=False,
                 class_path=f"{module_path}.{class_name}",
                 error=f"Module {module_path!r} not found in sys.path",
-            )
+    )
             _CACHED_CLASSES[cache_key] = None
             _FAILED_IMPORTS[cache_key] = f"Module {module_path!r} not found"
             continue
@@ -321,14 +321,14 @@ def get_all_service_status() -> dict[str, LazyServiceInfo]:
                 name=name,
                 available=True,
                 class_path=f"{module_path}.{class_name}",
-            )
+    )
         except ImportError as exc:
             results[name] = LazyServiceInfo(
                 name=name,
                 available=False,
                 class_path=f"{module_path}.{class_name}",
                 error=str(exc),
-            )
+    )
 
     return results
 

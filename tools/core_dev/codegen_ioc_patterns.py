@@ -37,7 +37,7 @@ HASH_VERSION = "v2"  # Bump if regeneration logic changes
 _IOC_PATTERN_RE = re.compile(
     r'^pub static (?P<name>(?:IPV4|IPV6|DOMAIN|MD5|SHA1|SHA256|EMAIL|CVE|URL|HASH|MAC|BTC|ETH|'
     r'ENCODING_(?:BASE32|BASE64|HEX|HIGH_ENTROPY))_PAT): &str\s*=\s*$'
-)
+    )
 
 _PATTERN_VALUE_RE = re.compile(r'^\s+r"(.*)";\s*$', re.DOTALL)
 
@@ -160,7 +160,7 @@ _IOC_TYPE_NAMES: list[str] = [name for name, _ in _IOC_PATTERNS]
 # Single combined regex — one finditer pass, no rescanning.
 _IOC_COMBINED = _re.compile(
     "|".join(f"(?P<{name}>{pattern})" for name, pattern in _IOC_PATTERNS)
-)
+    )
 """
 
 

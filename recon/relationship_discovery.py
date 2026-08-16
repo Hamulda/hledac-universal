@@ -111,7 +111,7 @@ def _get_sparse():
                 logging.getLogger(__name__).debug(
                     "scipy.sparse unavailable: sparse matrix operations disabled. "
                     "Install with: pip install hledac-universal[ml]"
-                )
+    )
                 _get_sparse._logged = True
             _sparse_mod = None
             globals()['SCIPY_AVAILABLE'] = False
@@ -1112,7 +1112,7 @@ class RelationshipDiscoveryEngine:
             "use predict_hidden_connections(method='fast') instead",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         return await self._predict_hidden_lsh(max_predictions)
 
     def _build_adjacency_matrix(self) -> np.ndarray | csr_matrix:
@@ -1564,7 +1564,7 @@ class RelationshipDiscoveryEngine:
                     total_strength=score,
                     path_length=len(path_nodes) - 1,
                     path_type='influence'
-                )
+    )
         except Exception:  # noqa: BLE001
             pass
         return None
@@ -1676,14 +1676,14 @@ class RelationshipDiscoveryEngine:
                     influence_scores=influence_scores,
                     propagation_paths=propagation_paths,
                     iterations=0, convergence_delta=0.0
-                )
+    )
             except Exception as e:  # noqa: BLE001
                 logger.warning(f'igraph influence propagation failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for influence modeling')
         influence_scores, actual_iterations, delta, converged = self._compute_networkx_influence(
             seed_entities, iterations, damping, convergence_threshold
-        )
+    )
         propagation_paths = self._build_networkx_paths(seed_entities, influence_scores)
         return InfluenceModel(
             seed_entities=seed_entities,
@@ -1691,7 +1691,7 @@ class RelationshipDiscoveryEngine:
             propagation_paths=propagation_paths,
             iterations=actual_iterations,
             convergence_delta=delta if converged else float('inf')
-        )
+    )
 
     def export_graph(self) -> Any:
         """Export the relationship graph as NetworkX graph."""

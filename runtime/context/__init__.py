@@ -7,11 +7,7 @@ Exports:
   get_sprint_ctx / reset_sprint_ctx: context management.
 """
 
-
-
-
-
-
+from hledac.universal.runtime.context.bounded_dicts import (
     BoundedLRUDict,
     DEFAULT_ENTRIES_PER_SOURCE_MAXSIZE,
     DEFAULT_FEED_ACCEPTED_MAXSIZE,
@@ -24,8 +20,7 @@ Exports:
 
 # F330-DUP: Refactored to use lazy_module_getter from utils/_patterns.py
 # Lazy import of SprintRunContext and context helpers to avoid circular import
-
-from _core import aclose__getattr__ = __import__("hledac.universal.utils._patterns", fromlist=["lazy_module_getter"]).lazy_module_getter(
+__getattr__ = __import__("hledac.universal.utils._patterns", fromlist=["lazy_module_getter"]).lazy_module_getter(
     "hledac.universal.runtime.sprint_scheduler_v1_archived",
     {"SprintRunContext": "SprintRunContext", "get_sprint_ctx": "get_sprint_ctx", "reset_sprint_ctx": "reset_sprint_ctx"},
 )

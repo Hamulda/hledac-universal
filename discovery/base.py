@@ -30,7 +30,7 @@ from tenacity import (
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential_jitter,
-)
+    )
 
 if TYPE_CHECKING:
     pass
@@ -383,7 +383,7 @@ class BaseDiscoveryMixin(ABC):
     def __init__(self) -> None:
         object.__setattr__(
             self, "_rate_limiter", RateLimiter(self.rate_limit_rpm, self.burst_size)
-        )
+    )
 
     async def _discover_single_attempt(
         self, query: str, limit: int
@@ -409,7 +409,7 @@ class BaseDiscoveryMixin(ABC):
             stop=stop_after_attempt(self.retry_attempts),
             retry=retry_if_exception_type(Exception),
             reraise=True,
-        )
+    )
         _attempt_fn = _retry_decorator(self._discover_single_attempt)
 
         try:
@@ -422,7 +422,7 @@ class BaseDiscoveryMixin(ABC):
                 self.name,
                 self.retry_attempts,
                 exc,
-            )
+    )
 
     async def health_check(self) -> bool:
         """

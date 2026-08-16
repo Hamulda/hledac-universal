@@ -163,7 +163,7 @@ async def test_record_hypothesis_feedback_failsoft_does_not_crash(minimal_config
     try:
         await sched.record_hypothesis_feedback(
             pivot_type="test_pivot", ioc_type="domain", produced_count=10, accepted_count=5, signal_value=0.8
-        )
+    )
     except RuntimeError:
         # Fail-soft pattern: the call should NOT raise if the scheduler is correct
         # But since we can't easily inject the failure into the internal call,
@@ -502,7 +502,7 @@ def test_privacy_gate_setattr_failsoft_appends_finding(minimal_config):
 # Finding count boundary test: [0, 10000]
 @pytest.mark.parametrize(
     "finding_count,cycle_count", [(n, c) for n in [0, 1, 100, 1000, 5000, 10000] for c in [1, 5, 10, 50, 100]]
-)
+    )
 def test_finding_count_never_negative(finding_count, cycle_count):
     """
     Property: finding_count is non-negative.
@@ -563,7 +563,7 @@ def test_source_economics_count_nonnegative(src_count):
         [0.5, 1.0, 5.0, 10.0, 50.0],
         [10.0, 20.0, 30.0, 100.0],
     ],
-)
+    )
 def test_latency_ema_bounded(latency_samples):
     """
     Property: EMA latency never exceeds clamp bounds [5, 30]s.
@@ -589,7 +589,7 @@ def test_latency_ema_bounded(latency_samples):
         "ok",
         "normal",
     ],
-)
+    )
 def test_uma_threshold_state_valid(state_values):
     """
     Property: UMA state is one of known values.
@@ -858,7 +858,7 @@ async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_con
             confidence=0.0,
             sources_count=0,
             timestamp=0.0,
-        )
+    )
     )
     mock_runner.inject_lifecycle_adapter = MagicMock()
     mock_runner.inject_stix_graph = MagicMock()
@@ -912,7 +912,7 @@ class TestF11WindupFirstCycle:
         lifecycle = SprintLifecycleManager(
             sprint_duration_s=600.0,
             windup_lead_s=180.0,
-        )
+    )
         lifecycle.start()
 
         # Adapter wrapuje stejnou instanci
@@ -922,7 +922,7 @@ class TestF11WindupFirstCycle:
         assert adapter._lc is lifecycle, (
             f"_LifecycleAdapter._lc a původní lifecycle nejsou stejná instance: "
             f"adapter._lc id={id(adapter._lc)} vs lifecycle id={id(lifecycle)}"
-        )
+    )
 
         # Vstoupíme do ACTIVE fáze (jinak should_enter_windup může být ovlivněno fází)
         lifecycle.transition_to(lifecycle._current_phase.__class__.ACTIVE)
@@ -934,7 +934,7 @@ class TestF11WindupFirstCycle:
             # F290 by mělo blokovat windup (first_cycle_ran=False)
             assert lifecycle.should_enter_windup() is False, (
                 "should_enter_windup() má být False při first_cycle_ran=False"
-            )
+    )
 
         # Zavoláme set_first_cycle_ran() na adapter
         adapter.set_first_cycle_ran()
@@ -943,7 +943,7 @@ class TestF11WindupFirstCycle:
         assert lifecycle.first_cycle_ran is True, (
             "first_cycle_ran zůstává False po set_first_cycle_ran() na adapteru. "
             "Adapter._lc a lifecycle nejsou stejná instance!"
-        )
+    )
         assert adapter._lc.first_cycle_ran is True
 
     def test_lifecycle_adapter_should_enter_windup_uses_same_instance_as_setter(self):
@@ -957,7 +957,7 @@ class TestF11WindupFirstCycle:
         lifecycle = SprintLifecycleManager(
             sprint_duration_s=600.0,
             windup_lead_s=180.0,
-        )
+    )
         lifecycle.start()
 
         adapter = _LifecycleAdapter(lifecycle)
@@ -969,7 +969,7 @@ class TestF11WindupFirstCycle:
         assert lifecycle.first_cycle_ran is False
         assert adapter.should_enter_windup() is False, (
             "should_enter_windup má být False při first_cycle_ran=False (F290 block)"
-        )
+    )
 
         # Zavoláme set_first_cycle_ran()
         adapter.set_first_cycle_ran()
@@ -995,7 +995,7 @@ class TestF11WindupFirstCycle:
         lifecycle = SprintLifecycleManager(
             sprint_duration_s=600.0,
             windup_lead_s=180.0,
-        )
+    )
         lifecycle.start()
         lifecycle._current_phase = lifecycle._current_phase.__class__.ACTIVE
 
@@ -1016,7 +1016,7 @@ class TestF11WindupFirstCycle:
         assert lifecycle.first_cycle_ran is True, (
             "F1-1-FIX: first_cycle_ran zůstává False po fallback nastavení. "
             "Windup bude blokován F290 navždy!"
-        )
+    )
 
         # Ověření: should_enter_windup() nyní vidí first_cycle_ran=True
         assert lifecycle.should_enter_windup() is False  # 300s > 180s, takže False
@@ -1075,13 +1075,13 @@ class TestF289WindupBudget:
         """windup_efficiency = windup / (windup + active)."""
         from hledac.universal.runtime.sprint_scheduler import (
             SprintSchedulerConfig,
-        )
+    )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=180.0, aggressive_mode=False)
         # F290: effective_windup = 75s (0.25*300), active = 225s → efficiency = 75/300 = 0.25
         eff = cfg.effective_windup_lead_s / (
             cfg.effective_windup_lead_s + (cfg.sprint_duration_s - cfg.effective_windup_lead_s)
-        )
+    )
         assert abs(eff - 0.25) < 0.001  # ~75/300
 
 
@@ -1104,7 +1104,7 @@ class TestF270InitOrder:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-        )
+    )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
@@ -1132,7 +1132,7 @@ class TestF270InitOrder:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-        )
+    )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
@@ -1153,7 +1153,7 @@ class TestF285Acllose:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-        )
+    )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
@@ -1166,7 +1166,7 @@ class TestF285Acllose:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-        )
+    )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
@@ -1179,7 +1179,7 @@ class TestF285Acllose:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-        )
+    )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
@@ -1304,7 +1304,7 @@ def _find_msgspec_struct_duplicates(root: Path, exclude_dirs=None):
                 (isinstance(b, ast.Name) and b.id == 'Struct') or
                 (isinstance(b, ast.Attribute) and b.attr == 'Struct')
                 for b in node.bases
-            )
+    )
             if not is_struct:
                 continue
 
@@ -1391,7 +1391,7 @@ class TestObservedRunReportSchema:
             f"Duplicate field names found in ObservedRunReport: {duplicates}. "
             f"msgspec.Struct uses last-value-wins semantics — Annotated validators "
             f"are silently overwritten by plain declarations, breaking strict validation."
-        )
+    )
 
     @pytest.mark.skip(reason="__main__.py has complex import graph causing Annotated namespace pollution")
     def test_validate_observed_run_report_accepts_valid_data(self):
@@ -1401,7 +1401,7 @@ class TestObservedRunReportSchema:
         spec = importlib.util.spec_from_file_location(
             "hledac.__main__",
             str(pathlib.Path(__file__).resolve().parents[1] / "__main__.py"),
-        )
+    )
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         # Inject typing.Annotated so type eval works during msgspec annotation processing
@@ -1416,7 +1416,7 @@ class TestObservedRunReportSchema:
 
         uma = msgspec.convert(
             {"rss_mb": 0, "metal_cache_mb": 0, "gc_pressure": 0.0}, UmaSnapshot
-        )
+    )
         fb = msgspec.convert({"healthy": 0, "degraded": 0, "unhealthy": 0}, FeedHealthBreakdown)
 
         valid_data = {
@@ -1472,7 +1472,7 @@ class TestObservedRunReportSchema:
         spec = importlib.util.spec_from_file_location(
             "hledac.__main__",
             str(pathlib.Path(__file__).resolve().parents[1] / "__main__.py"),
-        )
+    )
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         module.__dict__["Annotated"] = typing.Annotated
@@ -1486,7 +1486,7 @@ class TestObservedRunReportSchema:
 
         uma = msgspec.convert(
             {"rss_mb": 0, "metal_cache_mb": 0, "gc_pressure": 0.0}, UmaSnapshot
-        )
+    )
         fb = msgspec.convert({"healthy": 0, "degraded": 0, "unhealthy": 0}, FeedHealthBreakdown)
 
         base = {
@@ -1574,4 +1574,4 @@ class TestObservedRunReportSchema:
             f"Duplicate field names found in msgspec.Struct classes across the project:\n" +
             "\n".join(f"  {f}::{c}.{name} (lines {fl}, {sl})"
                       for f, c, name, fl, sl in issues)
-        )
+    )

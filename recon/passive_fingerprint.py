@@ -103,10 +103,10 @@ _AW_PATTERN: re.Pattern = re.compile(r'AW-\d+', re.I)
 # --- P8-007: Favicon URL extraction (handles quoted/unquoted HTML attributes) ---
 _FAVICON_LINK_RE: re.Pattern = re.compile(
     r'<link[^>]+rel=["\']?[^"\'>]*icon[^"\'>]*["\']?[^>]+href=["\']?([^"\'>\s]+)', re.I
-)
+    )
 _FAVICON_LINK_REV_RE: re.Pattern = re.compile(
     r'<link[^>]+href=["\']?([^"\'>\s]+)["\']?[^>]+rel=["\']?[^"\'>]*icon', re.I
-)
+    )
 # --- P8-007: Favicon hash cache (finding_id -> mmh3 hash) ---
 _favicon_mmh3_cache: dict[str, str] = {}
 _stats: dict[str, int] = {'findings_scanned': 0, 'findings_skipped': 0, 'fingerprints_produced': 0, 'patterns_matched': 0}
@@ -599,7 +599,7 @@ def _detect_cms(html_lower: str) -> tuple[str | None, str | None]:
     except ImportError:
         cms_re = re.compile(
             'wordpress|drupal|joomla|typo3|magento|prestashop|shopify|wix|squarespace|ghost|hubspot', re.I
-        )
+    )
         matches = cms_re.findall(html_lower[:5000])
         cms = matches[0].title() if matches else None
     return cms, None

@@ -146,7 +146,7 @@ class InMemoryPeerNodeTransport:
             logger.debug(
                 "[FED-IMM] max peers reached (%d), cannot add %s",
                 INMEMORY_PEER_MAX_PEERS, peer.node_id,
-            )
+    )
             return
         if peer is self:
             return  # no self-pair
@@ -216,7 +216,7 @@ class InMemoryPeerNodeTransport:
             logger.debug(
                 "[FED-IMM] node=%s lane=%r peer=%s findings=%d dur=%.4fs",
                 self.node_id, lane, peer_id, len(out2), elapsed,
-            )
+    )
             return out2
         except asyncio.CancelledError:
             raise
@@ -225,7 +225,7 @@ class InMemoryPeerNodeTransport:
             logger.warning(
                 "[FED-IMM] run fail-soft lane=%r %s: %s dur=%.4fs",
                 lane, type(e).__name__, e, elapsed,
-            )
+    )
             return []
 
     async def _serve(self, lane: str, query: str) -> list[dict[str, Any]]:

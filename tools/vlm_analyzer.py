@@ -122,7 +122,7 @@ class VLMAnalyzer:
             try:
                 cls._model, cls._processor = await asyncio.to_thread(
                     _get_vlm_load(), model_id
-                )
+    )
                 logger.info(f"[VLMAnalyzer] Model loaded: {model_id}")
                 return True
             except Exception as e:
@@ -203,7 +203,7 @@ class VLMAnalyzer:
                 image=tmp_path,
                 prompt=prompt,
                 max_tokens=300
-            )
+    )
 
             return result if result else ""
 

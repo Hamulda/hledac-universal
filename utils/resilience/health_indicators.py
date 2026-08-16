@@ -41,23 +41,40 @@ class HealthScore:
     grade: str  # A, B, C, D, F
     issues: list[str] = field(default_factory=list)
 
+    # Shared degradation scores lookup
+    _DEGRADATION_SCORES: dict[DegradedMode, int] = {
+        DegradedMode.HEALTHY: 100,
+        DegradedMode.DEGRADED: 70,
+        DegradedMode.IO_ONLY: 40,
+        DegradedMode.EMERGENCY: 10,
+    }
+
+    @classmethod
+    def _compute_degradation_score(cls, mode: DegradedMode) -> tuple[int, list[str]]:
+        """Compute degradation score and issues from mode."""
+        score = cls._DEGRADATION_SCORES[mode]
+        issues = [] if mode == DegradedMode.HEALTHY else [f"Degraded mode: {mode.label}"]
+        return score, issues
+
+    @classmethod
+    def _compute_grade(cls, total: float) -> str:
+        """Determine grade from total score."""
+        if total >= 90:
+            return "A"
+        elif total >= 80:
+            return "B"
+        elif total >= 70:
+            return "C"
+        elif total >= 50:
+            return "D"
+        else:
+            return "F"
+
     @classmethod
     async def from_ledger_async(cls, ledger: SprintHealthLedger) -> "HealthScore":
         """Calculate health score from ledger (async version)."""
         mode = ledger.degradation_mode
-        issues = []
-
-        # Degradation score (40% weight)
-        degradation_scores = {
-            DegradedMode.HEALTHY: 100,
-            DegradedMode.DEGRADED: 70,
-            DegradedMode.IO_ONLY: 40,
-            DegradedMode.EMERGENCY: 10,
-        }
-        degradation_score = degradation_scores[mode]
-
-        if mode != DegradedMode.HEALTHY:
-            issues.append(f"Degraded mode: {mode.label}")
+        degradation_score, issues = cls._compute_degradation_score(mode)
 
         # Component score (35% weight) - async call
         components_score = await cls._calculate_components_score(ledger)
@@ -72,24 +89,12 @@ class HealthScore:
             throughput_score * 0.25
         )
 
-        # Determine grade
-        if total >= 90:
-            grade = "A"
-        elif total >= 80:
-            grade = "B"
-        elif total >= 70:
-            grade = "C"
-        elif total >= 50:
-            grade = "D"
-        else:
-            grade = "F"
-
         return cls(
             total=total,
             components_score=components_score,
             degradation_score=degradation_score,
             throughput_score=throughput_score,
-            grade=grade,
+            grade=cls._compute_grade(total),
             issues=issues,
         )
 
@@ -101,19 +106,7 @@ class HealthScore:
         """
         # Synchronous approximation using registry's cached state
         mode = ledger.degradation_mode
-        issues = []
-
-        # Degradation score (40% weight)
-        degradation_scores = {
-            DegradedMode.HEALTHY: 100,
-            DegradedMode.DEGRADED: 70,
-            DegradedMode.IO_ONLY: 40,
-            DegradedMode.EMERGENCY: 10,
-        }
-        degradation_score = degradation_scores[mode]
-
-        if mode != DegradedMode.HEALTHY:
-            issues.append(f"Degraded mode: {mode.label}")
+        degradation_score, issues = cls._compute_degradation_score(mode)
 
         # Component score approximation from degradation state
         # This is a sync fallback - for accurate scores use from_ledger_async
@@ -131,24 +124,12 @@ class HealthScore:
             throughput_score * 0.25
         )
 
-        # Determine grade
-        if total >= 90:
-            grade = "A"
-        elif total >= 80:
-            grade = "B"
-        elif total >= 70:
-            grade = "C"
-        elif total >= 50:
-            grade = "D"
-        else:
-            grade = "F"
-
         return cls(
             total=total,
             components_score=components_score,
             degradation_score=degradation_score,
             throughput_score=throughput_score,
-            grade=grade,
+            grade=cls._compute_grade(total),
             issues=issues,
         )
 
@@ -243,7 +224,7 @@ class HealthReporter:
                 components.items(),
                 key=lambda x: x[1].total_failures,
                 reverse=True,
-            )
+    )
         ]
 
     async def _get_recent_failures(self, limit: int = 5) -> list[dict[str, Any]]:
@@ -361,20 +342,9 @@ class AlertThresholds:
         self.consecutive_component_failures = consecutive_component_failures
 
 
-async def check_alerts_async(ledger: SprintHealthLedger) -> list[dict[str, Any]]:
-    """
-    Check for alert conditions and return list of active alerts (async version).
-
-    Each alert contains:
-    - level: "warning", "error", "critical"
-    - component: affected component
-    - message: human-readable description
-    - action: recommended action
-    """
+def _check_degradation_mode_alerts(mode: DegradedMode) -> list[dict[str, Any]]:
+    """Check degradation mode and return mode-specific alerts."""
     alerts = []
-
-    # Check degradation mode
-    mode = ledger.degradation_mode
     if mode == DegradedMode.DEGRADED:
         alerts.append({
             "level": "warning",
@@ -396,19 +366,34 @@ async def check_alerts_async(ledger: SprintHealthLedger) -> list[dict[str, Any]]
             "message": "Sprint in EMERGENCY mode",
             "action": "CRITICAL: Abort sprint immediately",
         })
+    return alerts
+
+
+async def check_alerts_async(ledger: SprintHealthLedger) -> list[dict[str, Any]]:
+    """
+    Check for alert conditions and return list of active alerts (async version).
+
+    Each alert contains:
+    - level: "warning", "error", "critical"
+    - component: affected component
+    - message: human-readable description
+    - action: recommended action
+    """
+    alerts = _check_degradation_mode_alerts(ledger.degradation_mode)
 
     # Check component failures
     components = await ledger._registry.get_all_components()
+    thresholds = AlertThresholds()
 
     for name, health in components.items():
-        if health.total_failures >= AlertThresholds().failure_count_critical:
+        if health.total_failures >= thresholds.failure_count_critical:
             alerts.append({
                 "level": "critical",
                 "component": name,
                 "message": f"Component has {health.total_failures} failures",
                 "action": f"Circuit breaker should be open for {name}",
             })
-        elif health.total_failures >= AlertThresholds().failure_count_high:
+        elif health.total_failures >= thresholds.failure_count_high:
             alerts.append({
                 "level": "warning",
                 "component": name,
@@ -425,31 +410,7 @@ def check_alerts(ledger: SprintHealthLedger) -> list[dict[str, Any]]:
 
     Note: Prefer check_alerts_async() for async contexts to avoid asyncio.run().
     """
-    # Sync fallback - only checks degradation mode (no component iteration)
-    alerts = []
-
-    mode = ledger.degradation_mode
-    if mode == DegradedMode.DEGRADED:
-        alerts.append({
-            "level": "warning",
-            "component": "system",
-            "message": "Sprint in DEGRADED mode",
-            "action": "Monitor closely, consider abort if worsens",
-        })
-    elif mode == DegradedMode.IO_ONLY:
-        alerts.append({
-            "level": "error",
-            "component": "system",
-            "message": "Sprint in IO_ONLY mode",
-            "action": "Results will be incomplete, consider aborting",
-        })
-    elif mode == DegradedMode.EMERGENCY:
-        alerts.append({
-            "level": "critical",
-            "component": "system",
-            "message": "Sprint in EMERGENCY mode",
-            "action": "CRITICAL: Abort sprint immediately",
-        })
+    alerts = _check_degradation_mode_alerts(ledger.degradation_mode)
 
     # For component alerts, we'd need async - log that full check needs async
     failure_counts = ledger.degradation_state._failure_counts

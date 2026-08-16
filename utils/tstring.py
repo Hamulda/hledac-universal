@@ -67,7 +67,7 @@ warnings.warn(
     "Use f-strings or str.format() instead.",
     DeprecationWarning,
     stacklevel=2,
-)
+    )
 
 
 def _require_template() -> None:
@@ -79,7 +79,7 @@ def _require_template() -> None:
         raise ImportError(
             "tstring.py requires Python 3.14+ (PEP 750 t-strings). "
             "Use f-strings or str.format() instead."
-        )
+    )
 
 
 def convert(value: object, conversion: Literal["a", "r", "s"] | None) -> object:

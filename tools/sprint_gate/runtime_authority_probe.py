@@ -159,7 +159,7 @@ def probe(benchmark_json_path: str, report_json_path: str | None = None) -> Prob
             verdict=AuthorityVerdict.AUTHORITY_INCONCLUSIVE,
             benchmark_path=str(benchmark_path),
             errors=[f"Benchmark JSON not found: {benchmark_json_path}"],
-        )
+    )
 
     try:
         with open(benchmark_path) as f:
@@ -169,7 +169,7 @@ def probe(benchmark_json_path: str, report_json_path: str | None = None) -> Prob
             verdict=AuthorityVerdict.AUTHORITY_INCONCLUSIVE,
             benchmark_path=str(benchmark_path),
             errors=[f"Failed to parse benchmark JSON: {exc}"],
-        )
+    )
 
     # Extract runtime authority fields from benchmark
     runtime_authority_path = benchmark.get("runtime_authority_path")

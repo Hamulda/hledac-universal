@@ -78,6 +78,6 @@ class SemanticStoreBuffer:
                     finding_id=getattr(f, "finding_id", ""),
                     ioc_types=ioc_types,
                     ts=getattr(f, "ts", None),
-                )
+    )
         except Exception as exc:
             logging.getLogger(__name__).debug("Semantic buffering skipped: %s", exc)

@@ -95,7 +95,7 @@ class LanguageDetectionResult:
             is_english=False,
             is_latin_script=script == ScriptType.LATIN,
             requires_multilingual=True
-        )
+    )
 
 
 class LangDetector:
@@ -198,7 +198,7 @@ class LangDetector:
         logger.warning(
             f'[LangDetector] FastText model not found at {model_file}. '
             'Download from: https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin'
-        )
+    )
         return None
     
     def _init_langdetect(self) -> None:
@@ -235,7 +235,7 @@ class LangDetector:
                 is_english=True,
                 is_latin_script=True,
                 requires_multilingual=False
-            )
+    )
         
         # Step 1: Script-based detection (deterministic, fast)
         script_result = self._detect_script(text)
@@ -263,7 +263,7 @@ class LangDetector:
             is_english=True,
             is_latin_script=True,
             requires_multilingual=False
-        )
+    )
     
     def _detect_script(self, text: str) -> Optional[LanguageDetectionResult]:
         """
@@ -303,7 +303,7 @@ class LangDetector:
                 is_english=is_english,
                 is_latin_script=is_latin_script,
                 requires_multilingual=requires_multilingual
-            )
+    )
         
         # Mixed script content
         return LanguageDetectionResult(
@@ -313,7 +313,7 @@ class LangDetector:
             is_english=False,
             is_latin_script=False,
             requires_multilingual=True
-        )
+    )
     
     def _script_to_language(self, script: str) -> str:
         """Map dominant script to most likely language."""
@@ -360,7 +360,7 @@ class LangDetector:
                 is_english=is_english,
                 is_latin_script=is_latin_script,
                 requires_multilingual=not is_english
-            )
+    )
         except Exception as e:
             logger.debug(f'[LangDetector] FastText error: {e}')
             return None
@@ -386,7 +386,7 @@ class LangDetector:
                 is_english=is_english,
                 is_latin_script=is_latin_script,
                 requires_multilingual=not is_english
-            )
+    )
         except Exception as e:
             logger.debug(f'[LangDetector] langdetect error: {e}')
             return None
@@ -420,7 +420,7 @@ def _make_lang_detector() -> LangDetector:
 _get_lang_detector = module_singleton_getter(
     singleton_name="_lang_detector_instance",
     factory=_make_lang_detector,
-)
+    )
 
 
 def get_lang_detector(

@@ -48,7 +48,7 @@ class _RustSimdDomain:
                 return self._ext.simd_cosine_similarity(a, b)
             result = self._ffi_cb.call_or_fallback(
                 FFI_MODULE_SIMD_SIMILARITY, rust_call, a, b
-            )
+    )
             if result.success:
                 return result.value  # type: ignore[return-value]
             return _python_cosine_similarity(a, b)
@@ -62,7 +62,7 @@ class _RustSimdDomain:
                 return self._ext.simd_batch_cosine_similarity(vectors, query)
             result = self._ffi_cb.call_or_fallback(
                 FFI_MODULE_SIMD_SIMILARITY, rust_call, vectors, query
-            )
+    )
             if result.success:
                 return result.value  # type: ignore[return-value]
             return _python_batch_cosine_similarity(vectors, query)

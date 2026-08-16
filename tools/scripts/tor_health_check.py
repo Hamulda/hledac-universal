@@ -32,7 +32,7 @@ def main() -> int:
             proxies={"https": SOCKS_PROXY},
             timeout=15.0,
             impersonate="chrome110",
-        )
+    )
         text = resp.text
         if "Congratulations" in text or "Tor is working" in text:
             print("[TOR-HEALTH] OK: Tor circuit active, connectivity confirmed")

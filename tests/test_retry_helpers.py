@@ -26,11 +26,7 @@ from unittest import mock
 
 import pytest
 
-
-
-
-
-
+from hledac.universal.utils.retry import (
     DEFAULT_BASE_DELAY,
     DEFAULT_JITTER_FACTOR,
     DEFAULT_MAX_ATTEMPTS,
@@ -42,8 +38,7 @@ import pytest
 
 
 # ==============================================================================
-
-from _core import aclose# RetryLoop (sync iterator)
+# RetryLoop (sync iterator)
 # ==============================================================================
 
 class TestRetryLoop:

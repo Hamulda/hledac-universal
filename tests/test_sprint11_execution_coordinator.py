@@ -10,11 +10,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-
-
-
-
-
+from hledac.universal.coordinators.execution_coordinator import (
     ExecutionTask,
     ExecutionResult,
     UniversalExecutionCoordinator,
@@ -24,7 +20,6 @@ from unittest.mock import AsyncMock, MagicMock
 class TestSprint11ExecuteBatch:
     """ISSUE-011: AdaptiveWorkerPool integration tests."""
 
-from _core import aclose
     @pytest.fixture
     def coordinator(self):
         """Create coordinator instance."""

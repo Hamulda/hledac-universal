@@ -300,7 +300,7 @@ class SprintMetrics(msgspec.Struct, frozen=True, gc=False):
 # SprintMetrics ContextVar — per-sprint copy-on-write state
 _sprint_metrics_var: contextvars.ContextVar[SprintMetrics] = contextvars.ContextVar(
     "sprint_metrics", default=SprintMetrics()
-)
+    )
 
 
 def get_sprint_metrics() -> SprintMetrics:
@@ -349,7 +349,7 @@ class SprintRunSnapshot(msgspec.Struct, frozen=True, gc=False):
         new_snapshot = current_snapshot.evolve(
             phase="ACTIVE",
             metrics=current_metrics.copy()
-        )
+    )
         _sprint_snapshot_var.set(new_snapshot)
 
     M1 8GB: frozen=True + gc=False = no __dict__, no GC overhead, ~100 bytes/snapshot.
@@ -404,7 +404,7 @@ class SprintRunSnapshot(msgspec.Struct, frozen=True, gc=False):
 # SprintRunSnapshot ContextVar — per-sprint immutable state machine
 _sprint_snapshot_var: contextvars.ContextVar[SprintRunSnapshot] = contextvars.ContextVar(
     "sprint_snapshot", default=SprintRunSnapshot()
-)
+    )
 
 
 def get_sprint_snapshot() -> SprintRunSnapshot:

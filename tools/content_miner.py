@@ -816,7 +816,7 @@ class MetadataExtractor:
                     gps_coords=metadata.gps_coords,
                     timeline_events=metadata.timeline_events,
                     extracted_text_preview=text_preview,
-                )
+    )
             except Exception as e:
                 logger.debug(f"[METADATA] Rust PDF extraction failed, falling back to PyMuPDF: {e}")
                 # Fall through to PyMuPDF fallback
@@ -864,7 +864,7 @@ class MetadataExtractor:
                 gps_coords=metadata.gps_coords,
                 timeline_events=metadata.timeline_events,
                 extracted_text_preview=result['text_preview'],
-            )
+    )
         except Exception as e:
             logger.warning(f'PDF metadata extraction failed: {e}')
         return metadata
@@ -1243,7 +1243,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
     total_files = len(files_data)
     churn_ratio = len(changed_files) / total_files if total_files > 0 else 0.0
-    sorted_files = sorted(files_data, key=itemgetter("'"))
+    sorted_files = sorted(files_data, key=itemgetter("rel_path"))
     fingerprint_input = {'files': [(f['rel_path'], f['prefix_hash'], f.get('mtime_ns', 0)) for f in sorted_files], 'edges': [(e['src'], e['dst']) for e in edges], 'limits_used': {'max_files': max_files, 'max_bytes_total': max_bytes_total, 'max_parse_bytes_per_file': max_parse_bytes, 'time_budget_ms': time_budget_ms, 'prefix_hash_bytes': prefix_hash_bytes, 'incremental': incremental, 'parallel_scan_threshold': parallel_threshold, 'max_workers': max_workers}, 'version': '1.0'}
     fingerprint = _compute_fingerprint(fingerprint_input)
     return {'fingerprint': fingerprint, 'files': files_data, 'edges': edges, 'meta': {'version': '1.0', 'limits_used': fingerprint_input['limits_used'], 'elapsed_ms': elapsed_ms, 'total_files': total_files, 'changed_files': len(changed_files), 'changed_modules': changed_modules, 'churn_ratio': churn_ratio, 'truncated': truncated, 'truncation_reason': truncation_reason, 'errors': errors}}

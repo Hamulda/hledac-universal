@@ -38,7 +38,7 @@ class TestUmaBudgetSSOT:
 
         assert UmaBudget.UMA_HARD_CEILING_GIB == SSOT_VALUE, (
             f"UMA_HARD_CEILING_GIB should be {SSOT_VALUE}, got {UmaBudget.UMA_HARD_CEILING_GIB}"
-        )
+    )
 
     def test_system_used_ceiling_equals_ssot(self) -> None:
         """SYSTEM_USED_CEILING should equal UmaBudget.UMA_HARD_CEILING_GIB."""
@@ -47,7 +47,7 @@ class TestUmaBudgetSSOT:
         assert SYSTEM_USED_CEILING == UmaBudget.UMA_HARD_CEILING_GIB, (
             f"SYSTEM_USED_CEILING ({SYSTEM_USED_CEILING}) should equal "
             f"UmaBudget.UMA_HARD_CEILING_GIB ({UmaBudget.UMA_HARD_CEILING_GIB})"
-        )
+    )
 
     def test_process_rss_ceiling_less_than_ssot(self) -> None:
         """PROCESS_RSS_CEILING should be less than SYSTEM_USED_CEILING."""
@@ -56,7 +56,7 @@ class TestUmaBudgetSSOT:
         assert PROCESS_RSS_CEILING < SYSTEM_USED_CEILING, (
             f"PROCESS_RSS_CEILING ({PROCESS_RSS_CEILING}) should be < "
             f"SYSTEM_USED_CEILING ({SYSTEM_USED_CEILING})"
-        )
+    )
 
     def test_mission_peak_rss_derives_from_ssot(self) -> None:
         """MISSION_PEAK_RSS_GIB should derive from UmaBudget.UMA_HARD_CEILING_GIB."""
@@ -66,7 +66,7 @@ class TestUmaBudgetSSOT:
         assert MISSION_PEAK_RSS_GIB == expected, (
             f"MISSION_PEAK_RSS_GIB ({MISSION_PEAK_RSS_GIB}) should be "
             f"UmaBudget.UMA_HARD_CEILING_GIB * 0.88 = {expected}"
-        )
+    )
 
 
 class TestMemoryAxisInvariants:
@@ -79,7 +79,7 @@ class TestMemoryAxisInvariants:
         assert SYSTEM_USED_CEILING <= MAX_VALID_CEILING, (
             f"SYSTEM_USED_CEILING ({SYSTEM_USED_CEILING}) > "
             f"MAX_VALID_CEILING ({MAX_VALID_CEILING})"
-        )
+    )
 
     def test_process_rss_ceiling_leq_system_used_ceiling(self) -> None:
         """PROCESS_RSS_CEILING should be <= SYSTEM_USED_CEILING."""
@@ -88,7 +88,7 @@ class TestMemoryAxisInvariants:
         assert PROCESS_RSS_CEILING <= SYSTEM_USED_CEILING, (
             f"PROCESS_RSS_CEILING ({PROCESS_RSS_CEILING}) > "
             f"SYSTEM_USED_CEILING ({SYSTEM_USED_CEILING})"
-        )
+    )
 
     def test_tracked_allocation_budget_equals_sum(self) -> None:
         """TRACKED_ALLOCATION_BUDGET_GIB should equal ORCHESTRATOR + LLM_WEIGHTS + KV_CACHE."""
@@ -97,14 +97,14 @@ class TestMemoryAxisInvariants:
             ORCHESTRATOR_GIB,
             LLM_WEIGHTS_GIB,
             KV_CACHE_GIB,
-        )
+    )
 
         expected = ORCHESTRATOR_GIB + LLM_WEIGHTS_GIB + KV_CACHE_GIB
         assert UmaBudget.TRACKED_ALLOCATION_BUDGET_GIB == expected, (
             f"TRACKED_ALLOCATION_BUDGET_GIB ({UmaBudget.TRACKED_ALLOCATION_BUDGET_GIB}) "
             f"should equal ORCHESTRATOR ({ORCHESTRATOR_GIB}) + LLM_WEIGHTS ({LLM_WEIGHTS_GIB}) + "
             f"KV_CACHE ({KV_CACHE_GIB}) = {expected}"
-        )
+    )
 
 
 class TestThresholdLadder:
@@ -117,7 +117,7 @@ class TestThresholdLadder:
         assert UmaBudget.THRESHOLD_WARN_GIB < UmaBudget.THRESHOLD_CRITICAL_GIB, (
             f"THRESHOLD_WARN_GIB ({UmaBudget.THRESHOLD_WARN_GIB}) should be < "
             f"THRESHOLD_CRITICAL_GIB ({UmaBudget.THRESHOLD_CRITICAL_GIB})"
-        )
+    )
 
     def test_threshold_critical_less_than_hard(self) -> None:
         """THRESHOLD_CRITICAL_GIB should be < UMA_HARD_CEILING_GIB."""
@@ -126,7 +126,7 @@ class TestThresholdLadder:
         assert UmaBudget.THRESHOLD_CRITICAL_GIB < UmaBudget.UMA_HARD_CEILING_GIB, (
             f"THRESHOLD_CRITICAL_GIB ({UmaBudget.THRESHOLD_CRITICAL_GIB}) should be < "
             f"UMA_HARD_CEILING_GIB ({UmaBudget.UMA_HARD_CEILING_GIB})"
-        )
+    )
 
     def test_threshold_emergency_within_tolerance(self) -> None:
         """THRESHOLD_EMERGENCY_GIB should be within tolerance of ceiling."""
@@ -137,7 +137,7 @@ class TestThresholdLadder:
         assert UmaBudget.THRESHOLD_EMERGENCY_GIB <= UmaBudget.UMA_HARD_CEILING_GIB + tolerance, (
             f"THRESHOLD_EMERGENCY_GIB ({UmaBudget.THRESHOLD_EMERGENCY_GIB}) too far from "
             f"UMA_HARD_CEILING_GIB ({UmaBudget.UMA_HARD_CEILING_GIB})"
-        )
+    )
 
 
 class TestBudgetBreakdown:
@@ -150,7 +150,7 @@ class TestBudgetBreakdown:
         assert ORCHESTRATOR_GIB <= UmaBudget.TRACKED_ALLOCATION_BUDGET_GIB, (
             f"ORCHESTRATOR_GIB ({ORCHESTRATOR_GIB}) > "
             f"TRACKED_ALLOCATION_BUDGET_GIB ({UmaBudget.TRACKED_ALLOCATION_BUDGET_GIB})"
-        )
+    )
 
     def test_llm_weights_within_tracked_budget(self) -> None:
         """LLM_WEIGHTS_GIB should be <= TRACKED_ALLOCATION_BUDGET_GIB."""
@@ -159,7 +159,7 @@ class TestBudgetBreakdown:
         assert LLM_WEIGHTS_GIB <= UmaBudget.TRACKED_ALLOCATION_BUDGET_GIB, (
             f"LLM_WEIGHTS_GIB ({LLM_WEIGHTS_GIB}) > "
             f"TRACKED_ALLOCATION_BUDGET_GIB ({UmaBudget.TRACKED_ALLOCATION_BUDGET_GIB})"
-        )
+    )
 
     def test_kv_cache_within_tracked_budget(self) -> None:
         """KV_CACHE_GIB should be <= TRACKED_ALLOCATION_BUDGET_GIB."""
@@ -168,7 +168,7 @@ class TestBudgetBreakdown:
         assert KV_CACHE_GIB <= UmaBudget.TRACKED_ALLOCATION_BUDGET_GIB, (
             f"KV_CACHE_GIB ({KV_CACHE_GIB}) > "
             f"TRACKED_ALLOCATION_BUDGET_GIB ({UmaBudget.TRACKED_ALLOCATION_BUDGET_GIB})"
-        )
+    )
 
     def test_sum_of_components_within_tracked_budget(self) -> None:
         """Sum of components should equal TRACKED_ALLOCATION_BUDGET_GIB."""
@@ -177,13 +177,13 @@ class TestBudgetBreakdown:
             ORCHESTRATOR_GIB,
             LLM_WEIGHTS_GIB,
             KV_CACHE_GIB,
-        )
+    )
 
         total = ORCHESTRATOR_GIB + LLM_WEIGHTS_GIB + KV_CACHE_GIB
         assert total == UmaBudget.TRACKED_ALLOCATION_BUDGET_GIB, (
             f"Sum of components ({total}) != "
             f"TRACKED_ALLOCATION_BUDGET_GIB ({UmaBudget.TRACKED_ALLOCATION_BUDGET_GIB})"
-        )
+    )
 
 
 class TestRustSynchronization:
@@ -196,7 +196,7 @@ class TestRustSynchronization:
 
             assert hasattr(memory, "get_memory_pressure_level"), (
                 "rust_extensions.memory should have get_memory_pressure_level"
-            )
+    )
         except ImportError:
             pytest.skip("rust_extensions.memory not available (requires Maturin build)")
 
@@ -207,7 +207,7 @@ class TestRustSynchronization:
 
             assert callable(set_memory_pressure_thresholds), (
                 "set_memory_pressure_thresholds should be callable"
-            )
+    )
         except ImportError:
             pytest.skip("core.memory not available")
 
@@ -222,7 +222,7 @@ class TestRustSynchronization:
             assert _HARD_RSS_GIB <= UmaBudget.MISSION_PEAK_RSS_GIB, (
                 f"_HARD_RSS_GIB ({_HARD_RSS_GIB}) should be <= "
                 f"MISSION_PEAK_RSS_GIB ({UmaBudget.MISSION_PEAK_RSS_GIB})"
-            )
+    )
         except ImportError as e:
             pytest.skip(f"Cannot test Rust sync: {e}")
 
@@ -266,7 +266,7 @@ class TestNoHardcodedValues:
 
         assert len(violations) == 0, (
             f"Found {len(violations)} hardcoded 6.25 values:\n" + "\n".join(violations[:10])
-        )
+    )
 
 
 class TestSwapTiersSSOT:

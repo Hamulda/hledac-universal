@@ -77,7 +77,7 @@ class MvDomainRecord(msgspec.Struct, gc=False):
             self.nonfeed_eligible_doh,
             self.nonfeed_eligible_wayback,
             self.nonfeed_eligible_pdns,
-        )
+    )
 
     @classmethod
     def from_row(cls, row: tuple[Any, ...]) -> MvDomainRecord:
@@ -103,7 +103,7 @@ class MvDomainRecord(msgspec.Struct, gc=False):
             nonfeed_eligible_doh=bool(row[11]),
             nonfeed_eligible_wayback=bool(row[12]),
             nonfeed_eligible_pdns=bool(row[13]),
-        )
+    )
 
 
 class DomainCandidateMvStats(msgspec.Struct, frozen=True, gc=False):
@@ -226,7 +226,7 @@ class DuckDBDomainMv:
                     logger.info(
                         "[P2-1] DuckDB domain candidates table created fresh at %s",
                         DB_PATH,
-                    )
+    )
             else:
                 with self._conn.cursor() as cur:
                     try:
@@ -277,7 +277,7 @@ class DuckDBDomainMv:
                         WHERE domain = ? AND source_family = ? AND ioc_type = ? AND dedup_key = ?
                         """,
                         [domain, source_family, ioc_type, dedup_key],
-                    )
+    )
                     row = cur.fetchone()
 
                     if row is not None:
@@ -308,7 +308,7 @@ class DuckDBDomainMv:
                                 nonfeed_eligible_pdns,
                                 domain, source_family, ioc_type, dedup_key,
                             ],
-                        )
+    )
                     else:
                         # Enforce bounded storage (LRU eviction)
                         self._evict_if_needed(cur)
@@ -328,7 +328,7 @@ class DuckDBDomainMv:
                                 nonfeed_eligible_ct, nonfeed_eligible_doh,
                                 nonfeed_eligible_wayback, nonfeed_eligible_pdns,
                             ],
-                        )
+    )
                     return True
             except Exception as exc:
                 logger.warning("[P2-1] upsert_candidate failed: %s", exc)
@@ -449,7 +449,7 @@ class DuckDBDomainMv:
                         f"""SELECT COUNT(*), COUNT(DISTINCT domain),
                         MIN(last_seen), MAX(last_seen), AVG(seen_count)
                         FROM {_TABLE_NAME};"""
-                    )
+    )
                     row = cur.fetchone()
                     total_rows = row[0] if row else 0
                     unique_domains = row[1] if row else 0
@@ -470,7 +470,7 @@ class DuckDBDomainMv:
                         try:
                             cur.execute(
                                 f"SELECT COUNT(*) FROM {_TABLE_NAME} WHERE {cond};"  # nosem: formatted-sql — _TABLE_NAME is module-level constant, cond is allowlisted above
-                            )
+    )
                             r = cur.fetchone()
                             return int(r[0]) if r else 0
                         except Exception:
@@ -497,7 +497,7 @@ class DuckDBDomainMv:
                         eligible_doh_count=doh_count,
                         eligible_wayback_count=wayback_count,
                         eligible_pdns_count=pdns_count,
-                    )
+    )
             except Exception as exc:
                 logger.warning("[P2-1] stats failed: %s", exc)
                 return DomainCandidateMvStats(0, 0, None, None, 0.0, 0, 0, 0, 0)
@@ -521,10 +521,10 @@ class DuckDBDomainMv:
                     SELECT row_id FROM {_TABLE_NAME}
                     ORDER BY last_seen ASC
                     LIMIT ?
-                )
+    )
                 """,
                 [excess],
-            )
+    )
             logger.debug("[P2-1] LRU evicted %d rows", excess)
 
     def close(self) -> None:
@@ -576,7 +576,7 @@ async def _mv_refresh_loop() -> None:
                 "[P2-1] MV refresh OK (no-op): %d rows, %d domains",
                 stats.total_rows,
                 stats.unique_domains,
-            )
+    )
 
 
 @asynccontextmanager

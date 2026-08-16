@@ -225,7 +225,7 @@ class _SemaphoreManager:
             from hledac.universal._core.concurrency_registry import (
                 ConcurrencyCategory,
                 concurrency_budget,
-            )
+    )
             budget = await concurrency_budget(ConcurrencyCategory.HTTP_LANE)
             return budget.limit
         except Exception:  # noqa: BLE001 — fail-soft: fallback to default
@@ -316,7 +316,7 @@ class _RetryEngine:
             "incomplete chunked read", "peer closed connection",
             "connection reset by peer", "curl error",
             "server disconnected", "handshake failure",
-        )
+    )
 
     def should_retry(self, status_code: int, error: str | None) -> bool:
         """Determine if a fetch attempt should be retried."""
@@ -367,7 +367,7 @@ class _CircuitBreakerGuard:
             from hledac.universal.transport.circuit_breaker import (
                 CircuitBreaker,
                 DomainCircuitBreakerRegistry,
-            )
+    )
             breaker: CircuitBreaker | None = DomainCircuitBreakerRegistry.get(domain)
             if breaker is not None and breaker.is_open():
                 return (True, f"circuit_open:{domain}")
@@ -426,7 +426,7 @@ class _BackendResolver:
             POLICY_TOR,
             TransportKind,
             TransportPolicy,
-        )
+    )
 
         _map: dict[Profile, TransportPolicy] = {
             Profile.DEFAULT: POLICY_CLEARNET_H2,
@@ -556,13 +556,13 @@ class HttpTransport:
             max_redirects=max_redirects,
             verify_ssl=verify_ssl,
             tls_profile=tls_profile,
-        )
+    )
         self._profile = Profile(str(profile))
         self._qos = QoS[str(qos).upper()] if isinstance(qos, str) else qos
         self._retry_engine = _RetryEngine(
             max_retries=self._qos.max_retries,
             base_backoff_s=self._qos.base_backoff_s,
-        )
+    )
         self._sem_acquired = False
         self._gsem: asyncio.Semaphore | None = None
         self._hsem: asyncio.Semaphore | None = None
@@ -612,7 +612,7 @@ class HttpTransport:
 
         ok, client, backend_name, policy = await _backend_resolver.resolve(
             self._profile, url, tls_profile=self._config.tls_profile,
-        )
+    )
         if not ok or client is None:
             return (False, backend_name or "backend_unavailable")
 
@@ -651,7 +651,7 @@ class HttpTransport:
                 circuit_breaker_open=True,
                 profile_used=str(self._profile),
                 elapsed_ms=(time.monotonic() - t0_total) * 1000,
-            )
+    )
 
         # ── Retry loop ─────────────────────────────────────────────────
         last_result: HttpResult | None = None
@@ -668,7 +668,7 @@ class HttpTransport:
                         result = await safe_wait_for(
                             self._do_fetch(url, timeout_s, max_bytes, headers),
                             timeout=ttfb_timeout_s,
-                        )
+    )
                     except asyncio.TimeoutError:
                         result = HttpResult(
                             url=url,
@@ -677,7 +677,7 @@ class HttpTransport:
                             retry_count=retry_count,
                             profile_used=str(self._profile),
                             elapsed_ms=(time.monotonic() - t0_total) * 1000,
-                        )
+    )
                 else:
                     result = await self._do_fetch(url, timeout_s, max_bytes, headers)
             except asyncio.CancelledError:
@@ -690,7 +690,7 @@ class HttpTransport:
                     retry_count=retry_count,
                     profile_used=str(self._profile),
                     elapsed_ms=(time.monotonic() - t0_total) * 1000,
-                )
+    )
 
             last_result = result
 
@@ -711,7 +711,7 @@ class HttpTransport:
                     "[HttpTransport] retry %d/%d for %s after %.2fs (error=%s)",
                     attempt + 1, self._retry_engine.max_retries,
                     url, sleep_s, result.error,
-                )
+    )
                 await asyncio.sleep(sleep_s)
 
         # All retries exhausted
@@ -725,7 +725,7 @@ class HttpTransport:
             retry_count=retry_count,
             profile_used=str(self._profile),
             elapsed_ms=(time.monotonic() - t0_total) * 1000,
-        )
+    )
 
     async def _do_fetch(
         self, url: str, timeout_s: float, max_bytes: int, headers: dict[str, str],
@@ -742,7 +742,7 @@ class HttpTransport:
                 failure_stage="backend_init",
                 profile_used=str(self._profile),
                 elapsed_ms=(time.monotonic() - t0) * 1000,
-            )
+    )
 
         # ── JS/Playwright path ──────────────────────────────────────────
         if self._profile == Profile.JS:
@@ -762,7 +762,7 @@ class HttpTransport:
             failure_stage="backend_dispatch",
             profile_used=str(self._profile),
             elapsed_ms=(time.monotonic() - t0) * 1000,
-        )
+    )
 
     async def _fetch_httpx(
         self, url: str, timeout_s: float, max_bytes: int,
@@ -776,7 +776,7 @@ class HttpTransport:
                 headers=headers,
                 timeout=timeout_s,
                 follow_redirects=self._config.follow_redirects,
-            )
+    )
             body = resp.content[:max_bytes]
             elapsed = (time.monotonic() - t0) * 1000
             return HttpResult(
@@ -792,7 +792,7 @@ class HttpTransport:
                 headers=dict(resp.headers),
                 backend="httpx",
                 profile_used=str(self._profile),
-            )
+    )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -804,7 +804,7 @@ class HttpTransport:
                 backend="httpx",
                 profile_used=str(self._profile),
                 elapsed_ms=elapsed,
-            )
+    )
 
     async def _fetch_curl_cffi(
         self, url: str, timeout_s: float, max_bytes: int,
@@ -816,7 +816,7 @@ class HttpTransport:
             TransportKind,
             _I2P_PROXY,
             _TOR_PROXY,
-        )
+    )
 
         session = self._client
         policy = self._policy
@@ -846,7 +846,7 @@ class HttpTransport:
                 timeout=timeout_s,
                 proxies=proxies,
                 follow_redirects=self._config.follow_redirects,
-            )
+    )
             body = resp.content[:max_bytes]
             elapsed = (time.monotonic() - t0) * 1000
 
@@ -854,7 +854,7 @@ class HttpTransport:
             try:
                 from hledac.universal.transport.http3_lane import (
                     record_from_curl_cffi_result as _record_h3,
-                )
+    )
                 _record_h3(url, resp.headers)
             except Exception:  # noqa: BLE001
                 pass
@@ -881,7 +881,7 @@ class HttpTransport:
                 headers=resp_headers,
                 backend="curl_cffi",
                 profile_used=str(self._profile),
-            )
+    )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -893,7 +893,7 @@ class HttpTransport:
                 backend="curl_cffi",
                 profile_used=str(self._profile),
                 elapsed_ms=elapsed,
-            )
+    )
 
     async def _fetch_js(
         self, url: str, timeout_s: float, max_bytes: int, t0: float,
@@ -905,7 +905,7 @@ class HttpTransport:
             html = await safe_wait_for(
                 _fetch_with_playwright(url, timeout=timeout_s),
                 timeout=timeout_s + 10,  # playwright needs extra overhead
-            )
+    )
             elapsed = (time.monotonic() - t0) * 1000
             if html:
                 body = html.encode("utf-8")[:max_bytes]
@@ -920,7 +920,7 @@ class HttpTransport:
                     elapsed_ms=elapsed,
                     backend="playwright",
                     profile_used="js",
-                )
+    )
             return HttpResult(
                 url=url,
                 error="playwright_empty_response",
@@ -928,7 +928,7 @@ class HttpTransport:
                 backend="playwright",
                 profile_used="js",
                 elapsed_ms=elapsed,
-            )
+    )
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
@@ -940,7 +940,7 @@ class HttpTransport:
                 backend="playwright",
                 profile_used="js",
                 elapsed_ms=elapsed,
-            )
+    )
         except Exception as exc:
             elapsed = (time.monotonic() - t0) * 1000
             return HttpResult(
@@ -950,7 +950,7 @@ class HttpTransport:
                 backend="playwright",
                 profile_used="js",
                 elapsed_ms=elapsed,
-            )
+    )
 
     # ── Public API: get (httpx.Response-like) ───────────────────────────
 
@@ -1016,7 +1016,7 @@ class HttpTransport:
                 from hledac.universal._core.concurrency_registry import (
                     ConcurrencyCategory,
                     concurrency_budget,
-                )
+    )
                 budget = await concurrency_budget(ConcurrencyCategory.HTTP_LANE)
                 concurrency = budget.limit
             except Exception:  # noqa: BLE001
@@ -1037,7 +1037,7 @@ class HttpTransport:
                         url=url,
                         error=f"{type(exc).__name__}:{exc}",
                         failure_stage="batch_fetch",
-                    )
+    )
 
         try:
             async with asyncio.TaskGroup() as tg:
@@ -1053,7 +1053,7 @@ class HttpTransport:
                     url=urls[i],
                     error="batch_fetch_failed",
                     failure_stage="batch_fetch",
-                )
+    )
 
         return results  # type: ignore[return-value]
 
@@ -1124,7 +1124,7 @@ class _ResponseAdapter:
             f"<Response [{self.status_code}] "
             f"backend={self._result.backend} "
             f"profile={self._result.profile_used}>"
-        )
+    )
 
 
 # ── Module-level telemetry ──────────────────────────────────────────────────

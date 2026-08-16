@@ -201,7 +201,7 @@ class SharedWorkerPool:
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="hledac-shared",
-        )
+    )
         self._active_count = 0
         self._async_lock: asyncio.Lock | None = None
         self._last_state: str | None = None
@@ -238,7 +238,7 @@ class SharedWorkerPool:
             self._executor = ThreadPoolExecutor(
                 max_workers=target_workers,
                 thread_name_prefix="hledac-shared",
-            )
+    )
             self._max_workers = target_workers
             # Give in-flight tasks a chance to complete before shutting down old executor
             old_executor.shutdown(wait=False)
@@ -422,7 +422,7 @@ class RustWorkerPool:
                 f"for {self._pool_type} pool",
                 RuntimeWarning,
                 stacklevel=2,
-            )
+    )
             return await get_shared_pool().run(fn, *args, timeout=timeout, **kwargs)
 
         # R6: Centralized Rust access via core.rust_backend
@@ -470,7 +470,7 @@ class RustWorkerPool:
                 args,
                 trace_id,
                 span_id,
-            )
+    )
 
         try:
             # Submit to rayon dispatcher via channel in background thread, get opaque handle

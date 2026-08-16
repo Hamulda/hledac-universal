@@ -194,7 +194,7 @@ class SemanticDeduplicator(BaseDeduplicator):
                 dim=config.embedding_dim,
                 dtype=np.float16,
                 l1_max_mb=256.0,
-            )
+    )
         else:
             # Fallback: pure Python LRUCache (replaces OrderedDict)
             from hledac.universal.utils.lru_cache import LRUCache

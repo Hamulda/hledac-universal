@@ -220,7 +220,7 @@ def _add_compressed_evidence(
                 f"[BUNDLER] Added evidence.jsonl.zst "
                 f"({len(evidence_bytes)} → {len(evidence_compressed)} bytes, "
                 f"ratio={ratio:.2%})"
-            )
+    )
         else:
             artifacts["evidence.jsonl"] = evidence_bytes
             manifest_entries.append({
@@ -477,7 +477,7 @@ def verify_bundle(bundle_path: Path) -> dict[str, Any]:
 
             manifest_entries = _parse_manifest_entries(
                 manifest_file.read().decode("utf-8")
-            )
+    )
 
             for filename, expected_hash in manifest_entries.items():
                 if filename == "manifest.sha256":
@@ -493,7 +493,7 @@ def verify_bundle(bundle_path: Path) -> dict[str, Any]:
                     result["errors"].append(
                         f"{filename}: hash mismatch "
                         f"(expected {expected_hash[:16]}..., got {actual_hash[:16]}...)"
-                    )
+    )
                 else:
                     result["files_checked"] += 1
 
@@ -627,7 +627,7 @@ def _index_evidence_file(
             _index_single_line(
                 line, entity_index, sha256, data_offset, data_length,
                 sprint_id, bundle_path, now
-            )
+    )
     except Exception as e:
         logger.debug("[BUNDLER] Evidence indexing failed: %s", e)
 
@@ -664,7 +664,7 @@ def _extract_tar_member(
         _index_evidence_file(
             data, member.name, entity_index, data_offset, data_length,
             sprint_id, bundle_path, now
-        )
+    )
 
     return data
 
@@ -729,7 +729,7 @@ def extract_bundle_streaming(
                             logger.debug(
                                 "[BUNDLER] Loaded %d entries from existing %s",
                                 len(existing_index), ENTITY_INDEX_FILENAME
-                            )
+    )
                 except Exception as e:
                     logger.debug("[BUNDLER] Failed to load existing entity_index: %s", e)
 
@@ -740,7 +740,7 @@ def extract_bundle_streaming(
                     _extract_tar_member(
                         tar2, member, extracted_dir, tar_buffer,
                         sprint_id, bundle_path, entity_index, now
-                    )
+    )
 
     except Exception as e:
         logger.warning("[BUNDLER] Streaming extraction failed: %s", e)
@@ -800,7 +800,7 @@ async def index_bundle_entities(
                     entry["confidence_sum"] / entry["source_count"]
                     if entry["source_count"] > 0
                     else 0.5
-                )
+    )
                 # _sync_upsert_cross_sprint_entity is synchronous — run in thread pool
                 ok = await asyncio.to_thread(
                     sync_method,
@@ -810,7 +810,7 @@ async def index_bundle_entities(
                     ts=entry["last_confirmed_ts"],
                     confidence=avg_confidence,
                     content_hash=entry.get("sha256"),
-                )
+    )
                 if ok:
                     indexed += 1
             except Exception:  # noqa: BLE001
@@ -820,7 +820,7 @@ async def index_bundle_entities(
             "[BUNDLER] Indexed %d entities from sprint %s into cross_sprint_entity_index",
             indexed,
             sprint_id,
-        )
+    )
 
     except Exception as e:
         logger.warning("[BUNDLER] Entity indexing failed: %s", e)
@@ -870,7 +870,7 @@ def _add_entity_index_to_bundle(
             ENTITY_INDEX_FILENAME,
             len(entity_index),
             len(index_bytes),
-        )
+    )
     except Exception as e:
         logger.warning("[BUNDLER] Failed to add entity_index to bundle: %s", e)
 
@@ -931,17 +931,17 @@ async def bundle_and_index_sprint(
                 try:
                     bundle_path = await _rebuild_bundle_with_entity_index(
                         bundle_path, sprint_id, entity_index
-                    )
+    )
                 except Exception as rebuild_err:
                     logger.warning(
                         "[BUNDLER] [NEXTGEN-04] Bundle rebuild failed: %s",
                         rebuild_err,
-                    )
+    )
             
             logger.info(
                 "[BUNDLER] [NEXTGEN-04] Built entity_index with %d entries for mmap delta",
                 len(entity_index),
-            )
+    )
         except Exception as e:
             logger.warning("[BUNDLER] Entity indexing failed: %s", e)
 
@@ -1004,21 +1004,21 @@ async def _rebuild_bundle_with_entity_index(
             logger.info(
                 "[BUNDLER] [NEXTGEN-04] Rebuilt bundle with entity_index: %s",
                 new_bundle_path,
-            )
+    )
             return new_bundle_path
         elif new_bundle_path:
             # Same path - bundle was overwritten in place
             logger.debug(
                 "[BUNDLER] [NEXTGEN-04] Bundle updated in place with entity_index: %s",
                 new_bundle_path,
-            )
+    )
             return new_bundle_path
         else:
             # _create_bundle_archive returned None - fall back to original
             logger.warning(
                 "[BUNDLER] [NEXTGEN-04] Bundle rebuild failed, using original: %s",
                 original_bundle_path,
-            )
+    )
             return original_bundle_path
         
     except Exception as e:

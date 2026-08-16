@@ -147,7 +147,7 @@ async def _fetch_from_ipfs(query: str, semaphore: asyncio.Semaphore) -> tuple[li
                             ts=time.time(),
                             provenance=(query,),
                             payload_text=decode_response_bytes(content)[:4096] if isinstance(content, bytes) else str(content)[:4096]
-                        )
+    )
                         return ([finding], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=1, success=True, error=None))
                     return ([], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=0, success=False, error='uri_resolution_failed'))
 

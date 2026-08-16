@@ -55,10 +55,10 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 _ANTI_BOT_PROFILES_ENABLED: bool = (
     os.getenv("HLEDAC_ANTI_BOT_PROFILES", "1") != "0"
-)
+    )
 _ANTI_BOT_PROFILES_MAX_ROWS: int = int(
     os.getenv("HLEDAC_ANTI_BOT_PROFILES_MAX_ROWS", "5000")
-)
+    )
 # In-memory cache config
 _PROFILE_CACHE_MAX: int = 256
 _PROFILE_CACHE_TTL_S: float = 600.0  # 10 minutes
@@ -233,7 +233,7 @@ class AntiBotProfileService:
         self._cache: _ProfileCache = _ProfileCache(
             max_entries=_PROFILE_CACHE_MAX,
             ttl_s=_PROFILE_CACHE_TTL_S,
-        )
+    )
         self._evict_lock: threading.Lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -295,7 +295,7 @@ class AntiBotProfileService:
                 challenge_type=challenge_type,
                 block_pattern=block_pattern,
                 success=False,
-            )
+    )
             # Auto-determine stealth level from accumulated challenges
             merged = self._determine_stealth_level(merged)
             await self._persist(merged)
@@ -349,7 +349,7 @@ class AntiBotProfileService:
                 last_challenge_seen=current.last_challenge_seen,
                 last_bypass_success=now,
                 first_seen=current.first_seen if current.first_seen > 0 else now,
-            )
+    )
             merged = self._determine_stealth_level(merged)
             await self._persist(merged)
         except Exception:  # noqa: BLE001 — fail-safe
@@ -449,7 +449,7 @@ class AntiBotProfileService:
             last_challenge_seen=now if not success else current.last_challenge_seen,
             last_bypass_success=current.last_bypass_success,
             first_seen=current.first_seen if current.first_seen > 0 else now,
-        )
+    )
 
     def _determine_stealth_level(self, profile: AntiBotProfile) -> AntiBotProfile:
         """Auto-determine stealth level from accumulated profile data.
@@ -497,7 +497,7 @@ class AntiBotProfileService:
             last_challenge_seen=profile.last_challenge_seen,
             last_bypass_success=profile.last_bypass_success,
             first_seen=profile.first_seen,
-        )
+    )
 
     @staticmethod
     def _derive_bypass_strategy(profile: AntiBotProfile, stealth_level: str) -> str:
@@ -530,7 +530,7 @@ class AntiBotProfileService:
                     self._store._file_conn  # type: ignore[union-attr] # noqa: SLF001
                     if self._store._db_path  # type: ignore[union-attr] # noqa: SLF001
                     else self._store._persistent_conn  # type: ignore[union-attr] # noqa: SLF001
-                )
+    )
                 if conn is None:
                     return None
                 r = conn.execute(
@@ -563,14 +563,14 @@ class AntiBotProfileService:
                     last_challenge_seen=float(r[13]) if r[13] else 0.0,
                     last_bypass_success=float(r[14]) if r[14] else 0.0,
                     first_seen=float(r[15]) if r[15] else 0.0,
-                )
+    )
             except Exception:  # noqa: BLE001 — fail-safe
                 return None
 
         return await loop.run_in_executor(
             self._store._shared_executor,  # type: ignore[union-attr] # noqa: SLF001
             _sync,
-        )
+    )
 
     async def _persist(self, profile: AntiBotProfile) -> None:
         """Persist anti-bot profile to DuckDB with LRU eviction."""
@@ -588,7 +588,7 @@ class AntiBotProfileService:
                     self._store._file_conn  # type: ignore[union-attr] # noqa: SLF001
                     if self._store._db_path  # type: ignore[union-attr] # noqa: SLF001
                     else self._store._persistent_conn  # type: ignore[union-attr] # noqa: SLF001
-                )
+    )
                 if conn is None:
                     return
 
@@ -598,12 +598,12 @@ class AntiBotProfileService:
                     _dt.datetime.fromtimestamp(profile.last_challenge_seen, tz=_dt.timezone.utc).isoformat()
                     if profile.last_challenge_seen > 0
                     else None
-                )
+    )
                 last_bypass = (
                     _dt.datetime.fromtimestamp(profile.last_bypass_success, tz=_dt.timezone.utc).isoformat()
                     if profile.last_bypass_success > 0
                     else None
-                )
+    )
                 block_patterns_str = ",".join(profile.block_patterns) if profile.block_patterns else ""
 
                 conn.execute(
@@ -647,7 +647,7 @@ class AntiBotProfileService:
                         last_challenge,
                         last_bypass,
                     ],
-                )
+    )
 
                 # LRU eviction — thread-safe via threading.Lock
                 with self._evict_lock:
@@ -662,14 +662,14 @@ class AntiBotProfileService:
                             "ORDER BY updated_at ASC LIMIT ?"
                             ")",
                             [excess],
-                        )
+    )
             except Exception:  # noqa: BLE001 — fail-safe
                 pass
 
         await loop.run_in_executor(
             self._store._shared_executor,  # type: ignore[union-attr] # noqa: SLF001
             _sync_upsert,
-        )
+    )
 
     @staticmethod
     def _parse_json_tuple(raw: str) -> tuple[str, ...]:
@@ -702,7 +702,7 @@ def _make_anti_bot_service(store: DuckDBShadowStore | None) -> AntiBotProfileSer
 _get_anti_bot_service = module_singleton_getter(
     singleton_name="_anti_bot_profile_singleton",
     factory=lambda: _make_anti_bot_service(None),
-)
+    )
 
 
 def get_anti_bot_profile_service(

@@ -32,11 +32,7 @@ from hledac.universal.utils.rate_limiters import get_limiter
 from hledac.universal.security.secrets_scrubber import redact_censys_credentials, safe_error_log
 
 # DRY: Shared search lane utilities (DRY-2026-08-07)
-
-
-
-
-
+from hledac.universal.recon.search_lane_utils import (
     apply_jitter,
     circuit_breaker_check,
     http_status_to_failure_kind,
@@ -47,8 +43,7 @@ from hledac.universal.security.secrets_scrubber import redact_censys_credentials
 logger = logging.getLogger(__name__)
 
 CENSYS_SEARCH_API = "https://search.censys.io/api/v1/search/ipv4"
-
-from _core import acloseCENSYS_VIEW_API = "https://search.censys.io/api/v1/view/ipv4"
+CENSYS_VIEW_API = "https://search.censys.io/api/v1/view/ipv4"
 RATE_LIMIT_KEY = "censys_api"
 
 # [FINAL]-019: Anti-correlation jitter for SIEM fingerprint defense.

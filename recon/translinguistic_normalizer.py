@@ -944,7 +944,7 @@ def batch_normalize_translinguistic(texts: list[str]) -> list[str]:
         logger.warning(
             f'batch_normalize_translinguistic: {len(texts)} exceeds '
             f'cap {_BATCH_HARD_CAP}, truncating'
-        )
+    )
         texts = texts[:_BATCH_HARD_CAP]
 
     # R6: Centralized Rust access via core.rust_backend

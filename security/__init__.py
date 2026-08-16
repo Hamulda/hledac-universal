@@ -60,11 +60,7 @@ from hledac.universal.security.media_sandbox import (
 )  # noqa: F401, E402
 
 # ADVERSARY-001-INTERNAL-007: Artifact verifier
-
-
-
-
-
+from hledac.universal.security.artifact_verifier import (
     ArtifactVerifier,
     ArtifactInstallResult,
     ArtifactManifest,
@@ -75,8 +71,7 @@ from hledac.universal.security.media_sandbox import (
 __all__ = [
     "ArtifactInstallResult",
     "ArtifactManifest",
-
-from _core import aclose    "ArtifactVerifier",
+    "ArtifactVerifier",
     "EphemeralStateAnnihilator",
     "FileRiskLevel",
     "get_artifact_verifier",

@@ -83,14 +83,14 @@ class MlxcelBackend:
                 system_msg=request.system_msg,
                 thinking=request.thinking,
                 adapter_path=request.adapter_path,
-            )
+    )
             latency_ms = (time.monotonic() - t0) * 1000
             return InferenceResponse(
                 text=result.text,
                 tokens_generated=result.tokens_generated,
                 latency_ms=latency_ms,
                 backend=InferenceBackend.MLXCEL,
-            )
+    )
         except Exception as exc:
             raise InferenceError(
                 f"mlxcel generate failed: {exc}",

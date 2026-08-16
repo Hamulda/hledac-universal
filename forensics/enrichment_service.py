@@ -541,7 +541,7 @@ class ForensicsEnricher:
             x_originating_ip = (
                 enrich_data.get('x_originating_ip_enrichment', {})
                 .get('ip', '')
-            )
+    )
             ioc_text_parts: list[str] = []
             if payload_text:
                 ioc_text_parts.append(str(payload_text)[:8192])
@@ -601,7 +601,7 @@ class ForensicsEnricher:
                 # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
                 ioc_results = await parallel(
                     ioc_tasks, policy="log", concurrency=8, ctx="enrichment_service:ioc_bulk"
-                )
+    )
                 for item in ioc_results:
                     if isinstance(item, Exception):
                         continue
@@ -618,7 +618,7 @@ class ForensicsEnricher:
                     texts=texts,
                     source_finding_ids=source_finding_ids,
                     queries=queries,
-                )
+    )
                 for i, sfid in enumerate(finding_ids_ordered):
                     if sfid in out and all_ioc_lists[i]:
                         out[sfid]['_ioc_canonical_findings'] = all_ioc_lists[i]

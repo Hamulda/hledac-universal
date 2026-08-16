@@ -88,7 +88,7 @@ def sidecar_runner(
             module_path="hledac.universal.intel.exposure_correlator",
             factory_name="create_exposure_correlator_adapter",
             correlate_method="correlate",
-        )
+    )
 
     Then in DEFAULT_SIDECAR_RUNNERS:
         ("exposure_correlator", _ExposureCorrelatorRunner()),
@@ -121,7 +121,7 @@ def sidecar_runner(
                     _name,
                     _factory_name,
                     _module_path,
-                )
+    )
                 return None
 
         async def __call__(
@@ -146,7 +146,7 @@ def sidecar_runner(
                     _correlate_method,
                     type(e).__name__,
                     e,
-                )
+    )
                 return None
 
     return _SidecarRunner
@@ -190,7 +190,7 @@ def sidecar_runner_await(
                     _name,
                     _factory_name,
                     _module_path,
-                )
+    )
                 return None
 
         async def __call__(
@@ -215,7 +215,7 @@ def sidecar_runner_await(
                     _correlate_method,
                     type(e).__name__,
                     e,
-                )
+    )
                 return None
 
     return _SidecarRunnerAwait
@@ -272,7 +272,7 @@ class BaseSidecarRunner:
                 "[%s] import module '%s' failed",
                 self._name,
                 mp,
-            )
+    )
             return None
 
     def _create_adapter(self) -> Any | None:
@@ -288,7 +288,7 @@ class BaseSidecarRunner:
                 "[%s] factory '%s' call failed",
                 self._name,
                 self._factory_name,
-            )
+    )
             return None
 
     async def run_async(
@@ -315,7 +315,7 @@ class BaseSidecarRunner:
                 self._name,
                 type(e).__name__,
                 e,
-            )
+    )
             return None
 
     async def __call__(

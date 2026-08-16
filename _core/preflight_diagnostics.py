@@ -84,12 +84,12 @@ def _check_rust_extension() -> PreflightResult:
         has_any_symbol = any(
             hasattr(hledac_rust_extensions, sym)
             for sym in _CRITICAL_SYMBOLS
-        )
+    )
         if not has_any_symbol:
             raise ImportError(
                 f"Rust extension module is missing all critical PyO3 symbols. "
                 f"Expected at least one of: {_CRITICAL_SYMBOLS}"
-            )
+    )
 
         # Optional: Try to verify via rust_backend probe for full compatibility check
         # This is wrapped in a separate try/except to not fail if rust_backend
@@ -105,7 +105,7 @@ def _check_rust_extension() -> PreflightResult:
                     raise ImportError(
                         f"Rust extension capability score too low: {probe_result.capability_score:.2f} "
                         f"(expected >= 0.50). Binary may be incomplete or stale."
-                    )
+    )
                 probe_details = f" probe=ok cap={probe_result.capability_score:.2f}"
         except ImportError:
             # rust_backend probe failed — still OK if we have symbols
@@ -122,7 +122,7 @@ def _check_rust_extension() -> PreflightResult:
             passed=True,
             duration_ms=duration_ms,
             details=f"version={version}{probe_details}",
-        )
+    )
     except ImportError as exc:
         duration_ms = (time.perf_counter() - start) * 1000
         return PreflightResult(
@@ -132,7 +132,7 @@ def _check_rust_extension() -> PreflightResult:
             error=f"Rust extension unavailable: {exc}. "
             "Run: cd rust_extensions && maturin develop  (dev)  or  "
             "cd rust_extensions && maturin build --release && uv pip install dist/*.whl  (prod)",
-        )
+    )
     except Exception as exc:
         duration_ms = (time.perf_counter() - start) * 1000
         return PreflightResult(
@@ -140,7 +140,7 @@ def _check_rust_extension() -> PreflightResult:
             passed=False,
             duration_ms=duration_ms,
             error=f"Rust extension check failed: {exc}",
-        )
+    )
 
 
 def _check_lmdb_wal_roundtrip() -> PreflightResult:
@@ -169,7 +169,7 @@ def _check_lmdb_wal_roundtrip() -> PreflightResult:
                 writemap=False,
                 metasync=False,  # M1 8GB optimization (was True)
                 readahead=False,
-            )
+    )
 
             try:
                 # Write test record (simulates WAL write)
@@ -209,7 +209,7 @@ def _check_lmdb_wal_roundtrip() -> PreflightResult:
             passed=True,
             duration_ms=duration_ms,
             details=f"key={test_key[:20]}... verified",
-        )
+    )
     except ImportError:
         duration_ms = (time.perf_counter() - start) * 1000
         return PreflightResult(
@@ -217,7 +217,7 @@ def _check_lmdb_wal_roundtrip() -> PreflightResult:
             passed=False,
             duration_ms=duration_ms,
             error="lmdb package not available",
-        )
+    )
     except Exception as exc:
         duration_ms = (time.perf_counter() - start) * 1000
         return PreflightResult(
@@ -225,7 +225,7 @@ def _check_lmdb_wal_roundtrip() -> PreflightResult:
             passed=False,
             duration_ms=duration_ms,
             error=f"LMDB WAL round-trip failed: {exc}",
-        )
+    )
 
 
 def _check_rlimit_nofile() -> PreflightResult:
@@ -248,7 +248,7 @@ def _check_rlimit_nofile() -> PreflightResult:
                 f"Hard limit={hard_limit}. "
                 "Increase with: ulimit -n 4096  (session)  or  "
                 "launchd/limits.conf (permanent)",
-            )
+    )
 
         duration_ms = (time.perf_counter() - start) * 1000
         return PreflightResult(
@@ -256,7 +256,7 @@ def _check_rlimit_nofile() -> PreflightResult:
             passed=True,
             duration_ms=duration_ms,
             details=f"soft={soft_limit} hard={hard_limit}",
-        )
+    )
     except ImportError:
         # resource module not available (non-Unix system)
         duration_ms = (time.perf_counter() - start) * 1000
@@ -265,7 +265,7 @@ def _check_rlimit_nofile() -> PreflightResult:
             passed=True,  # Pass on non-Unix systems
             duration_ms=duration_ms,
             details="platform does not support resource limits",
-        )
+    )
     except Exception as exc:
         duration_ms = (time.perf_counter() - start) * 1000
         return PreflightResult(
@@ -273,7 +273,7 @@ def _check_rlimit_nofile() -> PreflightResult:
             passed=False,
             duration_ms=duration_ms,
             error=f"RLIMIT_NOFILE check failed: {exc}",
-        )
+    )
 
 
 def _check_memory_sys_metrics() -> PreflightResult:
@@ -308,7 +308,7 @@ def _check_memory_sys_metrics() -> PreflightResult:
                 error=f"System memory critical: {mem_info.percent:.1f}% used "
                 f"({mem_info.used_gib:.2f}/{mem_info.total_gib:.2f} GiB). "
                 "Consider freeing memory before sprint.",
-            )
+    )
 
         duration_ms = (time.perf_counter() - start) * 1000
         return PreflightResult(
@@ -317,7 +317,7 @@ def _check_memory_sys_metrics() -> PreflightResult:
             duration_ms=duration_ms,
             details=f"total={mem_info.total_gib:.2f}GiB used={mem_info.used_gib:.2f}GiB "
             f"({mem_info.percent:.1f}%)",
-        )
+    )
     except ImportError as exc:
         duration_ms = (time.perf_counter() - start) * 1000
         return PreflightResult(
@@ -325,7 +325,7 @@ def _check_memory_sys_metrics() -> PreflightResult:
             passed=False,
             duration_ms=duration_ms,
             error=f"sys_metrics unavailable: {exc}",
-        )
+    )
     except Exception as exc:
         duration_ms = (time.perf_counter() - start) * 1000
         return PreflightResult(
@@ -333,7 +333,7 @@ def _check_memory_sys_metrics() -> PreflightResult:
             passed=False,
             duration_ms=duration_ms,
             error=f"Memory check failed: {exc}",
-        )
+    )
 
 
 def run_preflight_diagnostics(max_duration_ms: float = 2000.0) -> list[PreflightResult]:
@@ -396,7 +396,7 @@ def run_preflight_diagnostics(max_duration_ms: float = 2000.0) -> list[Preflight
             "[PREFLIGHT] Duration %.1fms exceeded budget %.1fms — optimize checks",
             total_duration_ms,
             max_duration_ms,
-        )
+    )
 
     # Fail-loud: exit on any check failure
     if failed_checks:
@@ -404,7 +404,7 @@ def run_preflight_diagnostics(max_duration_ms: float = 2000.0) -> list[Preflight
             "[PREFLIGHT] FAILED: %d check(s) failed — exiting. "
             "Fix errors above and retry.",
             len(failed_checks),
-        )
+    )
         # Print detailed failure info to stderr
         for fc in failed_checks:
             print(f"[PREFLIGHT CRITICAL] {fc.name}: {fc.error}", file=sys.stderr)

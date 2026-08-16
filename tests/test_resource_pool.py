@@ -13,11 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-
-
-
-
-
+from hledac.universal._core.resource_pool import (
     PoolKind,
     _DuckDBPool,
     _CPUPool,
@@ -31,8 +27,7 @@ import pytest
 
 
 # =============================================================================
-
-from _core import aclose# DuckDB Pool Tests
+# DuckDB Pool Tests
 # =============================================================================
 
 

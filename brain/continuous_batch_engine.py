@@ -213,7 +213,7 @@ class ContinuousBatchEngine:
             policy="collect",
             concurrency=0,  # unbounded for CPU-bound prep
             ctx="continuous_batch.format_prompts",
-        )
+    )
 
         # Reconstruct (original_index, formatted_prompt) pairs, dropping failed formats.
         # A failed format means the prompt is unusable — include it in failed_indices.
@@ -247,7 +247,7 @@ class ContinuousBatchEngine:
                 return await loop.run_in_executor(
                     None,  # Use default thread pool
                     lambda fmt=formatted, sys_msg=system_for_gen: self._engine.generate(prompt=fmt, max_tokens=max_tokens, temperature=temperature, system_msg=sys_msg)
-                )
+    )
 
         # DLQ-01 FIX: Use parallel() with policy="collect" and wrap each item
         # to carry its index. This preserves failure indices so callers can
@@ -265,7 +265,7 @@ class ContinuousBatchEngine:
             policy="collect",
             concurrency=2,
             ctx="continuous_batch.generate_prompts",
-        )
+    )
 
         # Rebuild ordered results using original prompt indices.
         # formatted_prompts is list[tuple[original_idx, formatted_str]], missing failed formats.
@@ -338,7 +338,7 @@ class ContinuousBatchEngine:
                             temperature=req.temperature,
                             system_msg=req.system_msg,
                         ),
-                    )
+    )
                     if not req.future.done():
                         req.future.set_result(result)
                 except Exception as e:
@@ -355,7 +355,7 @@ class ContinuousBatchEngine:
             policy="log",
             concurrency=2,
             ctx="continuous_batch.execute_batch",
-        )
+    )
 
 class _BatchRequest:
     """Internal batch request."""

@@ -106,7 +106,7 @@ def _check_coreml_available() -> bool:
                 '  Install from Apple channel:\n'
                 '    pip install --extra-index-url https://pypi.anaconda.org/apple/repo/simple coremltools\n'
                 '  Or run once: python -m planning.prm_model_export'
-            )
+    )
             return False
     else:
         try:
@@ -154,7 +154,7 @@ class PRMFeatureVector:
         if len(self.features) != _PRM_FEATURE_DIM:
             raise ValueError(
                 f'Expected {_PRM_FEATURE_DIM} features, got {len(self.features)}'
-            )
+    )
 
     def to_list(self) -> list[float]:
         """Convert to list for CoreML input."""
@@ -256,7 +256,7 @@ class PRMFeatureExtractor:
         # 7. Avg branching factor
         f[PRMFeatureIdx.AVG_BRANCHING_FACTOR] = np.clip(
             (self._avg_branching - 1.0) / 5.0, 0.0, 1.0
-        )
+    )
 
         # 8. Dead-end probability
         f[PRMFeatureIdx.DEAD_END_PROB] = np.clip(context.dead_end_prob, 0.0, 1.0)
@@ -499,7 +499,7 @@ class PRMInference:
                 str(self._model_path),
                 _PRM_FEATURE_DIM,  # hidden_dim
                 1,   # max_seq_len (single step)
-            )
+    )
             self._model_loaded = True
             logger.debug(f'[PRM] Registered with rust.ane: {result}')
             return bool(result)
@@ -653,7 +653,7 @@ class PRMInference:
             self._numpy_weights['b1'],
             self._numpy_weights['w2'],
             self._numpy_weights['b2'],
-        )
+    )
 
         # Layer 1: 16 → 32, ReLU
         h = np.maximum(features.features @ w1 + b1, 0.0)
@@ -1123,7 +1123,7 @@ class RustPRMScorer:
         w1, b1, w2, b2 = (
             weights['w1'], weights['b1'],
             weights['w2'], weights['b2'],
-        )
+    )
         h = np.maximum(features @ w1 + b1, 0.0)
         out = float(h @ w2 + b2)
         return float(np.clip(out, -1.0, 1.0))
@@ -1137,7 +1137,7 @@ class RustPRMScorer:
         w1, b1, w2, b2 = (
             weights['w1'], weights['b1'],
             weights['w2'], weights['b2'],
-        )
+    )
         h = np.maximum(batch_matrix @ w1 + b1, 0.0)
         out = (h @ w2 + b2).flatten()
         return [float(np.clip(r, -1.0, 1.0)) for r in out]

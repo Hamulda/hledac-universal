@@ -5,7 +5,7 @@
 # produced broken output. Uses ast.unparse() to robustly find call sites.
 #
 # Pattern: safe_gather_*(<args>, label="<file>:<line>") → asyncio.gather(<args>, return_exceptions=True)
-# Removes the `from utils.async_helpers import ...` line if it only contains
+# Removes the `from utils.asyncx import ...` line if it only contains
 # safe_gather_* names.
 
 
@@ -113,16 +113,16 @@ def revert_file(path: str) -> tuple[bool, str]:
 
 
 def _strip_safe_gather_imports(source: str) -> str:
-    """Remove `from utils.async_helpers import safe_gather_*, ...` lines, keeping
-    other names if present."""
+    """Remove `from utils.asyncx import safe_gather_*, ...` lines, keeping
+    other names if present (for reverting to asyncio.gather only)."""
     new_lines = []
     for line in source.splitlines(keepends=True):
         stripped = line.strip()
-        # Match `from utils.async_helpers import ...`
+        # Match `from utils.asyncx import ...`
         m = re.match(
-            r"^from\s+utils\.async_helpers\s+import\s+(?P<names>.+?)$",
+            r"^from\s+utils\.asyncx\s+import\s+(?P<names>.+?)$",
             stripped,
-        )
+    )
         if not m:
             new_lines.append(line)
             continue
@@ -136,7 +136,7 @@ def _strip_safe_gather_imports(source: str) -> str:
             # Drop the entire line
             continue
         # Rewrite with only kept names
-        new_lines.append(f"from utils.async_helpers import {', '.join(kept)}\n")
+        new_lines.append(f"from utils.asyncx import {', '.join(kept)}\n")
     return "".join(new_lines)
 
 

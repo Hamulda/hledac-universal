@@ -125,13 +125,13 @@ _log = logging.getLogger(__name__)
 # Override via HLEDAC_TOTAL_THREAD_CAP env var
 _TOTAL_THREAD_HARD_CAP: Final[int] = int(
     os.environ.get("HLEDAC_TOTAL_THREAD_CAP", "24")
-)
+    )
 
 # Emergency cap: 12 threads when memory pressure CRITICAL or above
 # Override via HLEDAC_EMERGENCY_THREAD_CAP env var
 _EMERGENCY_THREAD_CAP: Final[int] = int(
     os.environ.get("HLEDAC_EMERGENCY_THREAD_CAP", "12")
-)
+    )
 
 # ── Per-domain worker presets ──────────────────────────────────────────────────
 
@@ -249,11 +249,11 @@ def _shutdown_all_executors(*, cancel_futures: bool = True) -> None:
                     _log.debug(
                         "[domain_executors] shutdown error for '%s'", name,
                         exc_info=True,
-                    )
+    )
         _executors.clear()
         _log.info(
             "[domain_executors] shutdown_all: %d executors shut down", len(names)
-        )
+    )
 
 
 def shutdown_all() -> None:
@@ -284,7 +284,7 @@ def _register_signal_handlers() -> None:
         _log.warning(
             "[domain_executors] signal %s received — shutting down executors",
             signal.Signals(signum).name,
-        )
+    )
         _shutdown_all_executors(cancel_futures=True)
         # Chain to original handler or default behavior
         if signum == signal.SIGINT:
@@ -430,19 +430,19 @@ def get_or_create(
                     f"emergency={emergency}). "
                     f"Cannot create executor '{name}'. "
                     f"Reuse an existing executor or reduce worker counts."
-                )
+    )
             # Clamp workers to available slots
             workers = max(1, available)
             _log.warning(
                 "[domain_executors] CAPPED '%s' to %d workers "
                 "(available=%d, cap=%d, emergency=%s)",
                 name, workers, available, effective_cap, emergency,
-            )
+    )
 
         executor = ThreadPoolExecutor(
             max_workers=workers,
             thread_name_prefix=name,
-        )
+    )
         _executors[name] = executor
 
         # One-time init on first executor creation
@@ -451,7 +451,7 @@ def get_or_create(
         _log.debug(
             "[domain_executors] Created '%s' with %d workers (total=%d/%d, emergency=%s)",
             name, workers, _get_current_total(), effective_cap, emergency,
-        )
+    )
 
         return executor
 
@@ -494,7 +494,7 @@ def register_existing(
             raise RuntimeError(
                 f"[domain_executors] HARD CAP REACHED: cannot adopt '{name}' "
                 f"({workers} workers). Current={current_total}, cap={effective_cap}."
-            )
+    )
 
         _executors[name] = executor
         _ensure_initialized()
@@ -502,7 +502,7 @@ def register_existing(
         _log.debug(
             "[domain_executors] Adopted '%s' with %d workers (total=%d/%d)",
             name, workers, _get_current_total(), effective_cap,
-        )
+    )
         return executor
 
 

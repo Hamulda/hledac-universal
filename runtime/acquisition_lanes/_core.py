@@ -13,15 +13,10 @@ Lane architecture:
 """
 
 import msgspec
-from dataclasses import dataclass, field
 from enum import StrEnum
 
 # Re-export from acquisition_strategy.py for now (until full extraction)
-
-
-
-
-
+from hledac.universal.runtime.acquisition_strategy import (
     AcquisitionLane,
     RiskLevel,
     AcquisitionLanePlan,
@@ -40,8 +35,7 @@ __all__ = [
     'RiskLevel',
     'AcquisitionLanePlan',
     'AcquisitionContext',
-
-from _core import aclose    'LaneSpec',
+    'LaneSpec',
     'LaneRule',
     'AcquisitionProfile',
     '_lc',

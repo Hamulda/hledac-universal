@@ -75,7 +75,7 @@ except ImportError:
         raise ImportError(
             "hledac_rust_extensions.h2_safari_preset not available. "
             "Ensure Rust extension is built with h2_safari_preset feature."
-        )
+    )
 
     get_preset_for_profile = _stub_fn
     get_safari18_settings = _stub_fn
@@ -141,7 +141,7 @@ class _HledacRustModule:
         raise AttributeError(
             f"module 'hledac.rust' has no attribute {name!r}. "
             f"Available: anti_analysis, stealth_bridge, tls, h2_safari_preset"
-        )
+    )
 
 
 # Module-level singleton

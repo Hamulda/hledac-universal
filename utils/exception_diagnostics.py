@@ -187,7 +187,7 @@ class ExceptionDiagnostics:
                     (cid for cid in self._cascade_ids if cid in self._by_cascade),
                     key=lambda cid: self._by_cascade[cid][0].timestamp if self._by_cascade.get(cid) else now,
                     default=None
-                )
+    )
                 if oldest_cascade:
                     self._cascade_ids.discard(oldest_cascade)
                     self._by_cascade.pop(oldest_cascade, None)
@@ -291,7 +291,7 @@ class ExceptionDiagnostics:
                 top_categories=top_categories,
                 escalation_alerts=escalation_alerts[:5],
                 exception_types=dict(exc_counts),
-            )
+    )
 
     def get_sprint_report(self, sprint_id: str) -> SprintDiagnosticReport:
         """
@@ -339,7 +339,7 @@ class ExceptionDiagnostics:
                 cascade_summary=dict(cascade_counts),
                 critical_paths=critical_paths,
                 escalation_events=escalation_events,
-            )
+    )
 
     def get_top_exceptions(self, limit: int = 10) -> list[tuple[str, int, str]]:
         """

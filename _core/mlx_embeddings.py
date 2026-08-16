@@ -16,11 +16,10 @@ warnings.warn(
     "This shim will be removed in a future sprint.",
     DeprecationWarning,
     stacklevel=2,
-)
+    )
 
 # Re-export everything from the canonical implementation.
 from hledac.universal._core.embeddings.legacy import (
-from _core._util import aclose
     # Classes
     MLXEmbeddingManager,
     EmbeddingTask,
@@ -40,7 +39,7 @@ from _core._util import aclose
     MLX_EMBEDDINGS_LOAD,
     MLX_EMBEDDINGS_AVAILABLE,
     MLX_AVAILABLE,
-)
+    )
 
 __all__ = [
     "MLXEmbeddingManager",

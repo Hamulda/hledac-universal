@@ -235,6 +235,6 @@ async def get_thermal_generation_params() -> ThermalGenerationParams:
         return ThermalGenerationParams(
             max_tokens_override=decision.max_tokens_override,
             temperature_reduction=decision.temperature_reduction,
-        )
+    )
     except Exception:
         return ThermalGenerationParams()

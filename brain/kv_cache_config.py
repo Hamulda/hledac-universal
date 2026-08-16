@@ -99,7 +99,7 @@ def get_metal_tier_thresholds() -> tuple[int, int, int]:
                 int(limit_bytes * 1.75),  # emergency — 1.75× limit
                 int(limit_bytes * 1.05),  # critical — at limit
                 int(limit_bytes * 0.70),  # warn — 70% of limit
-            )
+    )
     except Exception:  # noqa: BLE001
         pass
 
@@ -183,7 +183,7 @@ class MetalProbe:
             utilization_fraction=utilization,
             tier=tier,
             cached_at=now,
-        )
+    )
         return self._cache
 
     def clear_cache(self) -> None:

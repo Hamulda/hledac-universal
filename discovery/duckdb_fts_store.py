@@ -32,6 +32,7 @@ import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
+from hledac.universal.knowledge.duckdb_parallel import numpy_rrf_fusion
 from polars import DataFrame
 from rank_bm25 import BM25Okapi
 from _core import aclose
@@ -152,7 +153,7 @@ class DuckDBFTSStore:
             self._conn.execute(
                 "INSERT OR IGNORE INTO _fts_meta (key, value) VALUES ('schema_version', ?)",
                 [str(_SCHEMA_VERSION)]
-            )
+    )
         except Exception:  # noqa: BLE001
             pass  # fail-soft
 
@@ -411,31 +412,52 @@ class DuckDBFTSStore:
         """
         Reciprocal Rank Fusion — kombinuje FTS BM25 + ANN similarity.
 
+        ISSUE-006: NumPy vectorized implementation replaces sequential loops.
         RRF score = sum(w_i / (k + rank_i))
         FTS (BM25) ma prioritu 0.7, ANN similarity 0.3.
         """
         if not fts_results and (not ann_results):
             return []
-        scores: dict[str, tuple[float, FTSSearchResult | dict[str, Any]]] = {}
-        for i, res in enumerate(fts_results):
-            rrf_score = 0.7 * (1.0 / (k + i))
-            scores[res.doc_id] = (rrf_score, res)
-        for i, res in enumerate(ann_results):
-            entity_id = res.get('entity_id') or res.get('doc_id', '')
-            if not entity_id:
-                continue
-            rrf_score = 0.3 * (1.0 / (k + i))
-            if entity_id in scores:
-                scores[entity_id] = (scores[entity_id][0] + rrf_score, scores[entity_id][1])
-            else:
-                scores[entity_id] = (rrf_score, res)
-        ranked = sorted(scores.items(), key=lambda x: x[1][0], reverse=True)
+
+        # ISSUE-006: Convert to dict format for numpy_rrf_fusion
+        fts_dicts = [
+            {"id": res.doc_id, "rank": i, "title": res.title, "body_snippet": res.body_snippet,
+             "url": res.url, "source": res.source, "fetched_at": res.fetched_at}
+            for i, res in enumerate(fts_results)
+        ]
+        vec_dicts = [
+            {"id": res.get("entity_id", res.get("doc_id", "")), "rank": i,
+             "title": res.get("title", ""), "snippet": res.get("snippet", ""),
+             "url": res.get("url"), "source": res.get("source", "ann"),
+             "fetched_at": res.get("fetched_at", 0.0)}
+            for i, res in enumerate(ann_results) if res.get("entity_id") or res.get("doc_id")
+        ]
+
+        # ISSUE-006: Use NumPy vectorized RRF
+        rrf_result = numpy_rrf_fusion(
+            fts_dicts,
+            vec_dicts,
+            top_k=top_k,
+            k=k,
+            fts_weight=0.7,
+            vec_weight=0.3,
+        )
+
+        # Convert back to expected format
         results = []
-        for doc_id, (score, original) in ranked[:top_k]:
-            if isinstance(original, FTSSearchResult):
-                results.append({'doc_id': original.doc_id, 'title': original.title, 'body_snippet': original.body_snippet, 'url': original.url, 'source': original.source, 'rank': score, 'fetched_at': original.fetched_at, 'match_type': 'fts'})
-            else:
-                results.append({'doc_id': doc_id, 'title': original.get('title', ''), 'body_snippet': original.get('snippet', ''), 'url': original.get('url'), 'source': original.get('source', 'ann'), 'rank': score, 'fetched_at': original.get('fetched_at', 0.0), 'match_type': 'ann'})
+        for doc in rrf_result.fused_results:
+            # Check if it's from FTS or vector results
+            is_fts = "body_snippet" in doc or doc.get("title") in [r.title for r in fts_results]
+            results.append({
+                "doc_id": doc.get("id", ""),
+                "title": doc.get("title", ""),
+                "body_snippet": doc.get("body_snippet", doc.get("snippet", "")),
+                "url": doc.get("url"),
+                "source": doc.get("source", "ann"),
+                "rank": doc.get("score", 0.0),
+                "fetched_at": doc.get("fetched_at", 0.0),
+                "match_type": "fts" if is_fts else "ann",
+            })
         return results
 
     async def count(self) -> int:

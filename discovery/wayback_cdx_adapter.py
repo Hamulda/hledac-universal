@@ -52,7 +52,7 @@ def _build_error_result(
                 provider_chain=('wayback_cdx',),
                 source_family='archive',
                 error=f'{err_msg}:{error}',
-            )
+    )
 
     # Default: generic network error
     return DiscoveryBatchResult(
@@ -123,7 +123,7 @@ async def _fetch_cdx_data(
                 _WAYBACK_CDX_URL,
                 params=params,
                 headers={'User-Agent': 'Hledac/1.0 (research bot)'},
-            )
+    )
             status = response.status_code
             data = response.json() if status == 200 else None
             err = None
@@ -167,7 +167,7 @@ async def _parse_cdx_rows(rows: list, max_results: int, query: str, now_ts: floa
                 retrieved_ts=now_ts,
                 score=0.5,
                 reason="archive_snapshot",
-            )
+    )
         )
         seen_urls.add(original_url)
         if len(hits_list) >= max_results:
@@ -215,7 +215,7 @@ async def async_search_wayback_cdx(
             error_type='import_error',
             elapsed_s=elapsed,
             error=f'session_pool_unavailable:{exc}',
-        )
+    )
 
     params = {
         'url': query,
@@ -258,7 +258,7 @@ async def async_search_wayback_cdx(
                 provider_name='wayback_cdx',
                 provider_chain=('wayback_cdx',),
                 source_family='archive',
-            )
+    )
 
         # Skip header row if present
         rows = data[1:] if data and data[0] == ['url', 'timestamp', 'original', 'mimetype', 'statuscode'] else data
@@ -271,7 +271,7 @@ async def async_search_wayback_cdx(
             source_family='archive',
             elapsed_s=elapsed,
             error_type='none' if hits_list else 'provider_empty',
-        )
+    )
 
     except asyncio.CancelledError:
         raise  # Re-raise CancelledError — do not swallow

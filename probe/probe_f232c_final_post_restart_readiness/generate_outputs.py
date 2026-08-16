@@ -7,7 +7,7 @@ from _core import aclose
 spec = importlib.util.spec_from_file_location(
     'tools.final_prelive_readiness',
     '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/final_prelive_readiness.py'
-)
+    )
 module = importlib.util.module_from_spec(spec)
 sys.modules['tools.final_prelive_readiness'] = module
 spec.loader.exec_module(module)
@@ -164,7 +164,7 @@ commands_json = {
                 '--repo-root . --profile nonfeed_diagnostic180 --sprint-id F232C '
                 '--output-json probe_f232c_final_post_restart_readiness/research_quality_score.json '
                 '--output-md probe_f232c_final_post_restart_readiness/RESEARCH_QUALITY_SCORE.md'
-            )
+    )
         },
         {
             'step': 4,
@@ -173,7 +173,7 @@ commands_json = {
                 'python -m tools.live_result_sanity '
                 '--repo-root . --profile nonfeed_diagnostic180 '
                 '--output-json probe_f232c_final_post_restart_readiness/live_result_sanity.json'
-            )
+    )
         },
         {
             'step': 5,
@@ -182,7 +182,7 @@ commands_json = {
                 'python -m tools.evidence_delta_memory '
                 '--repo-root . --profile nonfeed_diagnostic180 '
                 '--output-json probe_f232c_final_post_restart_readiness/evidence_delta_memory.json'
-            )
+    )
         },
         {
             'step': 6,
@@ -192,7 +192,7 @@ commands_json = {
                 '--repo-root . '
                 '--output-json probe_f232c_final_post_restart_readiness/f231_artifact_inventory.json '
                 '--output-md probe_f232c_final_post_restart_readiness/F231_ARTIFACT_INVENTORY.md'
-            )
+    )
         }
     ],
     'current_verdict': result.verdict.value,

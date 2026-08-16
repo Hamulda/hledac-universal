@@ -84,7 +84,7 @@ _RE_EMAIL = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
 # SSH keys in git configs may span multiple lines or have embedded newlines
 _RE_SSH_KEY = re.compile(
     r'(?:ssh-rsa|ecdsa-sha2-nistp\d+|ssh-ed25519|sk-ssh-ed25519@openssh\.com)[\s\S]{10,1024}?(?=\n|$)'
-)
+    )
 
 def _make_ioc_id(ioc_type: str, value: str) -> str:
     """Generate a deterministic 64-bit hex ID for an IOC."""
@@ -348,7 +348,7 @@ class IOCGraph:
                 'MATCH (i:IOC), (f:FACE) WHERE i.id = $ioc AND f.id = $face '
                 'CREATE (i)-[r:HAS_FACE {confidence: $conf, source_type: $src, first_seen: $ts, last_seen: $ts}]->(f)',
                 {'ioc': ioc_id, 'face': face_id, 'conf': confidence, 'src': source_type, 'ts': ts}
-            )
+    )
         except Exception as e:
             logger.debug('[IOCGraph] link_identity_face failed: %s', e)
 
@@ -377,7 +377,7 @@ class IOCGraph:
                 'MATCH (i:IOC), (v:VOICEPRINT) WHERE i.id = $ioc AND v.id = $voice '
                 'CREATE (i)-[r:HAS_VOICEPRINT {confidence: $conf, source_type: $src, first_seen: $ts, last_seen: $ts}]->(v)',
                 {'ioc': ioc_id, 'voice': voice_id, 'conf': confidence, 'src': source_type, 'ts': ts}
-            )
+    )
         except Exception as e:
             logger.debug('[IOCGraph] link_identity_voice failed: %s', e)
 
@@ -408,7 +408,7 @@ class IOCGraph:
                 'MATCH (f:FACE), (v:VOICEPRINT) WHERE f.id = $face AND v.id = $voice '
                 'CREATE (f)-[r:CROSS_MODAL {confidence: $conf, face_weight: $fw, voice_weight: $vw, first_seen: $ts, last_seen: $ts}]->(v)',
                 {'face': face_id, 'voice': voice_id, 'conf': confidence, 'fw': face_weight, 'vw': voice_weight, 'ts': ts}
-            )
+    )
         except Exception as e:
             logger.debug('[IOCGraph] link_face_to_voice failed: %s', e)
 
@@ -456,7 +456,7 @@ class IOCGraph:
             inference_rule=inference_rule,
             confidence=confidence,
             source_reliability=source_reliability,
-        )
+    )
 
         # Buffer for flush (temporal decay applied at flush time)
         # FIX: Use _buffer_lock to prevent race condition on concurrent writes
@@ -515,7 +515,7 @@ class IOCGraph:
         try:
             from hledac.universal.knowledge.source_reliability import (
                 get_source_reliability_tracker,
-            )
+    )
         except ImportError:
             return []
 
@@ -537,14 +537,14 @@ class IOCGraph:
                         source.ratio,
                         source.contradiction_count,
                         source.total_claims,
-                    )
+    )
             except Exception as e:
                 import logging
                 logging.warning(
                     '[IOCGraph] auto_retract_unreliable_sources '
                     'failed for %s: %s',
                     source.source_id, e,
-                )
+    )
 
         return retracted
 
@@ -584,7 +584,7 @@ class IOCGraph:
                 await asyncio.to_thread(
                     self._update_ioc_confidence_sync,
                     ioc_id, aggregated_conf, now
-                )
+    )
                 iocs_updated += 1
             except Exception as e:
                 import logging
@@ -600,7 +600,7 @@ class IOCGraph:
             'MATCH (n:IOC) WHERE n.id = $id '
             'SET n.confidence = $c, n.last_seen = $ts',
             {'id': ioc_id, 'c': confidence, 'ts': now}
-        )
+    )
 
     async def flush_buffers(self) -> dict[str, int]:
         """
@@ -664,7 +664,7 @@ class IOCGraph:
                         justification.timestamp,
                         self._decay_lambda,
                         now
-                    )
+    )
                     decayed_ioc_copy.append((ioc_type, value, decayed_conf, ts))
                 else:
                     # No JTMS fact, use base confidence
@@ -721,7 +721,7 @@ class IOCGraph:
             logging.info(
                 f'[IOCGraph] Buffer flushed: {len(ioc_created)} IOCs, '
                 f'{obs_recorded} obs, {face_created} faces, {voice_created} voices'
-            )
+    )
         
         return {
             'ioc_created': len(ioc_created),
@@ -746,7 +746,7 @@ class IOCGraph:
                     self._conn.execute(
                         'CREATE (:FACE {id: $id, embedding_dim: $dim, source_image_hash: $hash, confidence: $conf, first_seen: $ts, last_seen: $ts})',
                         {'id': face_id, 'dim': len(embedding), 'hash': source_hash, 'conf': confidence, 'ts': ts}
-                    )
+    )
                     count += 1
                 except Exception as e:
                     logger.debug('[IOCGraph] _flush_face_buffer: %s', e)
@@ -770,7 +770,7 @@ class IOCGraph:
                     self._conn.execute(
                         'CREATE (:VOICEPRINT {id: $id, embedding_dim: $dim, source_audio_hash: $hash, confidence: $conf, duration_s: $dur, first_seen: $ts, last_seen: $ts})',
                         {'id': voice_id, 'dim': len(embedding), 'hash': source_hash, 'conf': confidence, 'dur': duration, 'ts': ts}
-                    )
+    )
                     count += 1
                 except Exception as e:
                     logger.debug('[IOCGraph] _flush_voice_buffer: %s', e)
@@ -843,7 +843,7 @@ class IOCGraph:
                 'embedding_dim INTEGER, '
                 'embedding_updated_at DOUBLE'
                 ')'
-            )
+    )
             self._schema_has_temporal = True
         except Exception:  # noqa: BLE001
             pass
@@ -870,7 +870,7 @@ class IOCGraph:
                 'gnn_score DOUBLE DEFAULT 0.0, '
                 'combined_score DOUBLE DEFAULT 0.0'
                 ')'
-            )
+    )
         except Exception:  # noqa: BLE001
             pass
 
@@ -879,7 +879,7 @@ class IOCGraph:
         try:
             self._conn.execute(
                 "MATCH (n:IOC) RETURN n.embedding_table, n.embedding_row_id LIMIT 1"
-            )
+    )
             self._schema_has_embeddings = True
         except Exception:
             self._schema_has_embeddings = False
@@ -889,7 +889,7 @@ class IOCGraph:
             try:
                 self._conn.execute(
                     'MATCH (n:IOC) RETURN n.earliest_observed, n.latest_observed, n.observation_count LIMIT 1'
-                )
+    )
                 self._schema_has_temporal = True
             except Exception:
                 self._schema_has_temporal = False
@@ -899,7 +899,7 @@ class IOCGraph:
         try:
             self._conn.execute(
                 "MATCH ()-[r:PREDICTED]->() RETURN r.gnn_score, r.combined_score LIMIT 1"
-            )
+    )
             self._schema_has_gnn_scores = True
         except Exception:
             self._schema_has_gnn_scores = False
@@ -909,10 +909,10 @@ class IOCGraph:
             try:
                 self._conn.execute(
                     "ALTER (FROM)->(TO) ADD gnn_score DOUBLE DEFAULT 0.0"
-                )
+    )
                 self._conn.execute(
                     "ALTER (FROM)->(TO) ADD combined_score DOUBLE DEFAULT 0.0"
-                )
+    )
                 self._schema_has_gnn_scores = True
                 logger.info('[IOCGraph] Migrated PREDICTED edge schema with GNN fields')
             except Exception:
@@ -921,7 +921,7 @@ class IOCGraph:
                 try:
                     self._conn.execute(
                         "MATCH ()-[r:PREDICTED]->() RETURN r.gnn_score LIMIT 1"
-                    )
+    )
                     self._schema_has_gnn_scores = True
                 except Exception:
                     self._schema_has_gnn_scores = False
@@ -994,7 +994,7 @@ class IOCGraph:
                 'confidence DOUBLE, '  # Face detection confidence (0-1)
                 'first_seen DOUBLE, '
                 'last_seen DOUBLE)'
-            )
+    )
             logger.debug('[IOCGraph] FACE node table created or already exists')
         except Exception as e:
             logger.warning(f'[IOCGraph] Failed to create FACE table (may already exist): {e}')
@@ -1010,7 +1010,7 @@ class IOCGraph:
                 'duration_s DOUBLE, '  # Duration of voice sample
                 'first_seen DOUBLE, '
                 'last_seen DOUBLE)'
-            )
+    )
             logger.debug('[IOCGraph] VOICEPRINT node table created or already exists')
         except Exception as e:
             logger.warning(f'[IOCGraph] Failed to create VOICEPRINT table (may already exist): {e}')
@@ -1024,7 +1024,7 @@ class IOCGraph:
                 'source_type STRING, '  # media, social, etc.
                 'first_seen DOUBLE, '
                 'last_seen DOUBLE)'
-            )
+    )
             logger.debug('[IOCGraph] HAS_FACE relationship table created or already exists')
         except Exception as e:
             logger.warning(f'[IOCGraph] Failed to create HAS_FACE table (may already exist): {e}')
@@ -1038,7 +1038,7 @@ class IOCGraph:
                 'source_type STRING, '
                 'first_seen DOUBLE, '
                 'last_seen DOUBLE)'
-            )
+    )
             logger.debug('[IOCGraph] HAS_VOICEPRINT relationship table created or already exists')
         except Exception as e:
             logger.warning(f'[IOCGraph] Failed to create HAS_VOICEPRINT table (may already exist): {e}')
@@ -1052,7 +1052,7 @@ class IOCGraph:
                 'method STRING, '  # facenet, arcface, etc.
                 'first_seen DOUBLE, '
                 'last_seen DOUBLE)'
-            )
+    )
             logger.debug('[IOCGraph] SAME_IDENTITY relationship table created or already exists')
         except Exception as e:
             logger.warning(f'[IOCGraph] Failed to create SAME_IDENTITY table (may already exist): {e}')
@@ -1066,7 +1066,7 @@ class IOCGraph:
                 'method STRING, '  # xvectornet, etc.
                 'first_seen DOUBLE, '
                 'last_seen DOUBLE)'
-            )
+    )
             logger.debug('[IOCGraph] SAME_VOICE relationship table created or already exists')
         except Exception as e:
             logger.warning(f'[IOCGraph] Failed to create SAME_VOICE table (may already exist): {e}')
@@ -1081,7 +1081,7 @@ class IOCGraph:
                 'voice_weight DOUBLE, '  # Weight of voice signal
                 'first_seen DOUBLE, '
                 'last_seen DOUBLE)'
-            )
+    )
             logger.debug('[IOCGraph] CROSS_MODAL relationship table created or already exists')
         except Exception as e:
             logger.warning(f'[IOCGraph] Failed to create CROSS_MODAL table (may already exist): {e}')
@@ -1227,12 +1227,12 @@ class IOCGraph:
                     'CREATE (:IOC {id: $id, ioc_type: $t, value: $v, '
                     'first_seen: $ts, last_seen: $ts, confidence: $c})',
                     {'id': node_id, 't': ioc_type, 'v': value, 'ts': observed_at, 'c': confidence}
-                )
+    )
             else:
                 conn.execute(
                     'MATCH (n:IOC) WHERE n.id = $id SET n.last_seen = $ts',
                     {'id': node_id, 'ts': observed_at}
-                )
+    )
             return node_id
 
         # Temporal schema
@@ -1244,7 +1244,7 @@ class IOCGraph:
                 'earliest_observed: $eo, latest_observed: $lo, observation_count: 1})',
                 {'id': node_id, 't': ioc_type, 'v': value, 'ts': observed_at, 'c': confidence,
                  'eo': observed_at, 'lo': observed_at}
-            )
+    )
         else:
             conn.execute(
                 'MATCH (n:IOC) WHERE n.id = $id '
@@ -1252,7 +1252,7 @@ class IOCGraph:
                 'n.latest_observed = CASE WHEN $ts > COALESCE(n.latest_observed, $ts) THEN $ts ELSE n.latest_observed END, '
                 'n.observation_count = n.observation_count + 1',
                 {'id': node_id, 'ts': observed_at}
-            )
+    )
         return node_id
 
     async def record_observation(self, ioc_id_a: str, ioc_id_b: str, finding_id: str, ts: float, source_type: str) -> None:
@@ -1319,7 +1319,7 @@ class IOCGraph:
                 self._add_predicted_edge_sync,
                 src_id, dst_id, confidence, method,
                 adamic_adar, jaccard, pref_attach, common_neighbors
-            )
+    )
             return True
         except Exception as e:
             import logging
@@ -1345,7 +1345,7 @@ class IOCGraph:
         res = conn.execute(
             'MATCH (a:IOC)-[r:PREDICTED]->(b:IOC) WHERE a.id = $ida AND b.id = $idb RETURN r.confidence',
             {'ida': src_id, 'idb': dst_id}
-        )
+    )
 
         ts = time.time()
 
@@ -1374,7 +1374,7 @@ class IOCGraph:
                     'method': method,
                     'ts': ts,
                 }
-            )
+    )
         else:
             # Update existing PREDICTED edge if new one has higher confidence
             existing_conf = res.get_next()[0]
@@ -1393,7 +1393,7 @@ class IOCGraph:
                         'cn': common_neighbors,
                         'method': method,
                     }
-                )
+    )
 
     async def verify_predicted_edge(self, src_id: str, dst_id: str) -> bool:
         """
@@ -1420,13 +1420,13 @@ class IOCGraph:
             conn.execute(
                 'MATCH (a:IOC)-[r:PREDICTED]->(b:IOC) WHERE a.id = $ida AND b.id = $idb SET r.verified = true',
                 {'ida': src_id, 'idb': dst_id}
-            )
+    )
 
             # Create OBSERVED edge if it doesn't exist
             res = conn.execute(
                 'MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) WHERE a.id = $ida AND b.id = $idb RETURN r',
                 {'ida': src_id, 'idb': dst_id}
-            )
+    )
             if not res.has_next():
                 conn.execute(
                     'MATCH (a:IOC), (b:IOC) WHERE a.id = $ida AND b.id = $idb '
@@ -1438,7 +1438,7 @@ class IOCGraph:
                         'st': 'swarm_003',
                         'ts': time.time(),
                     }
-                )
+    )
 
             return True
         except Exception as e:
@@ -1477,7 +1477,7 @@ class IOCGraph:
                 'r.confidence, r.adamic_adar, r.jaccard, r.method, r.common_neighbors '
                 'ORDER BY r.confidence DESC LIMIT $lim',
                 {'min_conf': min_confidence, 'lim': limit}
-            )
+    )
 
             edges = []
             while result.has_next():
@@ -1550,7 +1550,7 @@ class IOCGraph:
         res = conn.execute(
             'UNWIND $ids AS nid MATCH (n:IOC) WHERE n.id = nid RETURN n.id',
             {'ids': node_ids}
-        )
+    )
         existing_ids: set[str] = set()
         try:
             while res.has_next():
@@ -1572,7 +1572,7 @@ class IOCGraph:
                 conn.execute(
                     'UNWIND $data AS row CREATE (:IOC {id: row.id, ioc_type: row.t, value: row.v, first_seen: row.ts, last_seen: row.ts, confidence: row.c})',
                     {'data': data}
-                )
+    )
                 created = [nid for nid, _, _, _ in new_iocs]
             except Exception:
                 for nid, t, v, c in new_iocs:
@@ -1758,7 +1758,7 @@ class IOCGraph:
             'WHERE n.value = $v AND n.ioc_type = $t AND n.id <> m.id '
             'RETURN m.id AS id, m.ioc_type AS ioc_type, m.value AS value, '
             'm.confidence AS confidence, m.first_seen AS first_seen, m.last_seen AS last_seen'
-        )
+    )
         try:
             res = conn.execute(query, {'v': ioc_value, 't': ioc_type})
             # Kuzu → Arrow zero-copy via C Data Interface (Kuzu 0.11.3+).
@@ -1795,7 +1795,7 @@ class IOCGraph:
             'WHERE n.value = $v AND n.ioc_type = $t AND n.id <> m.id '
             'RETURN m.id AS id, m.ioc_type AS ioc_type, m.value AS value, '
             'm.confidence AS confidence, m.first_seen AS first_seen, m.last_seen AS last_seen'
-        )
+    )
         res = conn.execute(query, {'v': ioc_value, 't': ioc_type})
         # Hoisted: get_column_names() is O(columns), was previously called
         # inside the loop — O(N × columns) → O(columns).
@@ -1855,7 +1855,7 @@ class IOCGraph:
             return await asyncio.to_thread(
                 self._extract_k_hop_subgraph_arrow_sync,
                 ioc_value, ioc_type, k_clamped, max_nodes, max_edges,
-            )
+    )
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] extract_k_hop_subgraph failed: {e}')
@@ -1894,7 +1894,8 @@ class IOCGraph:
                 row = seed_res.get_next()
                 if seed_id not in node_set:
                     node_set[seed_id] = {'id': seed_id, 'ioc_type': str(row[0]) if row[0] else ioc_type, 'value': str(row[1]) if row[1] else ioc_value, 'confidence': float(row[2]) if row[2] is not None else 1.0, 'first_seen': float(row[3]) if row[3] is not None else 0.0, 'last_seen': float(row[4]) if row[4] is not None else 0.0}
-        except Exception: pass
+        except Exception:  # noqa: BLE001 — best-effort; seed node fetch failed; non-critical
+            logger.debug("_add_seed_node: seed fetch failed for %s/%s", seed_id, type(e).__name__, exc_info=True)
 
     def _collect_edges_arrow(self, conn, node_ids, node_set, max_edges):
         """Collect edges using Arrow export."""
@@ -1907,7 +1908,8 @@ class IOCGraph:
                 if len(edge_set) >= max_edges: truncated = True; break
                 if (src := str(rec.get('src', ''))) in node_set and (dst := str(rec.get('dst', ''))) in node_set and (pair := (src, dst)) not in edge_set:
                     edge_set.add(pair); edges.append({'source_id': src, 'target_id': dst, 'finding_id': str(rec.get('finding_id', '')), 'source_type': str(rec.get('source_type', 'unknown')), 'confidence': 1.0, 'last_seen': float(rec.get('last_seen', 0.0) or 0.0)}); degree_map[src] += 1; degree_map[dst] += 1
-        except Exception: pass
+        except Exception:  # noqa: BLE001 — best-effort; Arrow edge export failed; non-critical
+            logger.debug("_collect_edges_arrow: Arrow export failed, %s", type(e).__name__, exc_info=True)
         return edges, truncated, degree_map
 
     def _extract_k_hop_subgraph_arrow_sync(self, ioc_value: str, ioc_type: str, k: int, max_nodes: int, max_edges: int) -> dict:
@@ -2327,7 +2329,7 @@ class IOCGraph:
                 max_nodes=max_nodes,
                 max_community_size=max_community_size,
                 include_centrality=include_centrality,
-            )
+    )
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] export_graph_topology failed: {e}')
@@ -2474,7 +2476,7 @@ class IOCGraph:
         # Sort by community size (desc), then by degree (desc)
         nodes_result.sort(
             key=lambda n: (-comm_size.get(n.get('community_id', -1), 0), -n.get('degree', 0))
-        )
+    )
         return nodes_result
 
     def _compute_topology_stats(

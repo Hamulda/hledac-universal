@@ -72,7 +72,7 @@ class UncertaintyAggregator:
                 results[entity] = (
                     self._entropy_to_confidence(uncertainty.avg_entropy_bits),
                     uncertainty.uncertainty_flag,
-                )
+    )
             else:
                 # Default: high confidence, no uncertainty flag
                 results[entity] = (1.0, "normal")

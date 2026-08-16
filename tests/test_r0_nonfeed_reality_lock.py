@@ -16,21 +16,21 @@ class TestCanonicalOwner:
     def test_runtime_authority_manifest_defines_canonical_owner(self):
         from hledac.universal.runtime_authority_manifest import (
             CANONICAL_SPRINT_OWNER,
-        )
+    )
         assert CANONICAL_SPRINT_OWNER == "hledac.universal._core.__main__.run_sprint"
 
     def test_legacy_autonomous_orchestrator_not_in_active_runtime(self):
         from hledac.universal.runtime_authority_manifest import (
             ACTIVE_RUNTIME_FILES,
             LEGACY_RUNTIME_FILES,
-        )
+    )
         assert "legacy/autonomous_orchestrator.py" in LEGACY_RUNTIME_FILES
         assert "legacy/autonomous_orchestrator.py" not in ACTIVE_RUNTIME_FILES
 
     def test_canonical_owner_not_in_legacy_or_facade(self):
         from hledac.universal.runtime_authority_manifest import (
             CANONICAL_SPRINT_OWNER,
-        )
+    )
         # canonical owner is a string path, not a file — verify structure is sound
         assert "core.__main__" in CANONICAL_SPRINT_OWNER
         assert "." not in CANONICAL_SPRINT_OWNER.split(".")[-1]  # no method dot-access
@@ -63,7 +63,7 @@ class TestSprintSchedulerWiring:
 
         assert any("acquisition_strategy" in imp for imp in imports), (
             "sprint_scheduler.py must import acquisition_strategy"
-        )
+    )
 
     def test_sprint_scheduler_calls_run_enabled_acquisition_lanes(self):
         """Verify run_enabled_acquisition_lanes is called in the acquisition lane runner."""
@@ -91,7 +91,7 @@ class TestSprintSchedulerWiring:
 
         assert "run_enabled_acquisition_lanes" in calls, (
             "acquisition_lanes.py must call run_enabled_acquisition_lanes"
-        )
+    )
 
     def test_sprint_scheduler_imports_source_finding_bridge(self):
         import ast
@@ -111,7 +111,7 @@ class TestSprintSchedulerWiring:
 
         assert imports_source_finding_bridge, (
             "sprint_scheduler.py must import source_finding_bridge"
-        )
+    )
 
 
 class TestSourceFindingBridge:
@@ -120,19 +120,19 @@ class TestSourceFindingBridge:
     def test_ct_results_to_findings_exists_and_callable(self):
         from hledac.universal.runtime.source_finding_bridge import (
             ct_results_to_findings,
-        )
+    )
         assert callable(ct_results_to_findings)
 
     def test_wayback_results_to_findings_exists_and_callable(self):
         from hledac.universal.runtime.source_finding_bridge import (
             wayback_results_to_findings,
-        )
+    )
         assert callable(wayback_results_to_findings)
 
     def test_passive_dns_results_to_findings_exists_and_callable(self):
         from hledac.universal.runtime.source_finding_bridge import (
             passive_dns_results_to_findings,
-        )
+    )
         assert callable(passive_dns_results_to_findings)
 
     def test_ct_results_to_findings_returns_tuple(self):
@@ -140,7 +140,7 @@ class TestSourceFindingBridge:
 
         from hledac.universal.runtime.source_finding_bridge import (
             ct_results_to_findings,
-        )
+    )
 
         mock_batch = MagicMock()
         mock_batch.hits = []
@@ -151,7 +151,7 @@ class TestSourceFindingBridge:
             _outcome=mock_outcome,
             query="example.com",
             sprint_id="test-sprint",
-        )
+    )
         assert isinstance(result, tuple), "ct_results_to_findings must return tuple"
         assert len(result) == 3, "ct_results_to_findings must return (findings, rejections, telemetry)"
 
@@ -160,7 +160,7 @@ class TestSourceFindingBridge:
 
         from hledac.universal.runtime.source_finding_bridge import (
             wayback_results_to_findings,
-        )
+    )
 
         mock_diff = MagicMock()
         mock_diff.change_events = []
@@ -169,7 +169,7 @@ class TestSourceFindingBridge:
             diff_result=mock_diff,
             query="example.com",
             sprint_id="test-sprint",
-        )
+    )
         assert isinstance(result, tuple), "wayback_results_to_findings must return tuple"
         assert len(result) == 3, "wayback_results_to_findings must return (findings, rejections, telemetry)"
 
@@ -178,14 +178,14 @@ class TestSourceFindingBridge:
 
         from hledac.universal.runtime.source_finding_bridge import (
             passive_dns_results_to_findings,
-        )
+    )
 
         result = passive_dns_results_to_findings(
             ips=["1.2.3.4"],
             _outcome=MagicMock(),
             query="example.com",
             sprint_id="test-sprint",
-        )
+    )
         assert isinstance(result, tuple), "passive_dns_results_to_findings must return tuple"
         assert len(result) == 3, "passive_dns_results_to_findings must return (findings, rejections, telemetry)"
 
@@ -202,7 +202,7 @@ class TestSourceFindingBridge:
 
         from hledac.universal.runtime.source_finding_bridge import (
             passive_dns_results_to_findings,
-        )
+    )
 
         # Case: None trigger — flat 0.5
         result_none = passive_dns_results_to_findings(
@@ -211,7 +211,7 @@ class TestSourceFindingBridge:
             query="example.com",
             sprint_id="test-sprint",
             trigger_confidence=None,
-        )
+    )
         findings_none, _, _ = result_none
         assert len(findings_none) == 1
         assert findings_none[0].confidence == 0.5, "None trigger → flat 0.5"
@@ -223,7 +223,7 @@ class TestSourceFindingBridge:
             query="example.com",
             sprint_id="test-sprint",
             trigger_confidence=0.8,
-        )
+    )
         findings_08, _, _ = result_08
         assert findings_08[0].confidence > 0.5, "trigger=0.8 → inherited > 0.5"
         assert findings_08[0].confidence <= 0.85, "trigger=0.8 → capped at 0.85"
@@ -235,7 +235,7 @@ class TestSourceFindingBridge:
             query="example.com",
             sprint_id="test-sprint",
             trigger_confidence=1.0,
-        )
+    )
         findings_10, _, _ = result_10
         assert findings_10[0].confidence == 0.85, "trigger=1.0 → cap 0.85"
 
@@ -246,7 +246,7 @@ class TestSourceFindingBridge:
             query="example.com",
             sprint_id="test-sprint",
             trigger_confidence=0.2,
-        )
+    )
         findings_02, _, _ = result_02
         assert findings_02[0].confidence == 0.5, "trigger=0.2 → floor at 0.5"
 
@@ -257,7 +257,7 @@ class TestSourceFindingBridge:
             query="example.com",
             sprint_id="test-sprint",
             trigger_confidence=-0.5,
-        )
+    )
         findings_neg, _, _ = result_neg
         assert findings_neg[0].confidence >= 0.0, "negative → clamped to >= 0"
 
@@ -271,7 +271,7 @@ class TestSourceFindingBridge:
             REJECTION_QUALITY_GATE,
             REJECTION_STORAGE_UNAVAILABLE,
             REJECTION_WILDCARD_DOMAIN,
-        )
+    )
         # All expected constants must be non-empty strings
         assert isinstance(REJECTION_MISSING_DOMAIN, str)
         assert isinstance(REJECTION_MISSING_VALUE, str)
@@ -289,7 +289,7 @@ class TestLivePublicPipeline:
     def test_live_public_pipeline_in_active_runtime(self):
         from hledac.universal.runtime_authority_manifest import (
             ACTIVE_RUNTIME_FILES,
-        )
+    )
         assert "pipeline/live_public_pipeline.py" in ACTIVE_RUNTIME_FILES
 
     def test_live_public_pipeline_file_exists(self):
@@ -308,19 +308,19 @@ class TestAcquisitionStrategy:
     def test_run_enabled_acquisition_lanes_exists_and_callable(self):
         from hledac.universal.runtime.acquisition_strategy import (
             run_enabled_acquisition_lanes,
-        )
+    )
         assert callable(run_enabled_acquisition_lanes)
 
     def test_acquisition_strategy_has_build_acquisition_report(self):
         from hledac.universal.runtime.acquisition_strategy import (
             build_acquisition_report,
-        )
+    )
         assert callable(build_acquisition_report)
 
     def test_acquisition_strategy_has_required_terminal_lanes(self):
         from hledac.universal.runtime.acquisition_strategy import (
             required_terminal_lanes,
-        )
+    )
         assert callable(required_terminal_lanes)
 
 
@@ -334,7 +334,7 @@ class TestNonfeedCandidateLedger:
     def test_nonfeed_candidate_ledger_has_add_ct_quarantine(self):
         from hledac.universal.runtime.nonfeed_candidate_ledger import (
             NonfeedCandidateLedger,
-        )
+    )
         ledger = NonfeedCandidateLedger()
         assert hasattr(ledger, "add_ct_quarantine")
         assert callable(ledger.add_ct_quarantine)
@@ -342,7 +342,7 @@ class TestNonfeedCandidateLedger:
     def test_nonfeed_candidate_ledger_has_add_quality_rejection(self):
         from hledac.universal.runtime.nonfeed_candidate_ledger import (
             NonfeedCandidateLedger,
-        )
+    )
         ledger = NonfeedCandidateLedger()
         assert hasattr(ledger, "add_quality_rejection")
         assert callable(ledger.add_quality_rejection)
@@ -350,7 +350,7 @@ class TestNonfeedCandidateLedger:
     def test_nonfeed_candidate_ledger_has_add_provider_failed(self):
         from hledac.universal.runtime.nonfeed_candidate_ledger import (
             NonfeedCandidateLedger,
-        )
+    )
         ledger = NonfeedCandidateLedger()
         assert hasattr(ledger, "add_provider_failed")
         assert callable(ledger.add_provider_failed)
@@ -362,7 +362,7 @@ class TestNonfeedCandidateLedger:
             FAMILY_PIVOT,
             FAMILY_PUBLIC,
             FAMILY_WAYBACK,
-        )
+    )
         assert FAMILY_PUBLIC == "PUBLIC"
         assert FAMILY_CT == "CT"
         assert FAMILY_WAYBACK == "WAYBACK"
@@ -377,7 +377,7 @@ class TestNonfeedCandidateLedger:
             STAGE_QUARANTINED,
             STAGE_REJECTED,
             STAGE_STORED,
-        )
+    )
         assert STAGE_DISCOVERED == "discovered"
         assert STAGE_QUARANTINED == "quarantined"
         assert STAGE_REJECTED == "rejected"

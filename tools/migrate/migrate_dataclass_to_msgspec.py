@@ -210,14 +210,14 @@ def analyze_class(node: ast.ClassDef, force: bool = False) -> ClassMigration:
                 node.name, node.lineno, False,
                 "post_init calls super() — external library compatibility",
                 new_decorator=new_decorator,
-            )
+    )
 
         if has_own_init(node):
             return ClassMigration(
                 node.name, node.lineno, False,
                 "has custom __init__ — keep as dataclass",
                 new_decorator=new_decorator,
-            )
+    )
 
         if node.bases:
             bases_str = [get_base_name(b) for b in node.bases]
@@ -226,19 +226,19 @@ def analyze_class(node: ast.ClassDef, force: bool = False) -> ClassMigration:
                     node.name, node.lineno, False,
                     "inherits from msgspec.Struct — already migrated",
                     new_decorator=new_decorator,
-                )
+    )
             return ClassMigration(
                 node.name, node.lineno, False,
                 f"inherits from {bases_str} — external API compatibility",
                 new_decorator=new_decorator,
-            )
+    )
 
         if has_complex_post_init(node):
             return ClassMigration(
                 node.name, node.lineno, False,
                 "complex post_init logic (loops/imports/calls) — keep as dataclass",
                 new_decorator=new_decorator,
-            )
+    )
 
     # Field transforms
     field_transforms: list[FieldTransform] = []

@@ -48,4 +48,4 @@ _IOC_TYPE_NAMES: list[str] = [name for name, _ in _IOC_PATTERNS]
 # Single combined regex — one finditer pass, no rescanning.
 _IOC_COMBINED = _re.compile(
     "|".join(f"(?P<{name}>{pattern})" for name, pattern in _IOC_PATTERNS)
-)
+    )

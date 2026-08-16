@@ -24,7 +24,7 @@ FEATURE FLAG:
 USAGE:
   from hledac.universal.knowledge.source_reliability import (
       get_source_reliability_tracker, SourceReliabilityTracker
-  )
+    )
 
   tracker = get_source_reliability_tracker()
   tracker.record_claim("source_a", contradictory=False)
@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 _SOURCE_RELIABILITY_ENABLED: bool = (
     os.environ.get("HLEDAC_ENABLE_SOURCE_RELIABILITY", "1").lower()
     in ("1", "true", "yes", "on")
-)
+    )
 
 AUTO_RETRACT_RATIO: float = 0.3
 AUTO_RETRACT_MIN_CLAIMS: int = 3
@@ -224,7 +224,7 @@ class SourceReliabilityTracker:
                     stats.total_claims = stats.total_claims // 2 + 1
                     stats.contradiction_count = stats.contradiction_count // 2 + (
                         1 if contradictory else 0
-                    )
+    )
 
                 stats.last_updated = _time.time()
 
@@ -232,7 +232,7 @@ class SourceReliabilityTracker:
             logger.debug(
                 "[SourceReliability] record_claim(%s) failed (fail-soft): %s",
                 source_id, e,
-            )
+    )
 
     async def record_batch(
         self,
@@ -271,13 +271,13 @@ class SourceReliabilityTracker:
                         stats.total_claims = stats.total_claims // 2 + 1
                         stats.contradiction_count = (
                             stats.contradiction_count // 2 + (1 if contradictory else 0)
-                        )
+    )
                     stats.last_updated = _time.time()
 
         except Exception as e:
             logger.debug(
                 "[SourceReliability] record_batch failed (fail-soft): %s", e,
-            )
+    )
 
     def should_auto_retract(self, source_id: str) -> bool:
         """Check if a source meets auto-retraction criteria (synchronous).
@@ -314,7 +314,7 @@ class SourceReliabilityTracker:
             stats.contradiction_count / stats.total_claims
             if stats.total_claims > 0
             else 0.0
-        )
+    )
         return SourceReliability(
             source_id=source_id,
             total_claims=stats.total_claims,
@@ -323,7 +323,7 @@ class SourceReliabilityTracker:
             last_updated=stats.last_updated,
             auto_retracted=stats.auto_retracted,
             auto_retracted_at=stats.auto_retracted_at,
-        )
+    )
 
     def get_unreliable_sources(self) -> list[SourceReliability]:
         """Get all sources that meet auto-retract criteria (synchronous)."""
@@ -368,7 +368,7 @@ class SourceReliabilityTracker:
             logger.debug(
                 "[SourceReliability] mark_auto_retracted(%s) failed: %s",
                 source_id, e,
-            )
+    )
             return False
 
     async def record_decisions(
@@ -416,7 +416,7 @@ class SourceReliabilityTracker:
         except Exception as e:
             logger.debug(
                 "[SourceReliability] record_decisions failed (fail-soft): %s", e,
-            )
+    )
 
     def get_stats(self) -> dict[str, int]:
         """Return telemetry counter snapshot."""
@@ -466,7 +466,7 @@ class SourceReliabilityTracker:
         except Exception as e:
             logger.debug(
                 "[SourceReliability] DuckDB table init failed (fail-soft): %s", e,
-            )
+    )
         return False
 
     async def sync_to_duckdb(
@@ -522,7 +522,7 @@ class SourceReliabilityTracker:
                         stats.contradiction_count / stats.total_claims
                         if stats.total_claims > 0
                         else 0.0
-                    )
+    )
                     try:
                         conn.execute(
                             sql,
@@ -536,13 +536,13 @@ class SourceReliabilityTracker:
                                 stats.auto_retracted_at if stats.auto_retracted else None,
                                 sprint_id or None,
                             ],
-                        )
+    )
                         written += 1
                     except Exception as e:
                         logger.debug(
                             "[SourceReliability] DuckDB write for %s failed: %s",
                             source_id, e,
-                        )
+    )
                 return written
 
             written = await asyncio.to_thread(_write_all)
@@ -552,7 +552,7 @@ class SourceReliabilityTracker:
         except Exception as e:
             logger.debug(
                 "[SourceReliability] sync_to_duckdb failed (fail-soft): %s", e,
-            )
+    )
             return 0
 
     # ------------------------------------------------------------------

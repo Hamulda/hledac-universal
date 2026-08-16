@@ -63,7 +63,7 @@ class TestSprintFA2ColdImport:
         assert elapsed_ms < 120, f"cold import took {elapsed_ms:.1f}ms (>120ms)"
         assert mod._lazy_stats()["resolved_count"] == 0, (
             "no specs should be resolved on cold import"
-        )
+    )
 
     def test_cold_import_does_not_load_submodules(self, reload_intelligence):
         """Verify spec table + PEP 562 path is wired (no eager module load).
@@ -115,7 +115,7 @@ class TestSprintFA2FlagAccess:
         value = getattr(reload_intelligence, flag)
         assert isinstance(value, bool), (
             f"{flag} returned {type(value).__name__}, expected bool"
-        )
+    )
 
 
 class TestSprintFA2NameAccess:
@@ -165,7 +165,7 @@ class TestSprintFA2DirAndAll:
         assert len(all_list) == len(set(all_list)), (
             f"__all__ has duplicates: "
             f"{[n for n in all_list if all_list.count(n) > 1]}"
-        )
+    )
 
     def test_all_contains_availability_flags(self, reload_intelligence):
         for f in [
@@ -231,7 +231,7 @@ class TestSprintFA2NullFallbacks:
         from intelligence import _LAZY_SPECS, _RESOLVED_SPECS
         spec_input = next(
             s for s in _LAZY_SPECS if s[1] == "INPUT_DETECTOR_AVAILABLE"
-        )
+    )
         # Remove from resolved so _load_spec will re-run
         _RESOLVED_SPECS.discard(spec_input)
         # Also clear the cached globals so the test reflects a clean state
@@ -302,7 +302,7 @@ class TestSprintFA2Idempotency:
         assert calls["n"] == 0, (
             f"expected 0 re-imports, got {calls['n']} "
             f"(spec should be cached after first load)"
-        )
+    )
         stats_after = reload_intelligence._lazy_stats()
         assert stats_after["resolved_count"] == resolved_first
 
@@ -330,10 +330,10 @@ class TestSprintFA2Parity:
         for n in self.ALWAYS_PRESENT:
             assert n in reload_intelligence.__all__, (
                 f"__all__ missing required public name: {n}"
-            )
+    )
             assert n in dir(reload_intelligence), (
                 f"dir() missing required public name: {n}"
-            )
+    )
 
     def test_module_is_package(self, reload_intelligence):
         """`intelligence` is a package, not a module — sanity check."""

@@ -233,7 +233,7 @@ def _make_python_delegation(ms: MethodSpec) -> Any:
         if func is None:
             raise AttributeError(
                 f"Python fallback function {func_name!r} not found in {_RUST_BACKEND_MODULE}"
-            )
+    )
         return func(*args, **kwargs)
 
     method.__name__ = ms.name

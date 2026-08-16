@@ -441,14 +441,14 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 result_summary=result.get('summary', 'Multimodal processing completed'),
                 success=result.get('success', False),
                 metadata=result,
-            )
+    )
         except Exception as e:
             return ExecutionResult(
                 status='failed',
                 result_summary=f'Multimodal processing failed: {str(e)}',
                 success=False,
                 error_message=str(e),
-            )
+    )
 
     async def detect_modality(self, content: Any) -> ModalityType:
         """
@@ -570,7 +570,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 return ModalityOutput(
                     modality=ModalityType.IMAGE, embedding=embedding, features=features,
                     metadata=fallback_metadata, confidence=0.8,
-                )
+    )
             else:
                 # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
                 embedding = self._get_deterministic_embedding('image_unknown', scale=0.1)
@@ -579,7 +579,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 return ModalityOutput(
                     modality=ModalityType.IMAGE, embedding=embedding, features=features,
                     metadata=fallback_metadata, confidence=0.75,
-                )
+    )
         except Exception as e:
             logger.warning(f'Image processing failed: {e}')
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
@@ -589,7 +589,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             return ModalityOutput(
                 modality=ModalityType.IMAGE, embedding=embedding, features=features,
                 metadata=fallback_metadata, confidence=0.7,
-            )
+    )
         return ModalityOutput(modality=ModalityType.IMAGE, embedding=embedding, features=features, confidence=confidence)
 
     def _generate_image_embedding_fallback(self, image: Any) -> Any:
@@ -677,7 +677,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                         embedding=embedding,
                         features=features,
                         confidence=confidence,
-                    )
+    )
 
             # ── Raw numpy PCM samples → MLX encoder or numpy fallback ──────────
             if isinstance(content, np.ndarray):
@@ -700,7 +700,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                     features=features,
                     metadata=fallback_metadata,
                     confidence=0.7,
-                )
+    )
         except Exception as e:
             logger.warning(f'Audio processing failed: {e}')
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
@@ -713,13 +713,13 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 features=features,
                 metadata=fallback_metadata,
                 confidence=0.7,
-            )
+    )
         return ModalityOutput(
             modality=ModalityType.AUDIO,
             embedding=embedding,
             features=features,
             confidence=confidence,
-        )
+    )
 
     async def _process_video(self, content: Any) -> ModalityOutput:
         """
@@ -797,14 +797,14 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                             features=features,
                             metadata=fallback_metadata,
                             confidence=0.5,
-                        )
+    )
 
                     return ModalityOutput(
                         modality=ModalityType.VIDEO,
                         embedding=embedding,
                         features=features,
                         confidence=confidence,
-                    )
+    )
 
             # Fallback: no valid video content
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
@@ -817,7 +817,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 features=features,
                 metadata=fallback_metadata,
                 confidence=0.65,
-            )
+    )
         except Exception as e:
             logger.warning(f'Video processing failed: {e}')
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
@@ -830,13 +830,13 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 features=features,
                 metadata=fallback_metadata,
                 confidence=0.6,
-            )
+    )
         return ModalityOutput(
             modality=ModalityType.VIDEO,
             embedding=embedding,
             features=features,
             confidence=confidence,
-        )
+    )
 
     def _generate_audio_embedding_fallback(self, audio: Any) -> Any:
         """Generate audio embedding using numpy fallback."""
@@ -865,7 +865,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             features={'pages': 0, 'type': 'document'},
             metadata=fallback_metadata,
             confidence=0.9,
-        )
+    )
 
     async def _process_chart(self, content: Any) -> ModalityOutput:
         """Process chart content (placeholder)."""
@@ -878,7 +878,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             features={'type': 'chart', 'data_points': 0},
             metadata=fallback_metadata,
             confidence=0.7,
-        )
+    )
 
     def _generate_text_embedding(self, text: str) -> Any:
         """Generate text embedding using MLX if available, fast hash fallback otherwise."""

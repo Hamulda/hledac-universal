@@ -33,8 +33,7 @@ class Evidence(msgspec.Struct, gc=False):
     metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
-# SourceCredibility is kept as @dataclass — has runtime update method update_accuracy()
-from dataclasses import dataclass, field
+# SourceCredibility is kept as msgspec.Struct with mutable fields for update_accuracy()
 from _core import aclose
 
 
@@ -47,9 +46,9 @@ class SourceCredibility(msgspec.Struct, gc=False):
     """
     source_id: str
     credibility_score: float  # 0-1, overall credibility
-    bias_indicators: list[str] = field(default_factory=list)
+    bias_indicators: list[str] = msgspec.field(default_factory=list)
     historical_accuracy: float = 0.5  # 0-1, based on past verification
-    last_updated: datetime = field(default_factory=datetime.now)
+    last_updated: datetime = msgspec.field(default_factory=_utc_now)
     total_claims: int = 0
     verified_claims: int = 0
     contradiction_count: int = 0
@@ -64,7 +63,7 @@ class SourceCredibility(msgspec.Struct, gc=False):
         self.credibility_score = (
             self.historical_accuracy * 0.7 +
             (1.0 - min(1.0, self.contradiction_count / 10)) * 0.3
-        )
+    )
         self.last_updated = datetime.now(UTC)  # noqa: DTZ005
 
 

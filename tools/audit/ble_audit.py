@@ -64,7 +64,7 @@ DEFAULT_CONFIG = BLEAuditConfig(
     allow_noqa_comments=True,
     logger_lookahead_lines=5,
     ci_threshold=0,
-)
+    )
 
 
 def load_config(config_path: Path) -> BLEAuditConfig:

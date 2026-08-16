@@ -63,7 +63,7 @@ def _require_template(obj: object, func_name: str) -> Template:
             f"{func_name}() requires a Template object (from t'...' literal), "
             f"got {type(obj).__name__}. "
             f"Use t'...' syntax for template strings."
-        )
+    )
     return obj
 
 

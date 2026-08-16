@@ -10,11 +10,7 @@ NOT in the hledac-universal distribution (pyproject.toml only packages
 """
 
 
-
-
-
-
-
+from hledac.universal.config import (
     DeepResearchConfig,
     M1Presets,
     PrivacyConfig,
@@ -31,8 +27,7 @@ __all__ = [
     "UniversalConfig",
     "create_config",
     "load_config_from_file",
-
-from _core import aclose    "M1Presets",
+    "M1Presets",
     "ResearchPresets",
     "SecurityConfig",
     "StealthConfig",

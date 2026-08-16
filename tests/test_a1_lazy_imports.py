@@ -23,7 +23,7 @@ class TestA1LazyImportsModule:
             get_Hermes3Engine,
             get_EvidenceLog,
             get_SidecarOrchestrator,
-        )
+    )
         # If this import succeeds, the module exists and has all 5 factories
         assert callable(get_DuckDBShadowStore)
         assert callable(get_M1ResourceGovernor)
@@ -62,7 +62,7 @@ class TestA1LazyImportsModule:
             get_DuckDBShadowStore,
             get_M1ResourceGovernor,
             get_EvidenceLog,
-        )
+    )
 
         # These should return class types
         cls = get_DuckDBShadowStore()

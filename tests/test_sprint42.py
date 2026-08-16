@@ -33,7 +33,7 @@ class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
             wait_since=time.time() - 0.3,
             query={"prompt": "low"},
             future=asyncio.Future(),
-        )
+    )
         # High VoI (0.9) just arrived
         new_item = _BatchItem(
             priority=-0.9,
@@ -41,7 +41,7 @@ class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
             wait_since=time.time(),
             query={"prompt": "high"},
             future=asyncio.Future(),
-        )
+    )
 
         # Simulate aging
         now = time.time()
@@ -57,7 +57,7 @@ class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
                         wait_since=item.wait_since,
                         query=item.query,
                         future=item.future,
-                    )
+    )
                 )
             else:
                 aged_items.append(item)
@@ -91,7 +91,7 @@ class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
                         wait_since=item.wait_since,
                         query=item.query,
                         future=item.future,
-                    )
+    )
                 )
             else:
                 aged_items.append(item)
@@ -228,7 +228,7 @@ class TestSprint42C_LinUCB(unittest.IsolatedAsyncioTestCase):  # noqa: N801
             for _ in range(20):
                 bandit.update_with_context(
                     "darkweb", 1.0, {"intent": "investigative", "query": "leak", "entities": ["APT"]}
-                )
+    )
 
             # AI context -> should prefer arxiv
             ai_analysis = {"intent": "technical", "query": "AI", "entities": None}

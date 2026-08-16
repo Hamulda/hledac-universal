@@ -23,11 +23,7 @@ from typing import Any
 
 import pytest
 
-
-
-
-
-
+from utils.async_cache import (
     AsyncCacheError,
     AsyncLRUCache,
     async_cached,
@@ -36,8 +32,7 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-
-from _core import aclose# Invariant [1]: async_cached rejects sync def
+# Invariant [1]: async_cached rejects sync def
 # ---------------------------------------------------------------------------
 
 def test_async_cached_rejects_sync_def() -> None:

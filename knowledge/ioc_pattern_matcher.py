@@ -36,7 +36,6 @@ Usage:
 
 import logging
 import re
-from dataclasses import dataclass
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import Final

@@ -196,7 +196,7 @@ async def run_cmd(cmd: list[str], timeout: float = 15.0) -> str:
             *cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-        )
+    )
         try:
             async with asyncio.timeout(timeout):
                 stdout, _ = await process.communicate()

@@ -32,7 +32,7 @@ def _run_asyncio_command(pid: int, subcommand: str, timeout: float = 10.0) -> tu
             text=True,
             timeout=timeout,
             env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
-        )
+    )
         return proc.stdout, proc.stderr, proc.returncode
     except subprocess.TimeoutExpired:
         return "", f"Timeout after {timeout}s", -1
@@ -53,7 +53,7 @@ def dump_asyncio_tasks(pid: int, output_dir: str | None = None) -> list[str]:
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "reports",
             "runtime_dumps",
-        )
+    )
 
     dump_dir = Path(output_dir)
     dump_dir.mkdir(parents=True, exist_ok=True)

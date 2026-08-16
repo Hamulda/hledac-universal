@@ -73,7 +73,7 @@ def _check_coremltools() -> tuple[bool, Any]:
                 '[PRM-Export] Python 3.14: coremltools not found.\n'
                 '  Install from Apple channel:\n'
                 '    pip install --extra-index-url https://pypi.anaconda.org/apple/repo/simple coremltools'
-            )
+    )
             return False, None
     else:
         try:

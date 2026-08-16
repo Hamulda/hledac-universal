@@ -256,7 +256,7 @@ class FastPathTriage:
             self._tier2_attempted += len(tier2_candidates)
             embeddings = self._get_embeddings_batch(
                 [doc for _, doc in tier2_candidates]
-            )
+    )
             if embeddings is not None:
                 query_emb = self._get_query_embedding()
                 if query_emb is not None:

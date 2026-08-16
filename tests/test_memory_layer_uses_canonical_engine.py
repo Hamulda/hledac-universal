@@ -41,7 +41,7 @@ class TestMemoryLayerUsesCanonicalEngine:
         memory_layer = MemoryLayer(
             config=MemoryConfig(),
             deep_hermes_engine=mock_engine,
-        )
+    )
 
         # Trigger _load_model for hermes-3
         result = await memory_layer._load_model('hermes-3')
@@ -51,7 +51,7 @@ class TestMemoryLayerUsesCanonicalEngine:
         assert result['model'] is mock_model, (
             f'M-05 FAILED: expected result["model"] to be same object as '
             f'deep_hermes_engine.model, got {result["model"]!r} != {mock_model!r}'
-        )
+    )
         assert result['tokenizer'] is mock_tokenizer
 
         # Assert: mlx_lm.load was NOT called (no duplicate model loading)
@@ -84,7 +84,7 @@ class TestMemoryLayerUsesCanonicalEngine:
         memory_layer = MemoryLayer(
             config=MemoryConfig(),
             deep_hermes_engine=mock_engine,
-        )
+    )
 
         # _load_model is called directly in state transition (stored in _loaded_models
         # by _load_models_for_state caller)
@@ -106,7 +106,7 @@ class TestMemoryLayerUsesCanonicalEngine:
         memory_layer = MemoryLayer(
             config=MemoryConfig(),
             deep_hermes_engine=mock_engine,
-        )
+    )
 
         with patch('mlx_lm.load') as mock_load:
             await memory_layer._load_model('hermes-3')
@@ -136,7 +136,7 @@ class TestMemoryLayerUsesCanonicalEngine:
         memory_layer = MemoryLayer(
             config=MemoryConfig(),
             deep_hermes_engine=mock_engine,
-        )
+    )
 
         # Simulate: after _ensure_model_loaded, model is still None (load failed)
         result = await memory_layer._load_model('hermes-3')

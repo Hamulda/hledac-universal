@@ -329,7 +329,7 @@ async def _resolve_ipns_via_dht(name: str) -> str | None:
             'ipfs', 'name', 'resolve', f'/ipns/{name}',
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-        )
+    )
         try:
             async with asyncio.timeout(DHT_QUERY_TIMEOUT):
                 stdout, stderr = await result.communicate()
@@ -372,7 +372,7 @@ async def _fetch_via_dht(cid: str) -> bytes | None:
             'ipfs', 'cat', f'/ipfs/{cid}',
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-        )
+    )
         try:
             async with asyncio.timeout(DHT_QUERY_TIMEOUT):
                 stdout, stderr = await result.communicate()
@@ -416,7 +416,7 @@ async def find_providers_via_dht(cid: str) -> list[str]:
             'ipfs', 'dht', 'findprovs', cid,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-        )
+    )
         try:
             async with asyncio.timeout(DHT_QUERY_TIMEOUT):
                 stdout, stderr = await result.communicate()

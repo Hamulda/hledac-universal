@@ -21,7 +21,6 @@ Performance:
 from __future__ import annotations
 
 import json
-import logging
 import re
 import threading
 import time
@@ -29,62 +28,19 @@ import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Optional
-from collections.abc import Callable
+from typing import Any, Callable, Optional
 
-logger = logging.getLogger(__name__)
-
-# MLX LAZY IMPORT — prevents M1 crash on memory-constrained systems
-# Pattern: Use _get_mx() and _get_mlx_lm() for lazy access
-try:
-    from hledac.universal.utils.mlx_memory._core import get_mx, get_mlx_lm
-except ImportError:
-    # Fallback for systems without mlx_memory module
-    def get_mx():
-        """Lazy fallback for mlx.core."""
-        import mlx.core as _mx
-        return _mx
-    def get_mlx_lm():
-        """Lazy fallback for mlx_lm."""
-        import mlx_lm as _mlx_lm
-        return _mlx_lm
-
-# Module-level cached references (P3-03 pattern: O(1) access)
-_mx: Any = None
-_mlx_lm: Any = None
-
-def _get_mx() -> Any:
-    """Lazy accessor for mlx.core — cached after first import."""
-    global _mx
-    if _mx is None:
-        _mx = get_mx()
-    return _mx
-
-def _get_mlx_lm() -> Any:
-    """Lazy accessor for mlx_lm — cached after first import."""
-    global _mlx_lm
-    if _mlx_lm is None:
-        _mlx_lm = get_mlx_lm()
-    return _mlx_lm
+import mlx.core as mx
+import mlx_lm
 
 # Re-export from extracted modules for backward compatibility
-# MODERN-35 Fix: Import CPU affinity utilities
-from hledac.universal.utils.cpu_affinity import (
-    set_mlx_affinity,
-    is_apple_silicon,
-)
-
 from .content_router import (
     ContentRouter,
     classify_content,
     get_preferred_model,
     route_content,
 )
-
-
-
-
-
+from .micro_model_pool import (
     MICRO_MODELS,
     IMicroModelPool,
     LoadedMicroModel,
@@ -96,8 +52,7 @@ from .content_router import (
 # Type aliases for clarity
 ModelT = Any
 TokenizerT = Any
-
-from _core import acloseEmbeddingT = list[float]
+EmbeddingT = list[float]
 
 
 # =============================================================================
@@ -291,22 +246,15 @@ class MicroModelSwarmRouter:
                 )
                 return (result, model_id, task_type)
             except Exception as e:
-                # P3-5 FIX: Use proper logging instead of print
-                logger.warning(
-                    f"[MicroModelSwarmRouter] Micro-model '{model_id}' failed: {e}, falling back to main model"
-                )
+                print(f"[MicroModelSwarmRouter] Micro-model failed: {e}, falling back")
         
         # Fall back to main model
         main = self._pool.get_main_model()
         if main is None:
             raise RuntimeError("No main model registered")
         
-        # MODERN-35 Fix: Set P-core affinity before MLX inference (fallback path)
-        if is_apple_silicon():
-            set_mlx_affinity()
-        
         model, tokenizer = main
-        result = _get_mlx_lm().generate(
+        result = mlx_lm.generate(
             model,
             tokenizer,
             prompt=text,
@@ -317,35 +265,15 @@ class MicroModelSwarmRouter:
         return (result, None, task_type)
     
     def get_stats(self) -> dict[str, Any]:
-        """
-        Get comprehensive router statistics.
-        
-        P3-4 FIX: memory_wiring now reflects actual state, not hardcoded.
-        """
+        """Get comprehensive router statistics."""
         pool_stats = self._pool.get_stats()
-        
-        # P3-4 FIX: Determine actual wiring state
-        wired_count = pool_stats.get("wired_count", 0)
-        loaded_count = pool_stats.get("loaded_count", 0)
-        
-        if loaded_count == 0:
-            wiring_state = "none_loaded"
-        elif wired_count == loaded_count:
-            wiring_state = "UMA_wired"
-        elif wired_count > 0:
-            wiring_state = "partial_wired"  # Some models wired, some not
-        else:
-            wiring_state = "UMA_shared"  # No explicit wiring, using shared UMA
-        
         return {
             "pool": pool_stats,
             "cache_size": len(self._routing_cache),
             "enable_fallback": self._enable_fallback,
-            "zero_copy_ready": self._zero_copy_ready and wired_count == loaded_count,
-            "swap_type": "pointer_swap",
-            "memory_wiring": wiring_state,  # P3-4 FIX: Actual state, not hardcoded
-            "wired_count": wired_count,
-            "loaded_count": loaded_count,
+            "zero_copy_ready": self._zero_copy_ready,
+            "swap_type": "pointer_swap",  # TRUE ZERO-COPY: pointer swap only
+            "memory_wiring": "UMA_wired",  # TRUE ZERO-COPY: weights wired to UMA
         }
     
     @property

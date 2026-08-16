@@ -34,13 +34,13 @@ try:
         content: str = dspy.InputField(desc="Source text, document, or finding content")
         entities: list[dict] = dspy.OutputField(
             desc="Extracted entities: list of {type (person|org|location|date), name, confidence}"
-        )
+    )
         relations: list[dict] = dspy.OutputField(
             desc="Extracted relations: list of {source, target, type, confidence}"
-        )
+    )
         claims: list[dict] = dspy.OutputField(
             desc="Factual claims: list of {statement, source, confidence, contradictions}"
-        )
+    )
 
     class SummarizationSignature(dspy.Signature):
         """OSINT summarization — concise synthesis of findings with confidence levels."""
@@ -54,7 +54,7 @@ try:
         context = dspy.InputField(desc="IOC findings, current sprint state, available transports")
         dark_queries = dspy.OutputField(
             desc="List of dark queries: type (onion|ipfs|paste|i2p), query string, priority 0-1"
-        )
+    )
 
     class HypothesisSignature(dspy.Signature):
         """OSINT hypothesis generation — derive testable hypotheses from observation patterns."""
@@ -62,7 +62,7 @@ try:
         context = dspy.InputField(desc="Sprint metadata, profile type, confidence thresholds")
         hypotheses = dspy.OutputField(
             desc="List of hypotheses: type, statement, prior_probability, status"
-        )
+    )
 
     # ─────────────────────────────────────────────────────────────────────────────
     # F260: Deep research chain signature for multi-hop reasoning
@@ -74,18 +74,18 @@ try:
         query: str = dspy.InputField(desc="The OSINT research query or topic")
         current_evidence: list[str] = dspy.InputField(
             desc="Findings gathered so far (last 20 max)"
-        )
+    )
         hop_number: int = dspy.InputField(desc="Current hop number (1 to max_hops)")
 
         next_query: str = dspy.OutputField(
             desc="Most promising next research direction to explore"
-        )
+    )
         reasoning: str = dspy.OutputField(
             desc="Why this direction reduces epistemic uncertainty about the query"
-        )
+    )
         confidence: float = dspy.OutputField(
             desc="Confidence this hop will yield new findings (0.0 to 1.0)"
-        )
+    )
 
     # ChainOfThought wrapper for iterative reasoning
     DeepResearchChain = dspy.ChainOfThought(DeepResearchHopSignature)
@@ -99,7 +99,7 @@ try:
         gaps: list[str] = dspy.OutputField(desc="Prioritized list of unanswered questions")
         evidence_needed: list[str] = dspy.OutputField(
             desc="Specific evidence types needed to fill gaps"
-        )
+    )
         confidence: float = dspy.OutputField(desc="Confidence that these gaps are real (0-1)")
 
     _DSPY_AVAILABLE = True

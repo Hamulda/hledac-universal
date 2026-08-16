@@ -188,7 +188,7 @@ class LazyModel[T]:
             logger.debug(
                 "[lazy:%s] skipped — findings=%d < min=%d",
                 self._name, findings_count, self._min_findings,
-            )
+    )
             return None
 
         # Fast path: already loaded
@@ -211,7 +211,7 @@ class LazyModel[T]:
                 logger.warning(
                     "[lazy:%s] MEMORY GUARD — available=%.0fMB < threshold=%.0fMB (adaptive), refusing load",
                     self._name, avail, effective_min,
-                )
+    )
                 return None
 
             # Issue #21: Drain pending MLX evaluations BEFORE loading new model.
@@ -279,7 +279,7 @@ class LazyModel[T]:
                 logger.debug(
                     "[lazy:%s] stale evict skipped (load_gen=%d > scheduled=%d)",
                     self._name, self._load_count, self._scheduled_load_gen,
-                )
+    )
                 self._evict_task = None
                 return
 
@@ -291,7 +291,7 @@ class LazyModel[T]:
                         logger.debug(
                             "[lazy:%s] busy — rescheduling eviction (TTL=%.0fs)",
                             self._name, self._ttl,
-                        )
+    )
                         self._reset_evict_timer()
                         return
                 except Exception:  # noqa: BLE001
@@ -304,7 +304,7 @@ class LazyModel[T]:
             logger.debug(
                 "[lazy:%s] evicted (evict #%d, TTL=%.0fs)",
                 self._name, self._evict_count, self._ttl,
-            )
+    )
 
         # gc.collect() + _mlx_clear() outside the lock, in to_thread
         # This avoids holding the lock while blocking the event loop

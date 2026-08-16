@@ -99,7 +99,7 @@ def plan_lanes_for_pivot_seeds(
             items=(),
             skipped=(),
             reason="no_seeds",
-        )
+    )
 
     items: list[LanePlanItem] = []
     skipped: list[str] = []
@@ -123,7 +123,7 @@ def plan_lanes_for_pivot_seeds(
                 enable_ct=enable_ct,
                 enable_wayback=enable_wayback,
                 enable_passive_dns=enable_passive_dns,
-            )
+    )
 
         # --- url → WAYBACK + PUBLIC ---
         elif seed_type == "url":
@@ -133,7 +133,7 @@ def plan_lanes_for_pivot_seeds(
                 items,
                 seen_pairs,
                 enable_wayback=enable_wayback,
-            )
+    )
 
         # --- ip → BGP + PASSIVE_DNS + DOH reverse ---
         elif seed_type in ("ip", "ipv4"):
@@ -145,7 +145,7 @@ def plan_lanes_for_pivot_seeds(
                 enable_doh=enable_doh,
                 enable_passive_dns=enable_passive_dns,
                 enable_bgp=enable_bgp,
-            )
+    )
 
         # --- hash → no-op (unsupported in this scope) ---
         elif seed_type in ("hash", "md5", "sha1", "sha256"):
@@ -197,7 +197,7 @@ def _add_lane_item(
                 seed_type=seed_type,
                 priority=priority,
                 reason=reason,
-            )
+    )
         )
 
 

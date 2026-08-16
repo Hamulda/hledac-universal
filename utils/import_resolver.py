@@ -133,7 +133,7 @@ class _LazyCallable:
     Usage:
         check_model_allowed = lazy_callable(
             "hledac.universal.brain.model_inference_guard.check_model_allowed"
-        )
+    )
         if check_model_allowed.available:
             decision = check_model_allowed(model_key)
     """
@@ -181,7 +181,7 @@ def lazy(dotted_path: str, *, fallback: Any = None) -> _LazyResolver:
 
         is_emergency_unload_requested = lazy(
             "hledac.universal.brain.model_lifecycle.is_emergency_unload_requested"
-        )
+    )
 
         # Existing truthiness check pattern — preserved
         if is_emergency_unload_requested:
@@ -205,7 +205,7 @@ def lazy_callable(dotted_path: str, *, fallback: Any = None) -> _LazyCallable:
     Example:
         check_model_allowed = lazy_callable(
             "hledac.universal.brain.model_inference_guard.check_model_allowed"
-        )
+    )
         if check_model_allowed.available:
             decision = check_model_allowed(model_key)
     """

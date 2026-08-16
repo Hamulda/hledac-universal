@@ -131,7 +131,7 @@ class FindingCollapserWithConsistency:
                     max_groups,
                     max_chars_per_group,
                     max_sources_per_group,
-                )
+    )
                 markdown = result.decode("utf-8") if isinstance(result, bytes) else result
                 
                 # [SWARM]-004: Apply entropy-guided word pruning BEFORE returning
@@ -149,7 +149,7 @@ class FindingCollapserWithConsistency:
                         logger.debug(
                             f"[COLLAPSER] [SWARM]-004: compress_prompt "
                             f"{original_len} → {compressed_len} chars ({reduction:.1f}% reduction)"
-                        )
+    )
                         markdown = compressed
                 except Exception as compress_err:
                     logger.debug(f"[COLLAPSER] [SWARM]-004: compress_prompt failed: {compress_err}")
@@ -239,7 +239,7 @@ class FindingCollapserWithConsistency:
             severity = c.get("severity", 0.0)
             lines.append(
                 f"- **{ctype}**: `{entity}` (severity: {severity:.2f})"
-            )
+    )
 
         if consistency_result.suspect_sources:
             lines.append("")

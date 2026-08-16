@@ -317,7 +317,7 @@ def test_hermes_unload_7k_order():
     if eval_pos != -1 and clear_pos != -1:
         assert eval_pos < clear_pos, (
             "mx.eval([]) should appear BEFORE mx.clear_cache() (7K order)"
-        )
+    )
 
 
 # =============================================================================
@@ -450,7 +450,7 @@ def test_sprint_scheduler_hermes_stored_not_called():
         # Hermes is stored as property but NOT used during acquisition
         assert "_hermes_engine" in source, (
             "SprintSchedulerV2 should have _hermes_engine property for injected Hermes"
-        )
+    )
         # SprintSchedulerV2 should NOT directly call hermes engine methods in hot path
         hot_path_patterns = [
             "self._hermes_engine.generate",

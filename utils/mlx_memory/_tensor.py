@@ -320,7 +320,7 @@ class SharedTensor:
             import logging as _log
             _log.getLogger("SharedTensor").debug(
                 "[NEXTGEN-02] MLX mmap failed (%s), falling back to numpy path", e
-            )
+    )
             
             if not os.path.exists(path):
                 raise FileNotFoundError(f"File not found: {path}")
@@ -379,7 +379,7 @@ class SharedTensor:
                 if column_index >= batch.num_columns:
                     raise ValueError(
                         f"column_index {column_index} out of range (max: {batch.num_columns - 1})"
-                    )
+    )
 
                 # Extract column as numpy array
                 column = batch.column(column_index)
@@ -419,4 +419,4 @@ class SharedTensor:
         backing = "metal" if self._metal_buf is not None else "array"
         return (
             f"SharedTensor(shape={self._shape}, dtype={self._dtype}, backing={backing})"
-        )
+    )

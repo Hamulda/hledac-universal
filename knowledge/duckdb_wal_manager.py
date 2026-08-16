@@ -96,7 +96,7 @@ class DuckDBWALManager:
         self._wal_manager = WALManager(
             wal_path=str(wal_root / "shadow_wal.lmdb"),
             unified_store=unified_store,
-        )
+    )
 
     # ── WAL Manager delegation ──────────────────────────────────────────────
 
@@ -128,7 +128,7 @@ class DuckDBWALManager:
                 query=str(query),
                 source_type=str(source_type),
                 confidence=float(confidence),
-            )
+    )
         # Finding-object form: finding_id is actually the finding object
         finding_obj = finding_id
         finding_id_str = getattr(finding_obj, "finding_id", None) or getattr(finding_obj, "id", None)
@@ -139,7 +139,7 @@ class DuckDBWALManager:
             query=str(getattr(finding_obj, "query", "")),
             source_type=str(getattr(finding_obj, "source_type", "")),
             confidence=float(getattr(finding_obj, "confidence", 0.0)),
-        )
+    )
 
     def wal_get_finding(self, finding_id: str) -> bytes | None:
         """Get finding WAL truth record by ID."""

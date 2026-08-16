@@ -152,7 +152,7 @@ class CveCorrelationMatrix:
                 cwe_id TEXT,
                 description_snippet TEXT,
                 published_date TEXT
-            )
+    )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_tech ON cve_matrix(technology)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_cve_tech_version ON cve_matrix(technology, version_pattern)")
@@ -259,7 +259,7 @@ class CveCorrelationMatrix:
             cwe_id=str(row[4]) if row[4] else None,
             description_snippet=str(row[5]) if row[5] else "",
             published_date=str(row[6]) if row[6] else None,
-        )
+    )
 
     def _version_matches(self, pattern: str | None, version: str) -> bool:
         """Check if version matches the pattern."""
@@ -378,7 +378,7 @@ class CveCorrelationMatrix:
 _get_cve_matrix = module_singleton_getter(
     singleton_name="_CVE_MATRIX_INSTANCE",
     factory=CveCorrelationMatrix,
-)
+    )
 
 
 def get_cve_matrix() -> CveCorrelationMatrix:

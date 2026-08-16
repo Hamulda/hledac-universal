@@ -151,7 +151,7 @@ class TestRamBudget:
         assert ram_problems, (
             f"FULL preset produced no RAM diagnostics; "
             f"errors={errors}, warnings={warnings}"
-        )
+    )
 
     def test_ram_budget_minimal_safe(self) -> None:
         """MINIMAL preset is empty → no RAM diagnostics."""
@@ -163,7 +163,7 @@ class TestRamBudget:
         assert errors == []
         assert not any("RAM" in w.upper() for w in warnings), (
             f"MINIMAL emitted RAM warnings: {warnings}"
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +181,7 @@ class TestPresetLoading:
         for flag in OSINT:
             assert os.environ.get(flag) == "1", (
                 f"{flag} not set after apply_preset('osint')"
-            )
+    )
         # And the returned dict echoes what was actually written.
         assert set(applied.keys()) == set(OSINT.keys())
 
@@ -200,16 +200,16 @@ class TestCli:
             text=True,
             timeout=30,
             cwd=str(PROJECT_ROOT),
-        )
+    )
         assert result.returncode == 0, (
             f"--list-presets exited {result.returncode}; "
             f"stderr={result.stderr!r}"
-        )
+    )
         # Table must mention all 5 preset names.
         for name in ("minimal", "osint", "recon", "research", "full"):
             assert name in result.stdout, (
                 f"preset {name!r} missing from --list-presets output"
-            )
+    )
 
     def test_conflict_exits_with_code_2(self) -> None:
         """Process env with HEAVY_BROWSER=1 + NODRIVER=1 → exit 2."""
@@ -226,11 +226,11 @@ class TestCli:
             timeout=30,
             cwd=str(PROJECT_ROOT),
             env=env,
-        )
+    )
         assert result.returncode == 2, (
             f"expected exit 2 on conflict, got {result.returncode}; "
             f"stderr={result.stderr!r}"
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +247,7 @@ class TestEmptyEnv:
         for k in list(os.environ):
             assert not k.startswith(_PREFIX), (
                 f"fixture leak: {k} still set"
-            )
+    )
         errors, warnings = validate_flag_combo()
         assert errors == [], f"empty env produced errors: {errors}"
         # No flags active → no RAM warnings either.

@@ -23,7 +23,7 @@ from hledac.universal.runtime.scheduler_v2._task_registry import (
     TaskScope,
     get_task_registry,
     safe_create_task_tracked,
-)
+    )
 from hledac.universal.utils.asyncx import parallel, safe_wait_for
 from _core import aclose
 
@@ -167,7 +167,7 @@ class WinddownOrchestrator:
                 _blitz_teardown_result.get("gen2_collected", 0),
                 _blitz_teardown_result.get("gen0_ticks_total", 0),
                 _blitz_teardown_result.get("freeze_method"),
-            )
+    )
         except Exception:  # noqa: BLE001
             pass  # fail-safe — winddown continues even if GC teardown fails
 
@@ -253,7 +253,7 @@ class WinddownOrchestrator:
             synthesis_success=synthesis_success,
             teardown_duration_s=_time.monotonic() - _t_winddown_start,
             export_errors=export_errors,
-        )
+    )
 
     async def _run_export_as_task(self, ctx: Any, lifecycle: Any, query: str) -> None:
         """Run export and store results in ctx._export_result for parallel retrieval.
@@ -309,7 +309,7 @@ class WinddownOrchestrator:
             self._run_cti_export(ctx, rend_cti_stix, collect_cti_inputs, report, export_dir),
             self._run_hypothesis_export(ctx, report, export_dir),
             return_exceptions=True,
-        )
+    )
 
         # Process format render results
         for result, suffix in [(md_result, 'md'), (jsonld_result, 'jsonld'), (stix_result, 'stix.json')]:
@@ -458,7 +458,7 @@ class WinddownOrchestrator:
                             ctx.graph_service.upsert_relationship_batch(rels),
                             name="winddown:upsert_relationship_batch",
                             scope=TaskScope.WINDUP,
-                        )
+    )
                         try:
                             async with asyncio.timeout(10.0):
                                 await _task
@@ -524,7 +524,7 @@ class WinddownOrchestrator:
                     _so.run_advisory_runner(),
                     name="winddown:advisory_runner",
                     scope=TaskScope.WINDUP_SIDECAR,
-                )
+    )
                 # Await with 15s timeout - sidecars should complete within this window
                 # If timeout fires, cancel_all() in Phase 1 cleanup will handle the task
                 try:
@@ -566,7 +566,7 @@ class WinddownOrchestrator:
         try:
             from hledac.universal.knowledge.contradiction_feedback import (
                 get_contradiction_bridge,
-            )
+    )
         except ImportError:
             return None
 
@@ -640,8 +640,14 @@ class WinddownOrchestrator:
         - AdaptiveCache registry (cache/adaptive_cache.py local registry)
         - R8: MemoryPressureBroadcaster (graceful shutdown of monitor loop)
         - ADVERSARY-003: DeobfuscateResult telemetry counters (sprint boundary reset)
+        - MODERN-36: brain._clear_engine_cache (loaded engine modules + globals)
+        - MODERN-36: knowledge._clear_knowledge_cache (loaded knowledge modules + globals)
+        - MODERN-36: _core._clear_core_caches (Rust backend, locks, embeddings, etc.)
 
         WeakValueDictionary in rust_backend._lazy_mod_cache auto-releases dead modules.
+        
+        Note: sys.modules cleanup is disabled (clear_sys_modules=False) during sprint
+        to avoid breaking existing references. Full module unload only at process exit.
         """
         try:
             from hledac.universal.hledac.universal import clear_cache
@@ -682,6 +688,30 @@ class WinddownOrchestrator:
             # Use asyncio.ensure_future to stop asynchronously (non-blocking)
             import asyncio
             asyncio.ensure_future(bc.stop())
+        except Exception:  # noqa: BLE001
+            pass
+        # MODERN-36 FIX: Clear brain engine cache (loaded modules + sys.modules references)
+        try:
+            from hledac.universal.brain import _clear_engine_cache
+            _cleared = _clear_engine_cache(clear_sys_modules=False)  # Don't clear sys.modules during sprint (unsafe)
+            _logger = __import__("logging").getLogger(__name__)
+            _logger.debug(f"[G7] Brain engine cache cleared: {_cleared} symbols")
+        except Exception:  # noqa: BLE001
+            pass
+        # MODERN-36 FIX: Clear knowledge module cache (loaded modules + sys.modules references)
+        try:
+            from hledac.universal.knowledge import _clear_knowledge_cache
+            _cleared = _clear_knowledge_cache(clear_sys_modules=False)  # Don't clear sys.modules during sprint (unsafe)
+            _logger = __import__("logging").getLogger(__name__)
+            _logger.debug(f"[G7] Knowledge module cache cleared: {_cleared} symbols")
+        except Exception:  # noqa: BLE001
+            pass
+        # MODERN-36 FIX: Clear _core module caches (lazy loaders for Rust backend, locks, embeddings, etc.)
+        try:
+            from hledac.universal._core import _clear_core_caches
+            _results = _clear_core_caches()
+            _logger = __import__("logging").getLogger(__name__)
+            _logger.debug(f"[G7] Core caches cleared: {_results}")
         except Exception:  # noqa: BLE001
             pass
 
@@ -749,18 +779,21 @@ class WinddownOrchestrator:
                 _result.get("synced", 0),
                 _result.get("errors", 0),
                 _result.get("observations", 0),
-            )
+    )
         except Exception as _exc:
             _logger = __import__("logging").getLogger(__name__)
             _logger.debug("[META-002] DeltaSyncEngine: sync failed (fail-soft): %s", _exc)
 
     async def _close_duckdb(self, ctx: Any) -> None:
-        """Close DuckDB store at teardown."""
-        # SC-05 FIX: ctx._duckdb_store no longer exists. ctx.duckdb_store is the convenience property.
+        """Close DuckDB store at teardown.
+        
+        FIXED: Changed from async_close() to aclose() to match DuckDBShadowStore API.
+        DuckDBShadowStore implements aclose() (async context manager protocol).
+        """
         _store = ctx.duckdb_store
-        if _store and hasattr(_store, 'async_close'):
+        if _store and hasattr(_store, 'aclose'):
             try:
-                await _store.async_close()
+                await _store.aclose()
             except Exception:  # noqa: BLE001
                 pass
 

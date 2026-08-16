@@ -78,7 +78,7 @@ _CT_QUERY_IS_DOMAIN_RE: re.Pattern = re.compile(r"^(?:\*\.)?[a-zA-Z0-9][a-zA-Z0-
 _CC_QUERY_IS_DOMAIN_RE: re.Pattern = re.compile(
     r"^(?:\*\.)?[a-zA-Z0-9][a-zA-Z0-9.*-]*\.[a-zA-Z]{2,}$"
     r"|^(?:site|domain):"
-)
+    )
 """Regex for CommonCrawl CDX lookup — supports wildcards and site:/domain: operators."""
 
 # Sprint F161B: discovery false-positive band — legitimate signal but no conversion
@@ -131,7 +131,7 @@ _SHOPPING_NOISE_DOMAINS: tuple[str, ...] = (
     "gittigidiyor.com",
     "cimri.com",
     "akakce.com",
-)
+    )
 
 _SHOPPING_NOISE_PATHS: tuple[str, ...] = (
     "/gp/bestsellers/",
@@ -151,7 +151,7 @@ _SHOPPING_NOISE_PATHS: tuple[str, ...] = (
     "/offers/",
     "/home-improvement",
     "/home-and-garden",
-)
+    )
 
 _SHOPPING_NOISE_PATHS_STRICT: tuple[str, ...] = (
     "/cart/",
@@ -159,7 +159,7 @@ _SHOPPING_NOISE_PATHS_STRICT: tuple[str, ...] = (
     "/buy/",
     "/sale/",
     "/offers/",
-)
+    )
 
 _CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
     "cisa.gov",
@@ -185,7 +185,7 @@ _CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
     "thecyberwire.com",
     "bleepinguid.com",
     "ransomware.live",
-)
+    )
 
 # -----------------------------------------------------------------------------
 # Helper functions (pure, no I/O)
@@ -260,7 +260,7 @@ def _filter_public_noise(
 _IP_PAT = re.compile(
     r"^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?$|^"
     r"[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{0,4}){2,7}(?::\d{1,3})?(?:\/\d{1,2})?$"
-)
+    )
 _CVE_PAT = re.compile(r"^CVE-\d{4}-\d{4,}$", re.IGNORECASE)
 _THREAT_PAT = re.compile(
     r"^(?:"
@@ -272,7 +272,7 @@ _THREAT_PAT = re.compile(
     r"poisonivy|plugx|gh0st|gain|wellmess|whispergate|hermetic"
     r")$",
     re.IGNORECASE,
-)
+    )
 _EXTENDED_PAT = re.compile(
     r"^(?:"
     r"meterpreter|sandworm|lazarus|log4shell|finacrypt|prodaft|labyrinth|"
@@ -280,7 +280,7 @@ _EXTENDED_PAT = re.compile(
     r"sidecopy|callback|triangle|temp|sofacy|平原"
     r")$",
     re.IGNORECASE,
-)
+    )
 _THREAT_KW_PAT = re.compile(
     r"^(?:"
     r"ransomware|malware|threat[_-]?actor|cobalt[_\s]?strike|"
@@ -289,7 +289,7 @@ _THREAT_KW_PAT = re.compile(
     r"Ransomware|Malware|ThreatActor|CVE|APT"
     r")$",
     re.IGNORECASE,
-)
+    )
 _OSINT_KW_PAT = re.compile(
     r"^(?:"
     r"osint|osint infrastructure|infrastructure|telemetry|leak|"
@@ -298,7 +298,7 @@ _OSINT_KW_PAT = re.compile(
     r"recon|scanning|fingerprint|iot|ics|scada"
     r")$",
     re.IGNORECASE,
-)
+    )
 _OSINT_MULTI_PAT = re.compile(
     r"^(?:"
     r"osint[_\s]?infrastructure|infrastructure[_\s]?osint|"
@@ -306,7 +306,7 @@ _OSINT_MULTI_PAT = re.compile(
     r"threat[_\s]?intel|threat[_\s]?hunting"
     r")$",
     re.IGNORECASE,
-)
+    )
 
 
 def _is_threat_query(query: str) -> bool:

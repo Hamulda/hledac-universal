@@ -91,7 +91,7 @@ async def harvest_torrent_metadata(
         if decision.uma_state in ("critical", "emergency"):
             logger.debug(
                 "Torrent harvest skipped: memory %s", decision.uma_state,
-            )
+    )
             return []
     except Exception:  # noqa: BLE001
         pass
@@ -156,7 +156,7 @@ async def harvest_torrent_metadata(
 
         result_findings = _metadata_to_findings(
             metadata, info_hash_hex, keyword,
-        )
+    )
         _metadata_cache[info_hash_hex] = {
             "findings": result_findings,
             "ts": time.time(),
@@ -182,7 +182,7 @@ async def harvest_torrent_metadata(
         logger.warning(
             "Torrent harvest capped: %d findings -> %d (max)",
             len(all_findings), MAX_COMPOUND_FINDINGS,
-        )
+    )
         all_findings = all_findings[:MAX_COMPOUND_FINDINGS]
 
     logger.info(
@@ -208,7 +208,7 @@ async def _get_peers_for_hash(info_hash_hex: str) -> list[tuple[str, int]]:
             BOOTSTRAP_PEERS,
             KademliaNode,
             DHT_REAL_UDP,
-        )
+    )
         from hledac.universal._core.resource_governor import ResourceGovernor
 
         if not DHT_REAL_UDP:
@@ -219,7 +219,7 @@ async def _get_peers_for_hash(info_hash_hex: str) -> list[tuple[str, int]]:
             node_id=f"harvest-{info_hash_hex[:8]}",
             governor=governor,
             bootstrap_nodes=BOOTSTRAP_PEERS,
-        )
+    )
         try:
             await node.start_udp()
             if node._bep5_protocol is not None:
@@ -285,7 +285,7 @@ def _metadata_to_findings(
     if file_names_text:
         ioc_findings = _extract_iocs_from_text(
             file_names_text, info_hash_hex, keyword, ts, context="file_names",
-        )
+    )
         findings.extend(ioc_findings)
 
     # ── IOC extraction from tracker URLs ───────────────────────────────────
@@ -293,7 +293,7 @@ def _metadata_to_findings(
     if tracker_text:
         ioc_findings = _extract_iocs_from_text(
             tracker_text, info_hash_hex, keyword, ts, context="trackers",
-        )
+    )
         findings.extend(ioc_findings)
 
     # ── IOC extraction from comment/creator ────────────────────────────────
@@ -303,7 +303,7 @@ def _metadata_to_findings(
     if comment_text:
         ioc_findings = _extract_iocs_from_text(
             comment_text, info_hash_hex, keyword, ts, context="comment",
-        )
+    )
         findings.extend(ioc_findings)
 
     return findings
@@ -394,7 +394,7 @@ def _extract_iocs_from_text(
             ts=ts,
             provenance=(f"btih:{info_hash_hex}", f"context:{context}"),
             payload_text=f"IOC: {ioc_value} (type: {ioc_type})\nInfoHash: {info_hash_hex}\nContext: {context}",
-        )
+    )
         findings.append(finding)
 
     return findings
@@ -410,7 +410,7 @@ def _call_ioc_extractor(text: str) -> list[tuple[str, str]]:
     try:
         from hledac.universal._core.rust_backend.ioc import (
             _python_extract_iocs_simd_single,
-        )
+    )
         return _python_extract_iocs_simd_single(text)
     except Exception:  # noqa: BLE001
         pass

@@ -89,18 +89,13 @@ class AcquisitionLane:
     GREYNOISE = 'GREYNOISE'
 
 # IPFS CID functions imported from canonical cid_detection module
-
-
-
-
-
+from hledac.universal.runtime.acquisition.cid_detection import (
     _has_explicit_ipfs_cid,
     _extract_cids_from_text,
 )
 
 _MISSION_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
-
-from _core import aclose_NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
+_NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
 
 def _feed_budget_to_dict(fdb) -> dict:
     """Convert FeedDominanceBudget (msgspec.Struct, dataclass, or dict) to a JSON-serializable dict.

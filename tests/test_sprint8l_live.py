@@ -334,7 +334,7 @@ def detect_ner_fallback() -> str:
         import torch  # noqa: F401  # torch
         from transformers import (
             AutoModelForTokenClassification,  # noqa: F401  # transformers.AutoModelForTokenClassification
-        )
+    )
         return "GLiNER (torch)"
     except ImportError:
         pass
@@ -417,7 +417,7 @@ async def run_live_benchmark(
                     offline_replay=False,  # LIVE MODE
                 ),
                 timeout=float(duration_seconds) + 120.0
-            )
+    )
             if result:
                 # Sprint 8L: ComprehensiveResearchResult has .findings and .sources directly
                 results.findings_total = len(getattr(result, 'findings', []))

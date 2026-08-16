@@ -63,7 +63,7 @@ class TestWarmBufferEvaluated:
             f"Metal peak memory did not increase after buffer allocation. "
             f"initial={initial_memory}, after={peak_after_alloc}. "
             f"mx.eval(_warm_buffer) did not trigger allocation — bug not fixed."
-        )
+    )
 
     def test_warm_buffer_size_is_48mb(self):
         """Verify the buffer size is exactly 48 MB as documented."""
@@ -82,7 +82,7 @@ class TestWarmBufferEvaluated:
         assert actual_nbytes == expected_bytes, (
             f"Buffer size mismatch: expected {expected_bytes} bytes (48 MB), "
             f"got {actual_nbytes} bytes"
-        )
+    )
 
     def test_empty_eval_does_not_allocate_buffer(self):
         """
@@ -115,4 +115,4 @@ class TestWarmBufferEvaluated:
         # Empty eval should NOT change memory (this is correct behavior)
         assert peak_after_empty == initial_memory, (
             "mx.eval([]) incorrectly changed peak memory — this should be a no-op"
-        )
+    )

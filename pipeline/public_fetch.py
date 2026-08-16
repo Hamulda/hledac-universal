@@ -122,7 +122,7 @@ def _add_pattern_hits_to_graph(
                         source="public_pipeline",
                         properties={"pattern": pattern},
                         observed_at=observed_at,
-                    )
+    )
                 except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001
     except Exception:  # noqa: BLE001
@@ -183,13 +183,13 @@ class PipelinePageContext:
         has_signal = (
             (discovery_score is not None and discovery_score >= _DISCOVERY_SIGNAL_SCORE_THRESHOLD)
             or (discovery_reason is not None and discovery_reason.strip() != "")
-        )
+    )
         strong_signal = discovery_score is not None and discovery_score >= 0.7
         low_discovery = (
             discovery_score is not None
             and discovery_score < _DISCOVERY_SKIP_THRESHOLD
             and not strong_signal
-        )
+    )
         if low_discovery:
             budget_mult = _FETCH_BUDGET_SKIP
         elif discovery_score is not None and discovery_score >= 0.85:
@@ -222,7 +222,7 @@ class PipelinePageContext:
             has_signal=has_signal,
             strong_signal=strong_signal,
             budget_mult=budget_mult,
-        )
+    )
 
 
 # ----------------------------------------------------------------------
@@ -369,7 +369,7 @@ async def _execute_fetch_stage(
                     use_stealth=policy.use_stealth,
                     use_js=policy.use_js,
                     use_doh=policy.use_doh,
-                )
+    )
         except TimeoutError:
             return _FetchStageResult(
                 result=None,
@@ -377,7 +377,7 @@ async def _execute_fetch_stage(
                 redirected=False,
                 redirect_target=None,
                 js_skip_reason=None,
-            )
+    )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -387,7 +387,7 @@ async def _execute_fetch_stage(
                 redirected=False,
                 redirect_target=None,
                 js_skip_reason=None,
-            )
+    )
 
     # Extract metadata from successful fetch
     return _FetchStageResult(
@@ -584,14 +584,14 @@ async def _extract_page_text(
             fetched_js_skip_reason=fetched_js_skip_reason,
             rejection_reason="empty_text",
             terminal_reason="rejected_empty_text",
-        )
+    )
 
     # HTML to text extraction
     try:
         content_type = getattr(result, "content_type", None)
         extracted_text = await run_in_cpu_pool_async(
             lambda: _html_to_text(fetched_text, content_type)
-        )
+    )
     except Exception as exc:
         _raise_skip_ppr(
             url=getattr(result, "url", ""),
@@ -605,7 +605,7 @@ async def _extract_page_text(
             fetched_js_skip_reason=fetched_js_skip_reason,
             rejection_reason="extraction_failed",
             terminal_reason="rejected_extraction_failed",
-        )
+    )
 
     # Hard cap
     if len(extracted_text) > MAX_EXTRACTED_TEXT_CHARS:
@@ -658,7 +658,7 @@ def _raise_skip_ppr(
             js_renderer_skipped_reason=fetched_js_skip_reason,
             rejection_reason=rejection_reason,
             terminal_reason=terminal_reason,
-        )
+    )
     )
 
 
@@ -704,7 +704,7 @@ async def _perform_js_retry_if_needed(
             use_doh=policy.use_doh,
             js_confidence=_js_conf,
             priority=3,
-        )
+    )
     except Exception:
         js_result = None
 
@@ -716,7 +716,7 @@ async def _perform_js_retry_if_needed(
         js_content_type = getattr(js_result, "content_type", None)
         extracted_text = await run_in_cpu_pool_async(
             lambda: _html_to_text(js_result.text, js_content_type)
-        )
+    )
     except Exception:
         extracted_text = js_result.text or ""
 
@@ -817,7 +817,7 @@ def _secondary_query_term_match(
                 start=_text_lower.find(term),
                 end=_text_lower.find(term) + len(term),
                 value=search_text[_text_lower.find(term):_text_lower.find(term) + len(term)]
-            )
+    )
             for term in _found_terms
             if term in _text_lower
         ]
@@ -875,7 +875,7 @@ async def _extract_findings_parallel(
                 hit_end=hit.end,
                 page_text=extracted_text,
                 discovery_score=discovery_score,
-            )
+    )
             return findings_tuple[0]
         except Exception:
             return None
@@ -1081,7 +1081,7 @@ async def _embed_page_text(vector_store: Any, extracted_text: str, query: str, h
             label="page_text",
             pattern="embedding",
             value=extracted_text[:100]
-        )
+    )
         vec = np.asarray(embeddings[0], dtype=np.float32)
         vector_store.add_vectors([finding_id_for_vec], vec.reshape(1, -1), index_type="text")
 
@@ -1122,7 +1122,7 @@ def _build_public_findings(
                 discovery_score=discovery_score,
                 discovery_reason=discovery_reason,
                 http_status_code=http_status,
-            )
+    )
             if _pub_tuple:
                 findings.append(_pub_tuple[0])
         except Exception:
@@ -1139,7 +1139,7 @@ def _build_public_findings(
                 discovery_score=discovery_score,
                 discovery_reason=discovery_reason,
                 http_status_code=http_status,
-            )
+    )
             if _signal_tuple:
                 findings.extend(_signal_tuple)
         except Exception:  # noqa: BLE001
@@ -1190,7 +1190,7 @@ async def _handle_no_pattern_match(
             fetched_redirected=fetched_redirected,
             fetched_redirect_target=fetched_redirect_target,
             fetched_js_skip_reason=fetched_js_skip_reason,
-        )
+    )
 
     # Final return: terminal state
     terminal_state = TerminalReasonMachine.from_js_skip(fetched_js_skip_reason)
@@ -1524,14 +1524,14 @@ async def _fetch_and_process_page(
     if ctx.skip_fetch:
         return _make_skip_weak_discovery_ppr(
             hit_url, ctx.has_signal, discovery_score, discovery_reason
-        )
+    )
 
     # --- Stage 2: URL validation --------------------------------------
     is_valid_url, url_scheme = _validate_url_scheme(hit_url)
     if not is_valid_url:
         return _make_invalid_url_ppr(
             hit_url, url_scheme, ctx.has_signal, discovery_score, discovery_reason
-        )
+    )
 
     # --- Stage 3: Policy computation ----------------------------------
     policy = _compute_fetch_policy(hit_url, discovery_score, discovery_reason, ctx.strong_signal)
@@ -1549,11 +1549,11 @@ async def _fetch_and_process_page(
     if fetch_result.failure_stage == "fetch_timeout":
         return _make_timeout_ppr(
             hit_url, ctx.effective_timeout, ctx.has_signal, discovery_score, discovery_reason
-        )
+    )
     if fetch_result.failure_stage == "fetch_error":
         return _make_fetch_error_ppr(
             hit_url, Exception("Unknown"), ctx.has_signal, discovery_score, discovery_reason
-        )
+    )
 
     result = fetch_result.result
 
@@ -1568,7 +1568,7 @@ async def _fetch_and_process_page(
             fetched_redirected=fetch_result.redirected,
             fetched_redirect_target=fetch_result.redirect_target,
             fetched_js_skip_reason=fetch_result.js_skip_reason,
-        )
+    )
     except _SkipWithResult as e:
         return e.result
 
@@ -1591,7 +1591,7 @@ async def _fetch_and_process_page(
             fetch_result.failure_stage, fetch_result.redirected,
             fetch_result.redirect_target, fetch_result.js_skip_reason,
             extracted_text,
-        )
+    )
 
     # --- Stage 7: JS retry if needed ---------------------------------
     extracted_text, quality_reason = await _perform_js_retry_if_needed(
@@ -1633,7 +1633,7 @@ async def _fetch_and_process_page(
             fetched_redirected=fetch_result.redirected,
             fetched_redirect_target=fetch_result.redirect_target,
             fetched_js_skip_reason=fetch_result.js_skip_reason,
-        )
+    )
 
     # --- Stage 9: Deduplication & extraction ------------------------
     deduped_hits = _deduplicate_hits(scan_result.hits)

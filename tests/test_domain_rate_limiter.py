@@ -144,7 +144,7 @@ class TestLMDBDomainRateLimiter:
             lmdb_path=db_path,
             default_rps=2.0,
             default_burst=5,
-        )
+    )
         for _ in range(3):
             limiter1.acquire("https://persist.example.com/")
         limiter1.close()
@@ -154,7 +154,7 @@ class TestLMDBDomainRateLimiter:
             lmdb_path=db_path,
             default_rps=2.0,
             default_burst=5,
-        )
+    )
         # Should have 2 tokens remaining (5 - 3 = 2)
         assert limiter2.acquire("https://persist.example.com/") == 0.0
         assert limiter2.acquire("https://persist.example.com/") == 0.0
@@ -171,7 +171,7 @@ class TestLMDBDomainRateLimiter:
             lmdb_path="/nonexistent/too/deep/rate_limit.lmdb",
             default_rps=5.0,
             default_burst=10,
-        )
+    )
         # Should still work (in-memory fallback)
         wait = limiter.acquire("https://example.com/")
         assert wait == 0.0
@@ -235,7 +235,7 @@ class TestConcurrencySafety:
             *[task("host-a", i) for i in range(5)],
             *[task("host-b", i) for i in range(5)],
             return_exceptions=True,
-        )
+    )
         assert len(results) == 10
 
 

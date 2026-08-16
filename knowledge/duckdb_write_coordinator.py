@@ -247,7 +247,7 @@ class DuckDBWriteCoordinator:
             self._breaker_state = CBState.OPEN
             logger.warning(
                 f"[WriteCoordinator] Circuit breaker OPEN after {self._breaker_failures} failures"
-            )
+    )
 
     def _record_success(self) -> None:
         """Resetuje circuit breaker při úspěchu."""
@@ -326,7 +326,7 @@ class DuckDBWriteCoordinator:
                 self._duckdb_arrow_executor,
                 self._duckdb_arrow_sync,
                 findings,
-            )
+    )
             return result
         except Exception as e:
             return (0, str(e))
@@ -372,7 +372,7 @@ class DuckDBWriteCoordinator:
             accepted_total = sum(1 for r in results if r.get("lmdb_success"))
             self._quality_state._accepted_count = (
                 getattr(self._quality_state, "_accepted_count", 0) + accepted_total
-            )
+    )
 
         # Maintenance counters update
         self._write_op_counter += len(findings)
@@ -435,7 +435,7 @@ class DuckDBWriteCoordinator:
                 duckdb_all_ok=False,
                 duckdb_count=0,
                 duckdb_err="pyarrow_unavailable",
-            )
+    )
         
         # Phase 2: Startup barrier
         if not await self._wait_startup_barrier(batch_size):
@@ -445,7 +445,7 @@ class DuckDBWriteCoordinator:
                 duckdb_all_ok=False,
                 duckdb_count=0,
                 duckdb_err="startup_timeout",
-            )
+    )
         
         # Phase 3: Circuit breaker
         if not self._check_circuit_breaker():
@@ -455,7 +455,7 @@ class DuckDBWriteCoordinator:
                 duckdb_all_ok=False,
                 duckdb_count=0,
                 duckdb_err="circuit_breaker_open",
-            )
+    )
         
         # Phase 4: WAL first (LMDB)
         wal_ok = await self._try_wal_fallback(findings)
@@ -467,7 +467,7 @@ class DuckDBWriteCoordinator:
                 duckdb_all_ok=False,
                 duckdb_count=0,
                 duckdb_err="wal_failed",
-            )
+    )
         
         # Phase 5: DuckDB Arrow insert
         duckdb_count, duckdb_err = await self._try_duckdb_basic(findings)
@@ -488,7 +488,7 @@ class DuckDBWriteCoordinator:
             duckdb_err=duckdb_err,
             lmdb_ok_count=lmdb_ok_count,
             duckdb_ok_count=duckdb_ok_count,
-        )
+    )
 
     def _is_pyarrow_available(self) -> bool:
         """Check if PyArrow is available - F360M-R."""
@@ -538,7 +538,7 @@ class DuckDBWriteCoordinator:
         logger.info(
             f"[WriteCoordinator-arrow] path=arrow batch={batch_size} "
             f"lmdb_ok={result.lmdb_ok_count} duckdb_ok={result.duckdb_ok_count}"
-        )
+    )
         return self._build_activation_results(result.results)
 
     async def ingest_batch_legacy(
@@ -557,7 +557,7 @@ class DuckDBWriteCoordinator:
                 self._duckdb_arrow_executor,
                 self._duckdb._sync_record_canonical_findings_batch_arrow_standalone,
                 findings,
-            )
+    )
         except Exception as e:
             logger.error(f"[WriteCoordinator-legacy] executor error: {e}")
             return self._build_activation_results_from_findings(findings, str(e))
@@ -574,7 +574,7 @@ class DuckDBWriteCoordinator:
             accepted_total = sum(1 for r in sync_results if r.get("lmdb_success"))
             self._quality_state._accepted_count = (
                 getattr(self._quality_state, "_accepted_count", 0) + accepted_total
-            )
+    )
 
         return self._build_activation_results(sync_results)
 
@@ -593,7 +593,7 @@ class DuckDBWriteCoordinator:
                 desync=bool(r.get("lmdb_success") and r.get("duckdb_success") is False),
                 error=r.get("error"),
                 accepted=bool(r.get("lmdb_success")),
-            )
+    )
             for r in results
         ]
 
@@ -612,7 +612,7 @@ class DuckDBWriteCoordinator:
                 desync=False,
                 error=error,
                 accepted=False,
-            )
+    )
             for f in findings
         ]
 
@@ -634,7 +634,7 @@ class DuckDBWriteCoordinator:
                 self._wal_executor,
                 self._wal_put_many_sync,
                 findings,
-            )
+    )
         except Exception as e:
             logger.error(f"[WriteCoordinator] WAL putmany error: {e}")
             return False
@@ -657,7 +657,7 @@ class DuckDBWriteCoordinator:
                     "provenance": f.provenance,
                     "payload_text": f.payload_text,
                 },
-            )
+    )
         try:
             # DuckDBWALManager.wal_put_many has wrong type hint (bytes vs dict).
             # In practice it accepts dict and delegates to WALManager.wal_put_many(dict).

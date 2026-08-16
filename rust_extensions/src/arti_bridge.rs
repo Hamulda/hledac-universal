@@ -476,10 +476,10 @@ impl ArtiNode {
         // For now, we just validate that the client is bootstrapped.
         let guard = self.client.lock();
         if guard.is_some() {
-            logger::debug("ArtiNode circuit isolated for session: {}", session_name);
+            tracing::debug("ArtiNode circuit isolated for session: {}", session_name);
             true
         } else {
-            logger::warn("ArtiNode isolate_circuit: not bootstrapped");
+            tracing::warn("ArtiNode isolate_circuit: not bootstrapped");
             false
         }
     }
@@ -646,11 +646,11 @@ impl ArtiNode {
 
         match result {
             Ok(_) => {
-                logger::info("ArtiNode circuits rotated successfully");
+                tracing::info("ArtiNode circuits rotated successfully");
                 true
             }
             Err(e) => {
-                logger::warn!("ArtiNode circuit rotation failed: {}", e);
+                tracing::warn!("ArtiNode circuit rotation failed: {}", e);
                 false
             }
         }
@@ -687,15 +687,15 @@ impl ArtiNode {
             .await
             {
                 Ok(Ok(_stream)) => {
-                    logger::info("ArtiNode circuits rotated (async)");
+                    tracing::info("ArtiNode circuits rotated (async)");
                     Ok(true)
                 }
                 Ok(Err(e)) => {
-                    logger::warn!("Circuit rotation failed: {}", e);
+                    tracing::warn!("Circuit rotation failed: {}", e);
                     Ok(false)
                 }
                 Err(_) => {
-                    logger::warn!("Circuit rotation timed out");
+                    tracing::warn!("Circuit rotation timed out");
                     Ok(false)
                 }
             }

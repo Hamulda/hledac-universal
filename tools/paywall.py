@@ -47,7 +47,7 @@ class PaywallBypass:
                 self._session = httpx.AsyncClient(
                     limits=httpx.Limits(max_connections=25, max_keepalive_connections=10),
                     http2=True,
-                )
+    )
             return self._session
 
     def detect(self, html: str) -> str | None:

@@ -58,7 +58,7 @@ _SIGNATURE_TEMPLATE = (
     '  public_key="{public_key_b64}"\n'
     '  base64="{signature_b64}"\n'
     '/>\n'
-)
+    )
 
 # JSON signature block for structured exports
 _JSON_SIGNATURE_TEMPLATE = {
@@ -135,7 +135,7 @@ class ReportSigner:
             try:
                 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
                     Ed25519PrivateKey,
-                )
+    )
                 from cryptography.hazmat.primitives import serialization
 
                 # Try to load existing keypair
@@ -150,7 +150,7 @@ class ReportSigner:
                     pub_bytes = self._public_key.public_bytes(
                         serialization.Encoding.Raw,
                         serialization.PublicFormat.Raw,
-                    )
+    )
                     self._public_key_b64 = base64.b64encode(pub_bytes).decode("ascii")
                     logger.info("ReportSigner: loaded existing Ed25519 keypair")
                 else:
@@ -162,7 +162,7 @@ class ReportSigner:
                     pub_bytes = self._public_key.public_bytes(
                         serialization.Encoding.Raw,
                         serialization.PublicFormat.Raw,
-                    )
+    )
                     self._public_key_b64 = base64.b64encode(pub_bytes).decode("ascii")
 
                     # Persist keys
@@ -171,7 +171,7 @@ class ReportSigner:
                         serialization.Encoding.Raw,
                         serialization.PrivateFormat.Raw,
                         serialization.NoEncryption(),
-                    )
+    )
                     priv_path.write_bytes(priv_bytes)
                     pub_path.write_bytes(pub_bytes)
 
@@ -230,7 +230,7 @@ class ReportSigner:
                 report_hash=report_hash,
                 public_key_b64=self._public_key_b64,
                 signature_b64=signature_b64,
-            )
+    )
 
             signed_content = report_content + signature_block
             logger.debug(f"ReportSigner: signed report ({len(report_bytes)} bytes)")
@@ -262,7 +262,7 @@ class ReportSigner:
             canonical_bytes = orjson.dumps(
                 report_dict,
                 option=orjson.OPT_SORT_KEYS,
-            )
+    )
 
             # Compute report hash
             report_hash = hashlib.sha256(canonical_bytes).hexdigest()

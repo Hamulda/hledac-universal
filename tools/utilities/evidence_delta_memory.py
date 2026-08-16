@@ -233,7 +233,7 @@ def _compare_all_dimensions(prev_fields: dict, curr_fields: dict) -> tuple[list[
             curr_fields.get(curr_key, 0),
             dim_name,
             higher_is_better
-        )
+    )
         improved_dims.extend(imp)
         regressed_dims.extend(reg)
         neutral_dims.extend(neut)

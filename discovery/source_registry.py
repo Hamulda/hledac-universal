@@ -12,7 +12,6 @@ Sprint P1-12 — PEP 810 lazy loading: adapters loaded on first use, not at impo
 """
 import importlib
 from collections.abc import Callable
-from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from hledac.universal.utils.cache import PyCacheDict
@@ -25,7 +24,7 @@ class SourceEntry(msgspec.Struct, gc=False):
     acquisition_lane: str = 'passive_dns'
     _lazy_module: str | None = None
     _lazy_attr: str | None = None
-    _loaded: bool = field(default=False, repr=False)
+    _loaded: bool = msgspec.field(default=False, omit=True)
 _SOURCE_REGISTRY: dict[str, SourceEntry] = {}
 
 def register_source_adapter(source_type: str, entry: SourceEntry, *, allow_override: bool=False) -> None:
@@ -96,7 +95,7 @@ _LAZY_ADAPTERS: tuple[tuple[str, str, str, int, str, str], ...] = (
     ('circl_pdns',     'hledac.universal.discovery.circl_pdns_adapter', 'async_search_circl_pdns', 1, 'passive_dns',  'hledac.universal.discovery.circl_pdns_adapter'),
     ('dht_discovery',  'hledac.universal.discovery.dht_adapter',         'async_search_dht',         3, 'experimental', 'hledac.universal.discovery.dht_adapter'),
     ('ipfs_discovery', 'hledac.universal.network.ipfs_client',            'ipfs_fetch_as_findings',    3, 'experimental', 'hledac.universal.network.ipfs_client'),
-)
+    )
 
 def __getattr__(name: str) -> Any:
     """PEP 810: lazily import submodules on demand + lazy source-adapter registration."""
@@ -120,7 +119,7 @@ def _ensure_adapters_registered() -> None:
                     _lazy_attr=attr_name,
                     _loaded=False,
                 ),
-            )
+    )
 
 _quality_cache: PyCacheDict[tuple[bool, bool, bool, str], int] = PyCacheDict(512, 300.0)
 

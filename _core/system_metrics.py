@@ -64,7 +64,7 @@ def _get_sysctlCached(name: str) -> int | float | None:
 
         result = subprocess.run(
             ["sysctl", "-n", name], capture_output=True, text=True, timeout=1
-        )
+    )
         if result.returncode == 0:
             raw = result.stdout.strip()
             val = int(raw) if raw.isdigit() else float(raw)
@@ -234,7 +234,7 @@ def get_memory_pressure_mach() -> dict[str, int]:
                 int mach_host_self(void);
                 int host_statistics64(int host_port, int flavor, void *stat, int *count);
                 """
-            )
+    )
             libc = ffi.dlopen("libc.dylib")
             mach_host_self = libc.mach_host_self
         except Exception:
@@ -267,7 +267,7 @@ def get_memory_pressure_mach() -> dict[str, int]:
             count = c_int(HOST_VM_INFO_COUNT)
             result = libc.host_statistics64(
                 mach_port, HOST_VM_INFO_COUNT, pointer(stat), count
-            )
+    )
         else:
             # cffi: allocate struct via ffi.new()
             vm_stat_type = ffi.new("struct {"
@@ -277,7 +277,7 @@ def get_memory_pressure_mach() -> dict[str, int]:
             count = ffi.new("int*", HOST_VM_INFO_COUNT)
             result = libc.host_statistics64(
                 mach_port, HOST_VM_INFO_COUNT, vm_stat_type, count
-            )
+    )
             if result == 0:
                 data = {
                     "free_count": vm_stat_type.free_count,
@@ -420,7 +420,7 @@ def get_system_snapshot() -> SystemSnapshot:
             free_pct=free_pct,
             cpu_percent=0.0,  # Not used in hot paths — use psutil if needed
             load_average=load_avg,
-        )
+    )
 
         _system_snapshot_cache["snapshot"] = (snap, now)
         return snap
@@ -436,7 +436,7 @@ def get_system_snapshot() -> SystemSnapshot:
             memory_available_gb=0.0,
             memory_pressure="UNKNOWN",
             free_pct=0,
-        )
+    )
 
 
 def invalidate_cache() -> None:

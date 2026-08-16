@@ -59,7 +59,7 @@ async def test_cache_transport_builds() -> None:
         assert result is not sentinel_base, (
             "hishel is installed but build_cache_transport returned the bare "
             "base — wrap did not happen"
-        )
+    )
         # Heuristic: the wrapped object should expose handle_async_request
         # (the httpx AsyncBaseTransport contract hishel implements).
         assert hasattr(result, "handle_async_request") or hasattr(
@@ -70,7 +70,7 @@ async def test_cache_transport_builds() -> None:
         assert result is sentinel_base, (
             "hishel not installed; build_cache_transport must pass through "
             "base_transport unchanged"
-        )
+    )
 
 
 @pytest.mark.asyncio
@@ -106,7 +106,7 @@ async def test_cache_transport_fail_soft() -> None:
         assert result is sentinel_base, (
             "fail-soft contract broken: build_cache_transport did not return "
             "base_transport when hishel import failed"
-        )
+    )
     finally:
         # Cleanup: remove blocker + restore hishel if it was loaded before.
         try:

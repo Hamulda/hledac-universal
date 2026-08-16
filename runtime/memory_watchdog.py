@@ -51,7 +51,7 @@ class MemoryWatchdog:
             "Use utils.uma_budget.UmaWatchdog for production code.",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
 
     def start(self) -> None:
         pass

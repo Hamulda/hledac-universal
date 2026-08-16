@@ -26,6 +26,7 @@
 //! Never raises. Errors return empty bytes/strings.
 
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 

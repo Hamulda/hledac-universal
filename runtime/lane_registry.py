@@ -577,7 +577,7 @@ class LaneRegistry:
             "LaneRegistry: profile=%s lanes=%s",
             profile,
             sorted(cls._profile_lanes),
-        )
+    )
 
     @classmethod
     def get_profile_lanes(cls) -> frozenset[str]:

@@ -390,7 +390,7 @@ class TestFederatedIntegration(unittest.IsolatedAsyncioTestCase):
             reasons=["tor_not_found"],
             refs={},
             confidence=0.5
-        )
+    )
 
         events = log.get_by_kind("federation_downgrade")
 

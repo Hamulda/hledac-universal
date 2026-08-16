@@ -11,7 +11,6 @@ _warnings.warn(
 )
 
 from legacy.atomic_storage import (  # noqa: E402
-from _core import aclose
     ZSTD_AVAILABLE,
     AtomicJSONKnowledgeGraph,
     Claim,

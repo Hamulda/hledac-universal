@@ -27,13 +27,13 @@ class TestTP1Invariant:
         from hledac.universal.transport.policy import (
             TransportPolicyDecision,
             get_transport_policy,
-        )
+    )
 
         # Normal memory: all tiers available, T0 must not be blocked
         decision: TransportPolicyDecision = get_transport_policy()
         assert "T0_curl_cffi" not in decision.blocked_tiers, (
             f"[TP-1] T0 must never be blocked! blocked_tiers={decision.blocked_tiers}"
-        )
+    )
         assert decision.tier == "T0_curl_cffi"
 
         # JS rendering: T0 still not blocked
@@ -78,7 +78,7 @@ class TestTP1Invariant:
         source = inspect.getsource(policy)
         assert "_tp1_assert" in source or ("T0_curl_cffi" in source and "assert" in source), (
             "[TP-1] assertion must be present in get_transport_policy() source"
-        )
+    )
 
 
 class TestPolicyWireInPublicFetcher:

@@ -191,7 +191,7 @@ class LmdbPool:
             self._executor = ThreadPoolExecutor(
                 max_workers=_LMDB_WORKERS,
                 thread_name_prefix="hledac-lmdb",
-            )
+    )
             self._semaphore = asyncio.Semaphore(_LMDB_WORKERS)
             # Register atexit cleanup — must be done in async context would be
             # too late, so register at init time; cleanup function is idempotent.
@@ -228,13 +228,13 @@ class LmdbPool:
                 if timeout is not None:
                     coro = loop.run_in_executor(
                         self._executor, lambda: fn(*args, **kwargs)
-                    )
+    )
                     return await safe_wait_for(
                         coro, timeout=timeout, label="lmdb_pool:run"
-                    )
+    )
                 return await loop.run_in_executor(
                     self._executor, lambda: fn(*args, **kwargs)
-                )
+    )
             except lmdb.MapFullError:
                 # RES-01: map_size exhausted. Do NOT return None (generic error).
                 # Return LMDB_MAP_FULL sentinel so caller can distinguish this
@@ -248,7 +248,7 @@ class LmdbPool:
                     fn.__name__ if hasattr(fn, "__name__") else str(fn),
                     _map_full_count,
                     "MDB_MAP_FULL",
-                )
+    )
                 return LMDB_MAP_FULL
             except Exception as e:
                 logger.debug("[LMDB_POOL] Operation failed in %s: %s", fn.__name__ if hasattr(fn, "__name__") else str(fn), e)
@@ -281,7 +281,7 @@ class LmdbPool:
                 fn.__name__ if hasattr(fn, "__name__") else str(fn),
                 _map_full_count,
                 "MDB_MAP_FULL",
-            )
+    )
             return LMDB_MAP_FULL
         except Exception:
             return None

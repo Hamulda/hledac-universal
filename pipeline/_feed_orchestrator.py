@@ -118,7 +118,7 @@ class FeedPipelineOrchestrator:
         results = await self._orchestrator.run(
             initial_input=feed_url,
             max_batch_size=kwargs.get("max_batch_size", 256),
-        )
+    )
 
         return results
 

@@ -44,11 +44,7 @@ from hledac.universal.utils.lmdb_bulk import (
     putmulti_bounded_str,
     putmulti_safe,
 )
-
-
-
-
-
+from hledac.universal.security.pii_gate import (
     PIICategory,
     PIIMatch,
     SanitizationResult,
@@ -57,8 +53,7 @@ from hledac.universal.utils.lmdb_bulk import (
 
 
 # ---------------------------------------------------------------------------
-
-from _core import aclose# Helpers
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _make_temp_dir() -> Path:

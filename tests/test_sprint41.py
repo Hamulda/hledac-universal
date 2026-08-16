@@ -56,13 +56,13 @@ class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):  # noqa: 
             timestamp=time.time(),
             query={'prompt': 'p1'},
             future=asyncio.Future()
-        )
+    )
         item2 = _BatchItem(
             priority=-0.1,  # Lower voi_score
             timestamp=time.time(),
             query={'prompt': 'p2'},
             future=asyncio.Future()
-        )
+    )
 
         async with comm._batch_heap_lock:
             heapq.heappush(comm._batch_heap, item1)
@@ -150,7 +150,7 @@ class TestSprint41B_ZstdCompression(unittest.IsolatedAsyncioTestCase):  # noqa: 
         # Should run in executor without blocking
         compressed = await loop.run_in_executor(
             None, fc._zstd.compress, data, 'text'
-        )
+    )
 
         self.assertIsInstance(compressed, bytes)
         # Verify decompression works

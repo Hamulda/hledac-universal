@@ -36,7 +36,7 @@ _RE_SCRIPT_STYLE = re.compile(
     r"<script[^>]*>.*?</script>|<style[^>]*>.*?</style>|"
     r"<noscript[^>]*>.*?</noscript>",
     re.DOTALL | re.IGNORECASE,
-)
+    )
 _RE_TEMPLATE = re.compile(r"<template[^>]*>.*?</template>", re.DOTALL | re.IGNORECASE)
 _RE_SVG = re.compile(r"<svg[^>]*>.*?</svg>", re.DOTALL | re.IGNORECASE)
 _RE_CANVAS = re.compile(r"<canvas[^>]*>.*?</canvas>", re.DOTALL | re.IGNORECASE)
@@ -55,12 +55,12 @@ _RE_GA_ID = re.compile(r"UA-\d{6,10}-\d{1,4}|GTM-[A-Z0-9]{1,8}", re.IGNORECASE)
 _RE_OG_TAG = re.compile(
     r'<meta\s+(?:property|content)=["\']og:([a-zA-Z0-9_:-]+)["\']\s+(?:content|property)=["\']([^"\']*)["\']',
     re.IGNORECASE,
-)
+    )
 # Also handle reversed attribute order (content before property)
 _RE_OG_TAG_REV = re.compile(
     r'<meta\s+content=["\']([^"\']*)["\']\s+property=["\']og:([a-zA-Z0-9_:-]+)["\']',
     re.IGNORECASE,
-)
+    )
 
 # HTML comments
 _RE_COMMENT = re.compile(r"<!--[\s\S]*?-->")

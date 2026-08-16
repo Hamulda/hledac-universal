@@ -55,11 +55,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import ParamSpec, TypeVar
 
-
-
-
-
-
+from hledac.universal.utils.exception_severity import (
     Severity,
     ExceptionEvent,
     exc_event,
@@ -69,8 +65,7 @@ __all__ = [
     "silenced",
     "silence_with_severity",
     "severity_swallow",
-
-from _core import aclose    "safe_swallow",
+    "safe_swallow",
     "create_exception_event",
     "Severity",
     "TokenBucket",

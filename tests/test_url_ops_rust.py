@@ -18,7 +18,7 @@ _rust = pytest.importorskip("hledac_rust_extensions")
 pytest.mark.skipif(
     not hasattr(_rust, "classify_url"),
     reason="hledac_rust_extensions.classify_url not present (older build?)",
-)
+    )
 
 
 class TestClassifyUrl:
@@ -225,7 +225,7 @@ class TestPublicFetcherMigration:
         assert actual == expected, (
             f"_altsvc_extract_host({url!r}) = {actual!r}, "
             f"urlparse fallback = {expected!r}"
-        )
+    )
 
     @pytest.mark.parametrize(
         "url",
@@ -264,7 +264,7 @@ class TestPublicFetcherMigration:
         assert rust_host == py_fallback, (
             f"host extraction diverged for {url!r}: rust={rust_host!r}, "
             f"urllib={py_fallback!r}"
-        )
+    )
 
     @pytest.mark.parametrize(
         "url",
@@ -304,7 +304,7 @@ class TestPublicFetcherMigration:
         assert actual == expected, (
             f"_looks_like_feed_url({url!r}) = {actual!r}, "
             f"urllib fallback = {expected!r}"
-        )
+    )
 
     @pytest.mark.parametrize(
         "url",
@@ -334,7 +334,7 @@ class TestPublicFetcherMigration:
         assert pf._looks_like_feed_url(url) is False, (
             f"_looks_like_feed_url({url!r}) should reject 'feedback' "
             f"substring via the Rust path; got True."
-        )
+    )
 
     @pytest.mark.parametrize(
         "url",
@@ -389,7 +389,7 @@ class TestPublicFetcherMigration:
 
         assert actual == expected, (
             f"_validate_url({url!r}) = {actual!r}, expected (python oracle) = {expected!r}"
-        )
+    )
 
     def test_validate_url_unsupported_scheme_returns_scheme_error(self):
         """Explicit guard: ftp/gopher etc. must surface as url_unsupported_scheme:xxx.
@@ -408,7 +408,7 @@ class TestPublicFetcherMigration:
             assert result == f"url_unsupported_scheme:{scheme}", (
                 f"_validate_url({url!r}) = {result!r}, "
                 f"expected url_unsupported_scheme:{scheme}"
-            )
+    )
 
     def test_validate_url_empty_inputs_are_url_empty(self):
         """Empty / whitespace / non-string inputs must short-circuit to url_empty."""
@@ -418,7 +418,7 @@ class TestPublicFetcherMigration:
             result = pf._validate_url(url)  # type: ignore[arg-type]
             assert result == "url_empty", (
                 f"_validate_url({url!r}) = {result!r}, expected url_empty"
-            )
+    )
 
     def test_looks_like_feed_url_empty_returns_false(self):
         """Empty URL must not raise and must return False (matches Rust contract)."""

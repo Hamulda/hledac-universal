@@ -91,7 +91,7 @@ GNN_IOC_TYPES: tuple[str, ...] = (
     'threat_actor',
     'malware_family',
     'pending',  # Unknown types awaiting classification
-)
+    )
 NUM_GNN_IOC_TYPES: int = len(GNN_IOC_TYPES)
 
 # IOC type prefix mapping for compact representation (canonical order)
@@ -236,7 +236,7 @@ class MappingLRUCache:
             row_id=row_id,
             dimension=dimension,
             updated_at=0.0,  # Will be set on actual embedding fetch
-        )
+    )
 
     def get_embedding_ref(self, kuzu_id: str) -> EmbeddingReference | None:
         """Get embedding reference for a node."""
@@ -251,7 +251,7 @@ class MappingLRUCache:
             gnn_to_duckdb=dict(self._gnn_to_duckdb),
             node_types=dict(self._node_types),
             node_count=len(self._kuzu_to_gnn),
-        )
+    )
 
     def load_from_kuzu(self, kuzu_conn, batch_size: int = 1000) -> int:
         """Load existing IOC nodes from Kuzu into mapping cache.

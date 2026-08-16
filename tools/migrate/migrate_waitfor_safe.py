@@ -76,7 +76,7 @@ def replace_wait_for(content: str) -> tuple[str, int, int]:
                 r"await asyncio\.wait_for\(",
                 "await safe_wait_for(",
                 line
-            )
+    )
             # Also fix the timeout= -> timeout= (same arg name)
             new_lines.append(new_line)
             n_replaced += 1

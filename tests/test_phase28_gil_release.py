@@ -319,7 +319,7 @@ class TestM1Optimization:
             has_gil_mention = any(
                 keyword in doc_lower
                 for keyword in ["gil", "py.detach", "pythread", "global interpreter"]
-            )
+    )
             assert has_gil_mention, "Documentation should mention GIL release mechanism"
 
         except ImportError:

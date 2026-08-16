@@ -12,7 +12,7 @@ Key Changes:
 2. Content-based routing via regex patterns (no ML model needed)
 3. Pointer swap instead of mlx_lm.load() for hot-swap <1ms (TRUE ZERO-COPY)
 4. UMA-resident micro-models with LRU eviction
-5. Adaptive memory budget using AdaptiveMemoryManager
+5. Adaptive memory budget using ResourceGovernor
 
 Usage:
     from hledac.universal.brain.moe_swarm_integration import MoERouterSwarmMixin
@@ -30,21 +30,11 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
-if TYPE_CHECKING:
-    from mlx_lm import Model as MLXModel
-    from mlx_lm import TokenizerWrapper as MLXTokenizer
-
 from .content_router import (
     ContentRouter,
     classify_content,
     get_preferred_model,
     route_content,
-)
-
-# MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
-from hledac.universal.utils.cpu_affinity import (
-    set_mlx_affinity,
-    is_apple_silicon,
 )
 from .micro_model_pool import (
     MICRO_MODELS,
@@ -53,13 +43,9 @@ from .micro_model_pool import (
     MicroModelPool,
     MicroModelSpec,
     TaskType,
+    create_micro_model_pool,
 )
-from .micro_model_swarm import create_micro_model_pool  # P3-1 FIX: was importing from micro_model_pool (wrong module)
-
-
-
-
-
+from .micro_model_swarm import (
     MicroModelSwarmRouter,
     create_swarm_router,
 )
@@ -68,15 +54,14 @@ if TYPE_CHECKING:
     import mlx.core as mx
     import mlx.nn as mlx_nn
 
-from _core import aclose
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# AdaptiveMemoryManager for Adaptive Memory Budget (NEW-M6: renamed from ResourceGovernor)
+# ResourceGovernor for Adaptive Memory Budget
 # =============================================================================
 
-class AdaptiveMemoryManager:
+class ResourceGovernor:
     """
     Adaptive memory management for Apple Silicon.
     
@@ -101,7 +86,7 @@ class AdaptiveMemoryManager:
     
     def __init__(self, total_memory_mb: int = 8192):
         """
-        Initialize AdaptiveMemoryManager.
+        Initialize ResourceGovernor.
         
         Args:
             total_memory_mb: Total system memory (default 8GB for M1 MacBook Air)
@@ -165,13 +150,8 @@ class AdaptiveMemoryManager:
         return current_pressure > self.HIGH_PRESSURE
     
     def can_allocate(self, size_mb: int, current_pressure: float) -> bool:
-        """Check if new allocation is safe.
-        
-        P3-8 FIX: size_mb is in MB, _total_memory is stored in bytes.
-        Convert _total_memory to MB for consistent unit comparison.
-        """
-        total_memory_mb = self._total_memory / (1024 * 1024)
-        return current_pressure + (size_mb / total_memory_mb) < self.CRITICAL_PRESSURE
+        """Check if new allocation is safe."""
+        return current_pressure + (size_mb / self._total_memory) < self.CRITICAL_PRESSURE
     
     def get_eviction_threshold(self, current_pressure: float) -> float:
         """
@@ -195,12 +175,12 @@ class AdaptiveMemoryManager:
 
 
 # =============================================================================
-# SwappableMicroModelPool — Pool with AdaptiveMemoryManager integration
+# SwappableMicroModelPool — Pool with ResourceGovernor integration
 # =============================================================================
 
 class SwappableMicroModelPool(MicroModelPool):
     """
-    MicroModelPool with adaptive memory management via AdaptiveMemoryManager.
+    MicroModelPool with adaptive memory management via ResourceGovernor.
     
     ISSUE-022-06 FIX: Inherits batch preload from MicroModelPool for
     fragmentation-resistant UMA allocation.
@@ -223,14 +203,14 @@ class SwappableMicroModelPool(MicroModelPool):
         Initialize SwappableMicroModelPool.
         
         Args:
-            memory_budget_mb: Initial memory budget (default: adaptive via AdaptiveMemoryManager)
+            memory_budget_mb: Initial memory budget (default: adaptive via ResourceGovernor)
             eviction_threshold: When to start evicting
             preload_all: Whether to preload all models at startup
-            use_adaptive_budget: Use AdaptiveMemoryManager for dynamic budget
+            use_adaptive_budget: Use ResourceGovernor for dynamic budget
         """
         # Calculate adaptive budget first if needed
         if use_adaptive_budget:
-            governor = AdaptiveMemoryManager()
+            governor = ResourceGovernor()
             adaptive_budget = governor.calculate_micro_model_budget()
             # Use adaptive budget if not explicitly set or adaptive is preferred
             if memory_budget_mb is None or use_adaptive_budget:
@@ -249,7 +229,7 @@ class SwappableMicroModelPool(MicroModelPool):
             preload_all=preload_all,
         )
         self._use_adaptive_budget = use_adaptive_budget
-        self._governor = AdaptiveMemoryManager()
+        self._governor = ResourceGovernor()
     
     @property
     def eviction_threshold(self) -> float:
@@ -296,7 +276,7 @@ class MoERouterSwarmMixin:
     - Content-based routing (regex patterns)
     - Micro-model pool with <100ms hot-swap
     - UMA-resident micro-models
-    - Adaptive memory budget via AdaptiveMemoryManager
+    - Adaptive memory budget via ResourceGovernor
     - Automatic LRU eviction
     
     Usage:
@@ -322,15 +302,23 @@ class MoERouterSwarmMixin:
         """
         # Instance-level router (not class-level!)
         self._swarm_router: Optional[MicroModelSwarmRouter] = None
-        self._swarm_lock: threading.Lock = threading.Lock()
+        # ISSUE-014 FIX: Use asyncio.Lock for async context (MoERouter is async)
+        # Lazy initialization to avoid creating event loop in __init__ (sync context)
+        self._swarm_lock: asyncio.Lock | None = None
         self._swarm_initialized: bool = False
         
         # Initialize parent class (MUST be last for mixin compatibility)
         super().__init__(*args, **kwargs)
     
-    def inject_swarm_router(self, router: MicroModelSwarmRouter) -> None:
+    def _get_swarm_lock(self) -> asyncio.Lock:
+        """Lazy initialization of asyncio.Lock (must be called from async context)."""
+        if self._swarm_lock is None:
+            self._swarm_lock = asyncio.Lock()
+        return self._swarm_lock
+    
+    async def inject_swarm_router_async(self, router: MicroModelSwarmRouter) -> None:
         """
-        Inject a pre-configured MicroModelSwarmRouter instance.
+        Inject a pre-configured MicroModelSwarmRouter instance (async version).
         
         This is the preferred way to provide the router - allows for:
         - Testing with mock routers
@@ -340,12 +328,29 @@ class MoERouterSwarmMixin:
         Args:
             router: MicroModelSwarmRouter instance
         """
-        with self._swarm_lock:
+        lock = self._get_swarm_lock()
+        async with lock:
             self._swarm_router = router
     
-    def _get_swarm_router(self) -> MicroModelSwarmRouter:
+    def inject_swarm_router(self, router: MicroModelSwarmRouter) -> None:
         """
-        Get or create the MicroModelSwarmRouter instance.
+        Inject a pre-configured MicroModelSwarmRouter instance (sync version).
+        
+        This is the preferred way to provide the router - allows for:
+        - Testing with mock routers
+        - Sharing routers across instances
+        - Custom router configuration
+        
+        Args:
+            router: MicroModelSwarmRouter instance
+        """
+        # Sync version for backward compatibility - direct assignment without lock
+        # since initialization happens before async event loop starts
+        self._swarm_router = router
+    
+    async def _get_swarm_router(self) -> MicroModelSwarmRouter:
+        """
+        Get or create the MicroModelSwarmRouter instance (async version).
         
         This is instance-level, not class-level! Each mixin instance
         has its own router (or shares via inject_swarm_router).
@@ -361,7 +366,8 @@ class MoERouterSwarmMixin:
             return self._swarm_router
         
         # Slow path: need to create - acquire lock
-        with self._swarm_lock:
+        lock = self._get_swarm_lock()
+        async with lock:
             # Double-checked locking pattern - re-check under lock
             if self._swarm_router is None:
                 # Create router with adaptive memory budget
@@ -384,7 +390,7 @@ class MoERouterSwarmMixin:
         """
         Calculate memory budget for micro-models based on available RAM.
         
-        Uses AdaptiveMemoryManager for adaptive budget calculation.
+        Uses ResourceGovernor for adaptive budget calculation.
         
         M1 MacBook Air 8GB:
         - System + apps: ~1.5 GB
@@ -395,7 +401,7 @@ class MoERouterSwarmMixin:
         Returns:
             Memory budget in MB
         """
-        governor = AdaptiveMemoryManager()
+        governor = ResourceGovernor()
         return governor.calculate_micro_model_budget()
     
     async def _init_swarm_router(self) -> None:
@@ -606,17 +612,17 @@ def create_swappable_pool(
     """
     Create a MicroModelPool with adaptive memory management.
     
-    Uses adaptive budget by default (AdaptiveMemoryManager calculates optimal
+    Uses adaptive budget by default (ResourceGovernor calculates optimal
     memory allocation for M1 8GB: ~3.2 GB).
     
     Args:
-        memory_budget_mb: Initial memory budget (default: adaptive via AdaptiveMemoryManager)
-        use_adaptive_budget: Use AdaptiveMemoryManager for dynamic budget (default: True)
+        memory_budget_mb: Initial memory budget (default: adaptive via ResourceGovernor)
+        use_adaptive_budget: Use ResourceGovernor for dynamic budget (default: True)
         
     Returns:
         SwappableMicroModelPool instance
     """
-    # If memory_budget_mb is None, AdaptiveMemoryManager will calculate optimal value
+    # If memory_budget_mb is None, ResourceGovernor will calculate optimal value
     initial_budget = memory_budget_mb if memory_budget_mb is not None else 4096  # Temporary high value, will be adjusted
     
     return SwappableMicroModelPool(
@@ -721,8 +727,8 @@ class MoERouterWithSwarm:
         Args:
             config: MoERouterConfig (or None for defaults)
             enable_swarm: Enable micro-model routing (default: True)
-            memory_budget_mb: Memory budget for micro-models (default: adaptive via AdaptiveMemoryManager)
-            use_adaptive_budget: Use AdaptiveMemoryManager for dynamic budget
+            memory_budget_mb: Memory budget for micro-models (default: adaptive via ResourceGovernor)
+            use_adaptive_budget: Use ResourceGovernor for dynamic budget
         """
         self._config = config
         self._enable_swarm = enable_swarm
@@ -738,13 +744,13 @@ class MoERouterWithSwarm:
         self._content_router = ContentRouter()
         
         # Expert state (from original MoERouter)
-        self._experts: dict[str, tuple[MLXModel, MLXTokenizer]] = {}
+        self._experts: dict[str, tuple[Any, Any]] = {}
         self._expert_usage: dict[str, int] = {}
-        self._prompt_cache_by_expert: dict[str, Any] = {}  # type: ignore[assignment]
+        self._prompt_cache_by_expert: dict[str, Any] = {}
         
         # Main model reference (DeepHermes-3B)
-        self._main_model: Optional[MLXModel] = None
-        self._main_tokenizer: Optional[MLXTokenizer] = None
+        self._main_model: Optional[Any] = None
+        self._main_tokenizer: Optional[Any] = None
     
     @property
     def config(self) -> Any:
@@ -753,8 +759,8 @@ class MoERouterWithSwarm:
     
     async def initialize(
         self,
-        model: Optional[MLXModel] = None,
-        tokenizer: Optional[MLXTokenizer] = None,
+        model: Optional[Any] = None,
+        tokenizer: Optional[Any] = None,
     ) -> None:
         """
         Initialize the router and micro-model pool.
@@ -770,7 +776,7 @@ class MoERouterWithSwarm:
         self._main_tokenizer = tokenizer
         
         if self._enable_swarm:
-            # Pass None for memory_budget_mb if not explicitly set - let AdaptiveMemoryManager calculate
+            # Pass None for memory_budget_mb if not explicitly set - let ResourceGovernor calculate
             budget = None if self._memory_budget is None else self._memory_budget
             self._swarm_router = create_swarm_router(
                 memory_budget_mb=budget,
@@ -781,7 +787,7 @@ class MoERouterWithSwarm:
             if model is not None and tokenizer is not None:
                 self._swarm_router.register_main_model(model, tokenizer)
             
-            # Get actual budget (may have been adjusted by AdaptiveMemoryManager)
+            # Get actual budget (may have been adjusted by ResourceGovernor)
             actual_budget = int(self._swarm_router._pool._memory_budget / (1024 * 1024))
             logger.info(
                 f"[SWARM] MicroModelSwarm initialized "
@@ -860,11 +866,6 @@ class MoERouterWithSwarm:
         # Use main model
         if self._main_model is None:
             raise RuntimeError("No main model available")
-        
-        # MODERN-35 Fix: Set P-core affinity before MLX Metal inference
-        # E-cores are strictly reserved for I/O operations only
-        if is_apple_silicon():
-            set_mlx_affinity()
         
         import mlx_lm
         return mlx_lm.generate(
@@ -967,7 +968,7 @@ def enable_swarm_routing(
     Args:
         router: Existing MoERouter instance
         memory_budget_mb: Memory budget for micro-models (default: adaptive)
-        use_adaptive_budget: Use AdaptiveMemoryManager for dynamic budget
+        use_adaptive_budget: Use ResourceGovernor for dynamic budget
     
     Returns:
         The MicroModelSwarmRouter instance
@@ -995,7 +996,7 @@ def get_swarm_router() -> MicroModelSwarmRouter:
     Uses adaptive memory budget by default for M1 8GB optimization.
     """
     return create_swarm_router(
-        memory_budget_mb=None,  # Let AdaptiveMemoryManager calculate
+        memory_budget_mb=None,  # Let ResourceGovernor calculate
         preload_models=False,
         use_adaptive_budget=True,
     )

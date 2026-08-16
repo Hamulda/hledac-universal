@@ -132,12 +132,12 @@ class FindingPipeline:
                 "[ISSUE-024] Rust MPSCPool initialized: capacity=%d, wake_fd=%d",
                 capacity,
                 wake_fd,
-            )
+    )
         except Exception as _exc:
             logger.debug(
                 "[ISSUE-024] Rust MPSCPool unavailable, using no-op mode: %s",
                 _exc,
-            )
+    )
             self._mpsc = None
             self._sender_ptr = 0
 
@@ -156,7 +156,7 @@ class FindingPipeline:
         self._consumer_task = safe_create_task(
             self._drain_loop(),
             name="finding_pipeline:drain",
-        )
+    )
         logger.debug("[ISSUE-024] FindingPipeline consumer started")
 
     async def stop(self) -> None:
@@ -182,7 +182,7 @@ class FindingPipeline:
             "[ISSUE-024] FindingPipeline stopped: enqueued=%d, dropped=%d",
             self._enqueued_count,
             self._dropped_count,
-        )
+    )
 
     async def enqueue_batch(
         self,
@@ -233,7 +233,7 @@ class FindingPipeline:
                     logger.warning(
                         "[ISSUE-024] MPSCPool still full after eviction, dropping %d items",
                         len(findings),
-                    )
+    )
                     return False
 
         return True
@@ -267,7 +267,7 @@ class FindingPipeline:
                     None,
                     self._sync_ingest_wrapper,
                     findings,
-                )
+    )
             except Exception:  # noqa: BLE001
                 pass  # fail-soft
             finally:
@@ -301,7 +301,7 @@ class FindingPipeline:
                 logger.warning(
                     "[ISSUE-024] [sync] MPSCPool still full after eviction, dropping %d items",
                     len(findings),
-                )
+    )
                 return False
 
         return True
@@ -319,12 +319,12 @@ class FindingPipeline:
                 reader_handle = loop.add_reader(
                     wake_fd,
                     self._on_wake_fd,
-                )
+    )
             except Exception as _exc:
                 logger.debug(
                     "[ISSUE-024] Failed to register wake fd reader: %s",
                     _exc,
-                )
+    )
 
         IDLE_TIMEOUT_S = 0.5  # Drain every 500ms even without wake
 
@@ -340,7 +340,7 @@ class FindingPipeline:
                     logger.debug(
                         "[ISSUE-024] Drain loop error: %s",
                         _exc,
-                    )
+    )
         finally:
             if reader_handle is not None:
                 self._unregister_wake_fd(wake_fd, loop)
@@ -373,7 +373,7 @@ class FindingPipeline:
             logger.debug(
                 "[ISSUE-024] recv_batch error: %s",
                 _exc,
-            )
+    )
             return
 
         if not raw_items:
@@ -401,7 +401,7 @@ class FindingPipeline:
                         "[ISSUE-024] Failed to deserialize finding batch: orjson=%s msgspec=%s",
                         _json_err,
                         _msg_err,
-                    )
+    )
                     continue
 
         if not all_findings:
@@ -419,7 +419,7 @@ class FindingPipeline:
                 "[ISSUE-024] DuckDB ingest failed for %d findings: %s",
                 len(all_findings),
                 _exc,
-            )
+    )
 
     async def _direct_ingest(
         self,
@@ -436,7 +436,7 @@ class FindingPipeline:
             logger.debug(
                 "[ISSUE-024] Direct ingest failed: %s",
                 _exc,
-            )
+    )
 
     def _sync_ingest_wrapper(self, findings: list[CanonicalFinding]) -> None:
         """Sync wrapper to run async ingest in executor.
@@ -502,7 +502,7 @@ class FindingPipeline:
                 "[ISSUE-024] Final drain ingest failed for %d findings: %s",
                 len(all_findings),
                 _exc,
-            )
+    )
 
     # ── Telemetry ────────────────────────────────────────────────────────────
 

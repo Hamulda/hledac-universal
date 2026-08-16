@@ -141,7 +141,7 @@ class TechStackSignature:
             indicators=all_indicators,
             version=version,
             additional_tech=additional_tech,
-        )
+    )
 
     def _detect_version(self, framework: str, content: str) -> str | None:
         """Detect framework version from content."""

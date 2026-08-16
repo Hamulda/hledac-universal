@@ -39,7 +39,7 @@ class TestTaskDedupMetrics:
             phase_timings={},
             sprint_id="test-sprint",
             analyst_brief=None,
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_task_dedup_ioc_val_incremented(self):
@@ -52,7 +52,7 @@ class TestTaskDedupMetrics:
 
         assert scorecard._results.get("ioc_nodes") == 3, (
             f"Expected ioc_nodes=3, got {scorecard._results.get('ioc_nodes')}"
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_task_dedup_fallback_ioc_count(self):
@@ -67,10 +67,10 @@ class TestTaskDedupMetrics:
 
         assert scorecard._results.get("accepted") == 5, (
             f"Expected accepted=5, got {scorecard._results.get('accepted')}"
-        )
+    )
         assert scorecard._results.get("ioc_nodes") == 10, (
             f"Expected ioc_nodes=10, got {scorecard._results.get('ioc_nodes')}"
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_task_dedup_accepted_in_loop(self):
@@ -83,4 +83,4 @@ class TestTaskDedupMetrics:
 
         assert scorecard._results.get("accepted") == 3, (
             f"Expected accepted=3, got {scorecard._results.get('accepted')}"
-        )
+    )

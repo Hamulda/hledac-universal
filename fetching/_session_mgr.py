@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 # B039 false positive — dict literal is immutable; ContextVar.get() returns a copy.
 _session_ctx_var: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(  # noqa: B039
     "_session_telemetry", default={"tor": "unavailable", "i2p": "unavailable"}
-)
+    )
 
 
 def get_telemetry() -> dict[str, str]:

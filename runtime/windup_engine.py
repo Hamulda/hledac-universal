@@ -126,7 +126,7 @@ async def _run_graph_stats_phase(graph: object) -> tuple[list, dict]:
         logger.info(
             f"[GRAPH] nodes={ioc_graph_stats['nodes']} "
             f"edges={ioc_graph_stats['edges']}"
-        )
+    )
     except Exception as e:
         logger.warning(f"[WINDUP] DuckPGQ stats: {e}")
     return top_nodes, ioc_graph_stats
@@ -159,7 +159,7 @@ async def _run_hypothesis_phase(
             ioc_type="hypothesis",
             confidence=0.82,
             degree=1,
-        )
+    )
         logger.info(f"[HYPOTHESIS] enqueued: {h_text[:80]}")
 
 
@@ -194,7 +194,7 @@ async def _run_synthesis_phase(
             has_gnn=bool(gnn_predictions),
             memory_pressure=memory_level,
             sprint_query=sprint_query,
-        )
+    )
         engine_name = engine
         scheduler._synthesis_engine = engine
         logger.info(f"[MOE] synthesis engine: {engine}")
@@ -227,7 +227,7 @@ async def _run_synthesis_phase(
             findings=[{"text": t, "ioc": f.get("ioc", ""), "source": f.get("source", "")}
                       for t, f in zip(finding_texts, deduped or [], strict=False)],
             force_synthesis=True,
-        )
+    )
         synthesis_meta = runner.last_synthesis_meta
     except Exception as e:
         logger.warning(f"[WINDUP] Synthesis: {e}")

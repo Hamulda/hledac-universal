@@ -18,22 +18,21 @@ from .lang_detector import (
     ScriptType,
     detect_language,
     get_lang_detector,
-)
+    )
 from .mrl import (
     MRLTruncator,
     MRL_DIMENSIONS,
     truncate_embedding,
     truncate_batch,
-)
+    )
 from .bge_m3_embedder import (
-from _core._util import aclose
     BGEM3Embedder,
     BGEBackend,
     BGEConfig,
     get_bge_m3_embedder,
     NATIVE_DIM,
     MRL_TARGET_DIM,
-)
+    )
 
 __all__ = [
     # Language detection

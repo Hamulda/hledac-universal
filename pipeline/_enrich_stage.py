@@ -176,7 +176,7 @@ class EnrichStage:
                 # Process results and AIMD feedback
                 batch_success, batch_fail = await self._process_batch_results(
                     gather_result, output_queue, metrics
-                )
+    )
                 success_count += batch_success
                 fail_count += batch_fail
                 await self._update_aimd(batch_success, metrics)
@@ -194,7 +194,7 @@ class EnrichStage:
                 success_count + fail_count,
                 success_count,
                 fail_count,
-            )
+    )
 
     async def _enrich_one_hit(
         self, hit: Any, page_text: str, url: str, ctx: StageContext
@@ -213,7 +213,7 @@ class EnrichStage:
                 hit_end=getattr(hit, "end", 0) or 0,
                 page_text=page_text,
                 discovery_score=None,
-            )
+    )
             return result[0] if result and len(result) > 0 else None
         except asyncio.CancelledError:
             raise

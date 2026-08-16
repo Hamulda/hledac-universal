@@ -58,16 +58,16 @@ class TestAcquisitionFallback:
         # Assertions matching FIX 1 requirements
         assert fallback_report["acquisition_report_fallback_used"] is True, (
             "acquisition_report_fallback_used must be True in fallback path"
-        )
+    )
         assert fallback_report["acquisition_profile"] == "default", (
             "fallback acquisition_profile must be 'default' when _nd unavailable"
-        )
+    )
         assert fallback_report["fallback_reason"].startswith("canonical_build_failed:"), (
             f"fallback_reason must start with 'canonical_build_failed:' but got {fallback_report['fallback_reason']!r}"
-        )
+    )
         assert fallback_report["nonfeed_priority_enabled"] is False, (
             "nonfeed_priority_enabled must be False for default profile in fallback"
-        )
+    )
 
     def test_fallback_uses_nd_profile_when_available(self):
         """When _nd is available, fallback profile should come from nonfeed_plan_debug."""
@@ -94,10 +94,10 @@ class TestAcquisitionFallback:
         # When _nd is available, fallback_profile should be nonfeed_diagnostic
         assert fallback_report["acquisition_profile"] == "nonfeed_diagnostic", (
             f"expected 'nonfeed_diagnostic' from _nd, got {fallback_report['acquisition_profile']!r}"
-        )
+    )
         assert fallback_report["nonfeed_priority_enabled"] is True, (
             "nonfeed_priority_enabled must be True when _nd has nonfeed_priority_enabled=True"
-        )
+    )
         assert fallback_report["acquisition_report_fallback_used"] is True
 
     def test_build_acquisition_report_fallback_used_field(self):
@@ -107,7 +107,7 @@ class TestAcquisitionFallback:
 
         assert report.get("acquisition_report_fallback_used") is False, (
             "canonical build must set acquisition_report_fallback_used=False"
-        )
+    )
         assert report.get("acquisition_profile") == "default"
         assert "fallback_reason" not in report, "fallback_reason must not appear in canonical report"
 
@@ -121,20 +121,20 @@ class TestAcquisitionFallback:
             acquisition_profile="nonfeed_diagnostic",
             nonfeed_priority_enabled=True,
             nonfeed_profile_expected_lanes=["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR"],
-        )
+    )
         report = build_acquisition_report(
             nonfeed_plan_debug=nd,
             acquisition_profile=nd.acquisition_profile,
             nonfeed_priority_enabled=nd.nonfeed_priority_enabled,
             nonfeed_profile_expected_lanes=list(nd.nonfeed_profile_expected_lanes),
-        )
+    )
 
         assert report.get("acquisition_profile") == "nonfeed_diagnostic", (
             f"expected 'nonfeed_diagnostic', got {report.get('acquisition_profile')!r}"
-        )
+    )
         assert report.get("nonfeed_priority_enabled") is True, (
             f"nonfeed_priority_enabled must be True for nonfeed_diagnostic, got {report}"
-        )
+    )
         expected_lanes = report.get("nonfeed_profile_expected_lanes", [])
         assert "CT" in expected_lanes, f"CT must be in expected lanes, got {expected_lanes}"
         assert "PIVOT_EXECUTOR" in expected_lanes, f"PIVOT_EXECUTOR must be in expected lanes, got {expected_lanes}"
@@ -315,11 +315,11 @@ class TestEnvVarOverrideLogging:
                 accepted_findings_so_far=0,
                 branch_timeout_count=0,
                 transport_authority_status=None,
-            )
+    )
             f228b_calls = [c for c in mock_info.call_args_list if c.args and "[F228B]" in str(c.args)]
             assert not f228b_calls, (
                 f"logger.info [F228B] must not be called when env var is absent/default, got calls: {f228b_calls}"
-            )
+    )
 
     def test_env_var_logs_when_actually_overriding(self, monkeypatch: pytest.MonkeyPatch):
         """When HLEDAC_ACQUISITION_PROFILE differs from 'default', log once."""
@@ -336,15 +336,15 @@ class TestEnvVarOverrideLogging:
                     accepted_findings_so_far=0,
                     branch_timeout_count=0,
                     transport_authority_status=None,
-                )
+    )
                 f228b_calls = [c for c in mock_info.call_args_list if c.args and "[F228B]" in str(c.args)]
                 assert len(f228b_calls) == 1, (
                     f"logger.info [F228B] must be called exactly once when env var overrides, "
                     f"got {len(f228b_calls)} calls: {f228b_calls}"
-                )
+    )
                 assert "nonfeed_diagnostic" in str(f228b_calls[0].args), (
                     f"logged message must contain 'nonfeed_diagnostic', got {f228b_calls[0].args!r}"
-                )
+    )
         finally:
             monkeypatch.delenv("HLEDAC_ACQUISITION_PROFILE", raising=False)
 

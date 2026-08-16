@@ -145,7 +145,7 @@ def get_thermal_state() -> tuple[int, str]:
             capture_output=True,
             text=True,
             timeout=1,
-        )
+    )
         if result.returncode == 0:
             try:
                 level = int(result.stdout.strip())
@@ -224,7 +224,7 @@ _SMC_THERMAL_KEYS: tuple[bytes, ...] = (
     b"TA0P",  # Ambient
     b"TB0T",  # Battery 0
     b"TW0P",  # WLAN
-)
+    )
 
 # SMC command selectors
 _SMC_CMD_READ_KEY = 5
@@ -394,7 +394,7 @@ def _smc_read_key(key: bytes) -> float | None:
             status=0,
             data8=0,
             data32=0,
-        )
+    )
         output_info = SMCKeyDataOut()
         output_size = ctypes.c_size_t(ctypes.sizeof(output_info))
 
@@ -405,7 +405,7 @@ def _smc_read_key(key: bytes) -> float | None:
             ctypes.sizeof(input_info),
             ctypes.byref(output_info),
             ctypes.byref(output_size),
-        )
+    )
         if ret != 0 or output_info.result != 0:
             return None
 
@@ -423,7 +423,7 @@ def _smc_read_key(key: bytes) -> float | None:
             status=0,
             data8=data_size,
             data32=0,
-        )
+    )
 
         output_val = SMCKeyDataVal()
         output_val_size = ctypes.c_size_t(ctypes.sizeof(output_val))
@@ -435,7 +435,7 @@ def _smc_read_key(key: bytes) -> float | None:
             ctypes.sizeof(input_read),
             ctypes.byref(output_val),
             ctypes.byref(output_val_size),
-        )
+    )
         if ret != 0 or output_val.result != 0:
             return None
 

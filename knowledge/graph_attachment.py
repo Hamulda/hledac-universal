@@ -481,7 +481,7 @@ class GraphAttachmentStore:
                 max_nodes=max_nodes,
                 max_community_size=max_community_size,
                 include_centrality=include_centrality,
-            )
+    )
         except Exception:
             return {
                 "nodes": [],

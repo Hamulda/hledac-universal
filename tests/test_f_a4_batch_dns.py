@@ -12,11 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-
-
-
-
-
+from hledac.universal.utils.batch_dns import (
     ENV_OPT_OUT,
     BatchDNSResolver,
     get_batch_dns_resolver,
@@ -28,8 +24,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_singleton():
-
-from _core import aclose    """Drop the process singleton between tests for isolation."""
+    """Drop the process singleton between tests for isolation."""
     reset_batch_dns_resolver()
     yield
     reset_batch_dns_resolver()

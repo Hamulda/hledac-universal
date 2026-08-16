@@ -140,7 +140,7 @@ class AsyncBrowserPool:
                 logger.warning(
                     "playwright not available — browser pool is a no-op. "
                     "Install with: uv add playwright && playwright install chromium"
-                )
+    )
                 self._launched = True  # mark as "launched" but with no browsers
                 return
 
@@ -157,7 +157,7 @@ class AsyncBrowserPool:
                             "--disable-web-security",
                             "--disable-features=IsolateOrigins,site-per-process",
                         ],
-                    )
+    )
                     self._browsers[idx] = browser
                     logger.debug("browser_pool: launched Chromium instance %d", idx)
                 except Exception as e:
@@ -165,7 +165,7 @@ class AsyncBrowserPool:
             logger.info(
                 "browser_pool: %d/%d Chromium instances active",
                 len(self._browsers), self._size,
-            )
+    )
             self._launched = True
 
     async def _shutdown(self) -> None:
@@ -188,7 +188,7 @@ class AsyncBrowserPool:
         logger.info(
             "browser_pool: shutdown complete (total_pages=%d)",
             self._total_pages,
-        )
+    )
 
     # -------------------------------------------------------------------------
     # Page acquisition (async context manager pattern)
@@ -248,7 +248,7 @@ class AsyncBrowserPool:
                 ),
                 viewport={"width": 1920, "height": 1080},
                 ignore_https_errors=True,
-            )
+    )
             page = await context.new_page()
             bp = BrowserPage(page=page, browser_instance=browser, host=host)
             self._pages[id(page)] = bp

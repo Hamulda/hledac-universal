@@ -10,11 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-
-
-
-
-
+from hledac.universal.runtime.worker_pool import (
     SharedWorkerPool,
     get_shared_pool,
     _GOVERNOR_AVAILABLE,
@@ -24,7 +20,6 @@ import pytest
 class TestAdaptiveWorkerPool:
     """ISSUE #014: Memory-aware adaptive worker pool tests."""
 
-from _core import aclose
     @pytest.fixture
     def fresh_pool(self):
         """Create a fresh pool for each test."""

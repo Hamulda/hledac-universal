@@ -36,7 +36,7 @@ from hledac.universal.utils.codec import (
     decode as _json_loads,
     encode_compact_sorted as _json_compact_sorted,
     encode_pretty_sorted as _json_pretty_sorted,
-)
+    )
 from hledac.universal.security.pq_crypto import PostQuantumBackend, PQAvailability, PQSignature, PQStatus, create_post_quantum_backend
 from _core import aclose
 
@@ -472,7 +472,7 @@ def _build_malware_and_tool_objects(
             malware_type=_safe_str(mal.get('type', 'unknown')),
             created=created,
             technique_ids=mal.get('technique_ids'),
-        )
+    )
         objects.append(mal_obj)
         malware_refs.append(mal_obj['id'])
 
@@ -485,7 +485,7 @@ def _build_malware_and_tool_objects(
             name=_safe_str(tool.get('name', 'Unknown Tool')),
             tool_type=_safe_str(tool.get('type', 'utility')),
             created=created,
-        )
+    )
         objects.append(tool_obj)
         tool_refs.append(tool_obj['id'])
 
@@ -518,7 +518,7 @@ def _build_campaign_and_intrusion_set_objects(
             created=created,
             first_seen=_iso_timestamp(camp.get('first_seen', fmt='rfc3339')),
             last_seen=_iso_timestamp(camp.get('last_seen', fmt='rfc3339')),
-        )
+    )
         objects.append(camp_obj)
         campaign_refs.append(camp_obj['id'])
 
@@ -532,7 +532,7 @@ def _build_campaign_and_intrusion_set_objects(
             aliases=intr.get('aliases', []) if isinstance(intr.get('aliases'), list) else [],
             created=created,
             description=_safe_str(intr.get('description', '')),
-        )
+    )
         objects.append(intr_obj)
         intrusion_set_refs.append(intr_obj['id'])
 
@@ -876,7 +876,7 @@ def _build_identity_objects(
                     score,
                     _make_stix_id('identity', _safe_str(cand.get('primary_name', '')), cand_id),
                     _utc_now(),
-                )
+    )
                 existing_objects.append(note)
 
     return identity_refs

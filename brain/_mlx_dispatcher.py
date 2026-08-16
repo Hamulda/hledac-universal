@@ -310,7 +310,7 @@ class _DispatcherContext(msgspec.Struct, gc=False):
 
 _dispatcher_context_var: contextvars.ContextVar[_DispatcherContext | None] = contextvars.ContextVar(
     '_dispatcher_context', default=None
-)
+    )
 
 
 def _get_dispatcher_context() -> _DispatcherContext:

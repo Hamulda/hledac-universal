@@ -71,11 +71,7 @@ from .hypothesis import (
     _to_operator_shortlist,
 )
 
-
-
-
-
-
+from .anomaly import (
     Contradiction,
     CrossReferenceResult,
     AdversarialReport,
@@ -85,8 +81,7 @@ from .hypothesis import (
 __all__ = [
     # Enums
     "HypothesisType",
-
-from _core import aclose    "HypothesisStatus",
+    "HypothesisStatus",
     "TestType",
     "DarkQueryType",
     # Core dataclasses

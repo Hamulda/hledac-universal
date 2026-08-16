@@ -34,11 +34,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
-
-
-
-
+from hledac.universal.transport.circuit_breaker import (
     _CIRCUIT_BREAKER_TTL_S,
     BOOT_RECOVERY_TIMEOUT_S,
     CBState,
@@ -51,7 +47,6 @@ import pytest
 class TestCircuitBreakerTTLOverride:
     """F266: Domain-specific TTL override for CT circuit breakers."""
 
-from _core import aclose
     def setup_method(self) -> None:
         # F275: Reset _boot_started_at so each test starts with clean boot-phase
         # state. Tests that need boot-phase behavior set it explicitly.

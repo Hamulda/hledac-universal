@@ -196,7 +196,7 @@ class ExceptionPolicy:
                     ExceptionPolicy.HOT_PATH_LOG_LEVEL
                     if not re_raise
                     else ExceptionPolicy.COLD_PATH_LOG_LEVEL
-                )
+    )
 
         # P0 always re-raises
         if severity_obj is not None and severity_obj.name == "P0_CRITICAL":
@@ -250,7 +250,7 @@ class ExceptionPolicy:
                     outcome="re_raised" if re_raise else "swallowed",
                     file=file,
                     line=line,
-                )
+    )
                 get_diagnostics().record(event)
             except Exception:  # noqa: BLE001
                 pass  # Diagnostics failure should not affect main flow
@@ -376,7 +376,7 @@ class _ExcInfoContext:
             ExceptionPolicy.HOT_PATH_LOG_LEVEL
             if not re_raise
             else ExceptionPolicy.COLD_PATH_LOG_LEVEL
-        )
+    )
         _logger.log(
             log_level,
             "%s: %s: %s",
@@ -384,7 +384,7 @@ class _ExcInfoContext:
             type(exc_val).__name__,
             exc_val,
             exc_info=True,
-        )
+    )
 
         if re_raise:
             raise exc_val

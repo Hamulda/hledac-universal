@@ -34,7 +34,7 @@ from .services import (
     FetchServiceRegistry,
     RateLimiterService,
     RetryPolicyService,
-)
+    )
 from _core import aclose
 
 __all__ = [

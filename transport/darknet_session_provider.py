@@ -237,7 +237,7 @@ async def _get_arti_session(_host: str) -> Any | None:
         from .arti_transport import (
             get_arti_transport_singleton,
             is_arti_enabled,
-        )
+    )
 
         if not is_arti_enabled():
             return None

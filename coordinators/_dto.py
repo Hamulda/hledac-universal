@@ -15,7 +15,6 @@ Canonical import:
 from __future__ import annotations
 
 import time
-from dataclasses import field
 from enum import Enum, auto
 from typing import Any
 
@@ -42,7 +41,7 @@ class DecisionResponse(Struct):
     reasoning: str
     estimated_duration: float = 0.0
     priority: int = 5
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
 class OperationResult(Struct, frozen=True):
@@ -53,8 +52,8 @@ class OperationResult(Struct, frozen=True):
     execution_time: float
     success: bool
     error_message: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-    timestamp: float = field(default_factory=time.time)
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
+    timestamp: float = msgspec.field(default_factory=time.time)
 
 
 class ExecutionResult(Struct):
@@ -68,7 +67,7 @@ class ExecutionResult(Struct):
     status: str = 'completed'
     result_summary: str = ''
     error_message: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
 class CoordinatorCapabilities(Struct, frozen=True):

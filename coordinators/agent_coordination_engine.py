@@ -191,7 +191,7 @@ class AgentCoordinationEngine:
             stop=stop_after_attempt(request.max_retries + 1),
             retry=retry_if_exception_type(Exception),
             reraise=True,
-        )
+    )
 
         async def _execute_once() -> TaskResult:
             result = await self._execute_with_agent(request, selected_agent)

@@ -23,7 +23,7 @@ class TestDempsterShaferIntegration:
         engine = HypothesisEngine()
         assert engine._ds_engine is not None, (
             "DS engine should be active by default (use_dempster_shafer=True)"
-        )
+    )
 
     def test_ds_bug_fix_supporting_evidence_routes_correctly(self):
         """
@@ -40,7 +40,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-        )
+    )
         # Inject ds_engine reference (as HypothesisEngine does when tracking)
         hyp._ds_engine = engine._ds_engine
         engine._hypotheses["test-support"] = hyp
@@ -72,7 +72,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-        )
+    )
         hyp._ds_engine = engine._ds_engine
         engine._hypotheses["test矛盾"] = hyp
 
@@ -102,7 +102,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-        )
+    )
         engine._hypotheses["test-back compat"] = hyp
 
         # to_dict without ds_engine should not have ds_* keys
@@ -126,7 +126,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-        )
+    )
         hyp._ds_engine = engine._ds_engine
         engine._hypotheses["test-conflict-float"] = hyp
 
@@ -154,7 +154,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-        )
+    )
         hyp._ds_engine = engine._ds_engine
         engine._hypotheses["test-to-dict"] = hyp
 
@@ -183,7 +183,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-        )
+    )
         hyp._ds_engine = engine._ds_engine
         engine._hypotheses["test-no矛盾"] = hyp
 

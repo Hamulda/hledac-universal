@@ -120,7 +120,7 @@ def _load_metadata_extractor() -> None:
             UniversalMetadataExtractor,
             VideoMetadata,
             create_metadata_extractor,
-        )
+    )
         METADATA_EXTRACTOR_AVAILABLE = True
     except ImportError:  # noqa: BLE001
         pass
@@ -155,7 +155,7 @@ def _load_steganography_detector() -> None:
             DCTResult,
             create_stego_detector,
             quick_stego_check,
-        )
+    )
         STEGANOGRAPHY_AVAILABLE = True
     except ImportError:  # noqa: BLE001
         pass
@@ -184,7 +184,7 @@ def _load_digital_ghost_detector() -> None:
             GhostSignal,
             RecoveredContent,
             detect_digital_ghosts,
-        )
+    )
         DIGITAL_GHOST_AVAILABLE = True
     except ImportError:  # noqa: BLE001
         pass
@@ -213,7 +213,7 @@ def _load_git_forensics() -> None:
             GitForensicRecord,
             GitForensicsStats,
             quick_git_analysis,
-        )
+    )
         GIT_FORENSICS_AVAILABLE = True
     except ImportError:  # noqa: BLE001
         pass

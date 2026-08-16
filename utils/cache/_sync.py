@@ -499,7 +499,7 @@ class SlidingWindowKVCache(Generic[K, V]):
         return (
             f"SlidingWindowKVCache(max_size={self._max_size}, "
             f"window_tokens={self._window_tokens}, len={len(self)})"
-        )
+    )
 
     # ── LRU-specific operations ────────────────────────────────────────
 

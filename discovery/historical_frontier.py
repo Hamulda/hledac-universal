@@ -31,7 +31,7 @@ _HISTORICAL_STORE_PATH = "~/.hledac/hledac.duckdb"
 
 _PROVENANCE_SOURCE_RE = __import__("re").compile(
     r'"source"\s*:\s*"([^"]+)"'
-)
+    )
 
 
 def _extract_source_from_provenance(provenance_json: str | None) -> str:
@@ -96,7 +96,7 @@ async def async_search_historical_frontier(
                             query ILIKE ? OR
                             title ILIKE ? OR
                             url ILIKE ?
-                        )
+    )
                         ORDER BY ts DESC
                         LIMIT ?
                         """,
@@ -112,7 +112,7 @@ async def async_search_historical_frontier(
                     error_type="timeout",
                     elapsed_s=elapsed,
                     error="historical_frontier_timeout",
-                )
+    )
     except Exception:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(
@@ -120,7 +120,7 @@ async def async_search_historical_frontier(
             error_type="provider_exception",
             elapsed_s=elapsed,
             error="historical_frontier_error",
-        )
+    )
 
     if not rows:
         elapsed = time.monotonic() - start
@@ -131,7 +131,7 @@ async def async_search_historical_frontier(
             provider_name="historical_frontier",
             provider_chain=("historical_frontier",),
             source_family="historical",
-        )
+    )
 
     # Build hits — score by token overlap
     seen_urls: set[str] = set()
@@ -172,7 +172,7 @@ async def async_search_historical_frontier(
                 retrieved_ts=now_ts,
                 score=score,
                 reason=reason,
-            )
+    )
         )
         seen_urls.add(url)
         if len(hits_list) >= max_results:

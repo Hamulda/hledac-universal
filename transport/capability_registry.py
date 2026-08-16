@@ -62,7 +62,7 @@ USAGE:
       get_all_capabilities,
       TransportCapability,
       MISSING_IMPLEMENTATION,
-  )
+    )
 
   if is_protocol_ready("tor"):
       await fetch_via_tor(url)
@@ -293,7 +293,7 @@ async def _detect_arti_capability() -> tuple[TransportCapability, str]:
                 return (
                     TransportCapability.STUB,
                     "Rust arti_bridge unavailable, subprocess arti not connected",
-                )
+    )
             return TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS["arti"][TransportCapability.UNAVAILABLE]
 
         arti_bridge = rust.arti_bridge
@@ -303,7 +303,7 @@ async def _detect_arti_capability() -> tuple[TransportCapability, str]:
             return (
                 TransportCapability.STUB,
                 "ArtiNode class not found in arti_bridge module",
-            )
+    )
 
         node_class = getattr(arti_bridge, "ArtiNode")
         if not callable(node_class):
@@ -333,7 +333,7 @@ async def _detect_arti_capability() -> tuple[TransportCapability, str]:
                     bootstrapped = await safe_wait_for(
                         loop.run_in_executor(None, _do_start),
                         timeout=5.0,
-                    )
+    )
 
                     if bootstrapped:
                         # Verify with session_status
@@ -370,7 +370,7 @@ async def _detect_arti_capability() -> tuple[TransportCapability, str]:
             return (
                 TransportCapability.STUB,
                 "Rust module unavailable, subprocess arti binary present but not connected",
-            )
+    )
         return TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS["arti"][TransportCapability.UNAVAILABLE]
     except Exception as e:
         # Catch-all for unexpected errors
@@ -620,7 +620,7 @@ class _TransportCapabilityRegistry:
 # Module-level singleton with ContextVar for per-sprint isolation
 _capability_registry_var: contextvars.ContextVar[_TransportCapabilityRegistry | None] = (
     contextvars.ContextVar("_capability_registry_var", default=None)
-)
+    )
 
 
 def get_capability_registry() -> _TransportCapabilityRegistry:

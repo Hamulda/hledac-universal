@@ -136,7 +136,7 @@ class EnrichmentServices:
             counter_attr='forensics_enriched_ct_findings',
             ctx='forensics_enrichment',
             lmdb_label='forensics',
-        )
+    )
 
     async def enrich_findings_multimodal(self, findings: list, result: Any=None) -> None:
         """
@@ -154,7 +154,7 @@ class EnrichmentServices:
             counter_attr='multimodal_enriched_findings',
             ctx='multimodal_enrichment',
             lmdb_label='multimodal',
-        )
+    )
 
     async def _enrich_findings(
         self,
@@ -236,7 +236,7 @@ class EnrichmentServices:
                                             forensic_result=res_for_evidence,
                                             source_id=str(fid)[:128],
                                             confidence=0.95,
-                                        )
+    )
                                     )
                     except Exception:  # noqa: BLE001
                         pass
@@ -271,7 +271,7 @@ class EnrichmentServices:
                 map_size=50 * 1024 * 1024,
                 max_dbs=1,
                 critical=False,  # recoverable data — fast writes acceptable
-            )
+    )
         except Exception as exc:
             log.debug('Forensics LMDB open failed: %s', exc)
             self._forensics_lmdb_env = None
@@ -315,7 +315,7 @@ class EnrichmentServices:
                 map_size=50 * 1024 * 1024,
                 max_dbs=1,
                 critical=False,  # recoverable data — fast writes acceptable
-            )
+    )
         except Exception as exc:
             log.debug('Multimodal LMDB open failed: %s', exc)
             self._multimodal_lmdb_env = None

@@ -21,7 +21,7 @@ from .opsec_coordinator import (
     SecurityContext,
     SecurityLevel,
     SecurityResult,
-)
+    )
 from _core import aclose
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ class SecurityCoordinator(UniversalCoordinator):
             name='security_coordinator',
             max_concurrent=max_concurrent,
             memory_aware=True,
-        )
+    )
         self._threat_intelligence: Any | None = None
         self._pq_backend: Any | None = None
         self._zkp_engine: Any | None = None
@@ -94,15 +94,15 @@ class SecurityCoordinator(UniversalCoordinator):
             from hledac.universal.security.pq_crypto import PQAvailability, create_post_quantum_backend  # noqa: F401
             self._pq_backend, pq_status = await create_post_quantum_backend(
                 enabled=True, key_id='hledac.security.v1',
-            )
+    )
             self._crypto_available = pq_status.availability.value in (
                 'available', 'signed', 'fail_soft',
-            )
+    )
             initialized_any = True
             logger.info(
                 f'SecurityCoordinator: PQ backend initialized '
                 f'({pq_status.availability.value})',
-            )
+    )
         except ImportError:
             logger.warning('SecurityCoordinator: PQ backend not available')
         except Exception as e:
@@ -147,7 +147,7 @@ class SecurityCoordinator(UniversalCoordinator):
                 'measures_activated': result.measures_activated,
                 'threats_found': result.threats_found,
             },
-        )
+    )
 
     def _get_operation_type_for_tracking(self) -> str:
         return 'security'
@@ -177,7 +177,7 @@ class SecurityCoordinator(UniversalCoordinator):
             security_level=security_level,
             execution_time=0.0,
             error='No security subsystems initialized',
-        )
+    )
 
     # ─── PII ─────────────────────────────────────────────────────────────────
 
@@ -237,7 +237,7 @@ class SecurityCoordinator(UniversalCoordinator):
             if force_fallback:
                 sanitized = fallback_sanitize(
                     content[:10000] if len(content) > 10000 else content,
-                )
+    )
                 return {
                     'success': True,
                     'sanitized': sanitized,
@@ -261,7 +261,7 @@ class SecurityCoordinator(UniversalCoordinator):
         except Exception as e:
             sanitized = fallback_sanitize(
                 content[:10000] if len(content) > 10000 else content,
-            )
+    )
             return {
                 'success': True,
                 'sanitized': sanitized,
@@ -289,7 +289,7 @@ class SecurityCoordinator(UniversalCoordinator):
             context=context,
             priority_level=decision.confidence,
             security_level=security_level.value,
-        )
+    )
         execution_time = time.time() - start_time
         self._threat_analyses += 1
         threats = threat_result.get('threats', [])
@@ -302,7 +302,7 @@ class SecurityCoordinator(UniversalCoordinator):
             execution_time=execution_time,
             threats_found=len(threats),
             result_data=threat_result,
-        )
+    )
 
     async def analyze_threat_intelligence(
         self,
@@ -317,7 +317,7 @@ class SecurityCoordinator(UniversalCoordinator):
                 context=context,
                 priority_level=priority,
                 security_level=3,
-            )
+    )
             return {'success': True, 'result': result}
         except Exception as e:
             logger.error(f'Threat analysis failed: {e}')
@@ -380,7 +380,7 @@ class SecurityCoordinator(UniversalCoordinator):
                 'has_mldsa': backend.has_mldsa(),
                 'mldsa_key_id': pq_status.mldsa_key_id,
             },
-        )
+    )
 
     # ─── ZKP ─────────────────────────────────────────────────────────────────
 
@@ -401,13 +401,13 @@ class SecurityCoordinator(UniversalCoordinator):
                 statement=context,
                 proof=decision.metadata.get('proof'),
                 proof_type=proof_type,
-            )
+    )
         else:
             zkp_result = await self._zkp_engine.generate_proof(
                 statement=context,
                 proof_type=proof_type,
                 confidence=decision.confidence,
-            )
+    )
         execution_time = time.time() - start_time
         self._zkp_operations += 1
         return SecurityResult(
@@ -417,7 +417,7 @@ class SecurityCoordinator(UniversalCoordinator):
             security_level=security_level,
             execution_time=execution_time,
             result_data=zkp_result,
-        )
+    )
 
     # ─── Shared ───────────────────────────────────────────────────────────────
 
@@ -472,7 +472,7 @@ class SecurityCoordinator(UniversalCoordinator):
         if operation_id in self._security_contexts:
             self._security_contexts[operation_id].audit_log.append(
                 {'timestamp': time.time(), 'event': event, 'details': details},
-            )
+    )
 
     def get_global_security_state(self) -> dict[str, Any]:
         """Get global security state summary."""
@@ -544,7 +544,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             name='universal_security_coordinator',
             max_concurrent=max_concurrent,
             memory_aware=True,
-        )
+    )
         self._opsec: OpsECCoordinator = OpsECCoordinator(max_concurrent=max_concurrent)
         self._security: SecurityCoordinator = SecurityCoordinator(max_concurrent=max_concurrent)
 
@@ -576,7 +576,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             self.track_operation(
                 operation_id,
                 {'operation_ref': operation_ref, 'decision': decision, 'type': 'security'},
-            )
+    )
             result = await self._execute_security_decision(decision)
             operation_result = OperationResult(
                 operation_id=operation_id,
@@ -590,7 +590,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     'measures_activated': result.measures_activated,
                     'threats_found': result.threats_found,
                 },
-            )
+    )
         except Exception as e:
             operation_result = OperationResult(
                 operation_id=operation_id,
@@ -599,7 +599,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 execution_time=time.time() - start_time,
                 success=False,
                 error_message=str(e),
-            )
+    )
         finally:
             self.untrack_operation(operation_id)
         self.record_operation_result(operation_result)
@@ -636,7 +636,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             security_level=security_level,
             execution_time=0.0,
             error='No security subsystems initialized',
-        )
+    )
 
     async def _execute_stealth_operation(
         self,
@@ -653,7 +653,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             operation_type=context,
             confidence_threshold=decision.confidence,
             security_level=security_level.value,
-        )
+    )
         execution_time = _time.time() - start_time
         self._opsec._stealth_activations += 1
         self._opsec._stealth_mode_active = stealth_result.get('active', False)
@@ -665,7 +665,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             execution_time=execution_time,
             measures_activated=stealth_result.get('measures_activated', 0),
             result_data=stealth_result,
-        )
+    )
 
     # ─── OpsEC passthrough ───────────────────────────────────────────────────
 
@@ -856,7 +856,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     ),
                     context,
                     SecurityLevel.MINIMAL,
-                )
+    )
                 results.append(stealth_result)
             except Exception as e:
                 logger.warning(f'Comprehensive security: Stealth failed: {e}')
@@ -873,7 +873,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     ),
                     context,
                     SecurityLevel.STANDARD,
-                )
+    )
                 results.append(threat_result)
             except Exception as e:
                 logger.warning(f'Comprehensive security: Threat analysis failed: {e}')
@@ -890,7 +890,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                         metadata={'operation': 'key_generation'},
                     ),
                     SecurityLevel.HIGH,
-                )
+    )
                 results.append(crypto_result)
             except Exception as e:
                 logger.warning(f'Comprehensive security: Crypto failed: {e}')
@@ -908,7 +908,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                     ),
                     context,
                     SecurityLevel.MAXIMUM,
-                )
+    )
                 results.append(zkp_result)
             except Exception as e:
                 logger.warning(f'Comprehensive security: ZKP failed: {e}')

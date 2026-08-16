@@ -92,17 +92,17 @@ class BuildFeedStage:
                 matched_batch.matched_pattern_counts[i]
                 if i < len(matched_batch.matched_pattern_counts)
                 else 0
-            )
+    )
             pattern_labels = (
                 matched_batch.matched_pattern_labels[i]
                 if i < len(matched_batch.matched_pattern_labels)
                 else []
-            )
+    )
             is_dup = (
                 matched_batch.entry_dedup_hits[i]
                 if i < len(matched_batch.entry_dedup_hits)
                 else False
-            )
+    )
             error = matched_batch.errors[i] if i < len(matched_batch.errors) else None
 
             # Skip duplicates and pages with no matches or errors
@@ -153,7 +153,7 @@ class BuildFeedStage:
             payloads=payloads,
             raw_payloads=raw_payloads,
             matched_pattern_labels=matched_pattern_labels,
-        )
+    )
 
         return batch, telemetry
 
@@ -170,7 +170,7 @@ class BuildFeedStage:
             payloads=[],
             raw_payloads=[],
             matched_pattern_labels=[],
-        )
+    )
 
 
 def _make_feed_finding_id(entry_url: str, query_context: str = "") -> str:

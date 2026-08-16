@@ -42,7 +42,7 @@ from hledac.universal._core.resource_ledger import (
     ResourceLedger,
     ResourceType,
     get_resource_ledger,
-)
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ class TransportAdmission:
                 threads=2,
                 tmp_volume_mb=32,
             ),
-        )
+    )
 
     @classmethod
     def for_transport(
@@ -199,7 +199,7 @@ class TransportAdmission:
             mmap_regions=profile.mmap_regions,
             threads=profile.threads,
             tmp_volume_bytes=profile.tmp_volume_mb * 1024 * 1024,
-        )
+    )
 
     @classmethod
     async def terminate_transport(
@@ -226,7 +226,7 @@ class TransportAdmission:
             owner=transport_name,
             timeout_s=timeout_s,
             force=False,
-        )
+    )
 
         # Then release all remaining resources
         released = ledger.release_all(transport_name)
@@ -234,7 +234,7 @@ class TransportAdmission:
         logger.info(
             f"[TransportAdmission] Cleaned up {transport_name}: "
             f"{terminated} processes terminated, {released} resources released"
-        )
+    )
 
         return terminated
 
@@ -265,7 +265,7 @@ class TransportAdmission:
             mmap_regions=profile.mmap_regions,
             threads=profile.threads,
             tmp_volume_bytes=profile.tmp_volume_mb * 1024 * 1024,
-        )
+    )
 
 
 # =============================================================================

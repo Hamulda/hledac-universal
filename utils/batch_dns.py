@@ -107,7 +107,7 @@ DEFAULT_PREWARM_DOMAINS: tuple[str, ...] = (
     "api.github.com",
     "dns.google",
     "resolver1.opendns.com",
-)
+    )
 
 
 class BatchDNSStats:
@@ -179,7 +179,7 @@ def _is_dns_negative_error(exc: Exception) -> bool:
         negative_keywords = (
             "not found", "no data", "nodata", "nxdomain",
             "server fail", "servfail", "no recovery",
-        )
+    )
         return any(kw in msg for kw in negative_keywords)
     # aiodns raises various OSError subclasses
     if isinstance(exc, OSError) and (
@@ -271,7 +271,7 @@ class BatchDNSResolver:
                 logger.debug(
                     "[BATCH_DNS] aiodns init failed: %s: %s",
                     type(exc).__name__, exc,
-                )
+    )
                 return False
         return True
 
@@ -320,7 +320,7 @@ class BatchDNSResolver:
                         0,
                         proto=socket.IPPROTO_TCP,
                         timeout=timeout,
-                    )
+    )
                     ips = sorted({str(r[4][0]) for r in raw})
                     if ips:
                         async with lock:  # type: ignore[misc]
@@ -338,7 +338,7 @@ class BatchDNSResolver:
                 logger.debug(
                     "[BATCH_DNS] prewarm failed for %s: %s: %s",
                     domain, type(exc).__name__, exc,
-                )
+    )
                 self._stats.errors += 1
 
         # Fire-and-forget: prewarm runs in background without blocking sprint start.
@@ -346,12 +346,12 @@ class BatchDNSResolver:
             *(_prewarm_host(d) for d in targets),
             label="batch_dns_prewarm",
             logger_instance=logger,
-        )
+    )
         self._prewarm_done = True
         logger.debug(
             "[BATCH_DNS] prewarm complete: %d domains cached",
             len(targets),
-        )
+    )
 
     # -- internal helpers --------------------------------------------------
 

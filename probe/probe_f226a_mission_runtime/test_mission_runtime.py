@@ -18,11 +18,7 @@ from hledac.universal.runtime.acquisition_strategy import (
     build_acquisition_plan,
     build_acquisition_report,
 )
-
-
-
-
-
+from hledac.universal.runtime.pivot_planner import (
     generate_pivot_candidates_from_query,
     score_pivot_for_mission,
     Pivot,
@@ -32,7 +28,6 @@ from hledac.universal.runtime.acquisition_strategy import (
 
 # ── shared helpers ────────────────────────────────────────────────────────────
 
-from _core import aclose
 def _snap(query: str, uma: str = "ok") -> AcquisitionStrategySnapshot:
     return build_acquisition_plan(
         query=query,

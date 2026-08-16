@@ -426,7 +426,7 @@ async def search_arxiv(query: str, max_results: int = 10) -> list[dict[str, Any]
             query,
             max_results=max_results,
             sources=["arxiv"],
-        )
+    )
 
         papers = []
         for search_result in result.deduplicated_results[:max_results]:
@@ -448,7 +448,7 @@ async def search_arxiv(query: str, max_results: int = 10) -> list[dict[str, Any]
                 doi=None,
                 citations=0,
                 tags=search_result.metadata.get("categories", []),
-            )
+    )
             papers.append(paper.to_dict())
 
         await engine.cleanup()
@@ -477,7 +477,7 @@ async def search_crossref(query: str, max_results: int = 10) -> list[dict[str, A
             query,
             max_results=max_results,
             sources=["crossref"],
-        )
+    )
 
         papers = []
         for search_result in result.deduplicated_results[:max_results]:
@@ -499,7 +499,7 @@ async def search_crossref(query: str, max_results: int = 10) -> list[dict[str, A
                 doi=search_result.metadata.get("doi"),
                 citations=search_result.metadata.get("citations", 0),
                 tags=[],
-            )
+    )
             papers.append(paper.to_dict())
 
         await engine.cleanup()
@@ -528,7 +528,7 @@ async def search_semantic_scholar(query: str, max_results: int = 10) -> list[dic
             query,
             max_results=max_results,
             sources=["semantic_scholar"],
-        )
+    )
 
         papers = []
         for search_result in result.deduplicated_results[:max_results]:
@@ -542,7 +542,7 @@ async def search_semantic_scholar(query: str, max_results: int = 10) -> list[dic
                 doi=search_result.metadata.get("doi"),
                 citations=search_result.metadata.get("citation_count", 0),
                 tags=[],
-            )
+    )
             papers.append(paper.to_dict())
 
         await engine.cleanup()

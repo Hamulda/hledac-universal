@@ -142,7 +142,7 @@ logger = logging.getLogger(__name__)
 SYNTHESIS_STRATEGY = os.getenv("SYNTHESIS_STRATEGY", "sequential_preferred").strip()
 assert SYNTHESIS_STRATEGY in ("sequential_preferred", "race_first_wins"), (
     f"SYNTHESIS_STRATEGY must be 'sequential_preferred' or 'race_first_wins', got {SYNTHESIS_STRATEGY!r}"
-)
+    )
 
 # NEXUS-018-04: Collapse threshold — collapse only when findings exceed this count
 # to avoid overhead on small batches. Default 30; 0 to disable, -1 to force always.
@@ -382,7 +382,7 @@ def validate_evidence_grounding(
             logger.warning(
                 f"GAP-8 grounding: {len(unmatched)}/{len(ioc_entities)} IOCs unverified "
                 f"in findings — values: {unmatched[:5]}"
-            )
+    )
         return (True, unmatched)
     except Exception as e:
         logger.debug(f"validate_evidence_grounding exception (fail-soft): {e}")
@@ -623,7 +623,7 @@ def _get_prompt_bandit():
                 lambda_reg=0.01,
                 context_dim=9,
                 persist_path=str(Path.home() / '.hledac' / 'prompt_bandit.json'),
-            )
+    )
             _prompt_bandit_cache.set(None, instance)
             return instance
         except Exception:
@@ -649,7 +649,7 @@ async def _distill_findings(
             lines.append(
                 f"[{f.get('source', '?')}] {f.get('title', '')} "
                 f"— {f.get('snippet', f.get('text', ''))[:200]}"
-            )
+    )
         return "\n".join(lines)
 
 
@@ -823,7 +823,7 @@ def uncertainty_gate(
             hallucination_risk=hallucination_risk,
             risk_level=risk_level,
             token_count=len(logprobs_array),
-        )
+    )
     except Exception as e:
         logger.debug(f"uncertainty_gate failed (fail-soft): {e}")
         return UncertaintyFlags()
@@ -1021,7 +1021,7 @@ class SynthesisSession:
                 query=self._ctx.query,
                 findings=self._ctx.findings,
                 force_synthesis=self._ctx.force_synthesis,
-            )
+    )
             if self._ctx.lifecycle is not None:
                 runner._lifecycle = self._ctx.lifecycle
             self._runner = runner
@@ -1035,7 +1035,7 @@ class SynthesisSession:
             _findings,
             max_findings=_max,
             force_synthesis=force_synthesis,
-        )
+    )
 
 
 # Sprint 8VF: flashrank singleton — loaded once, reused across sprint cycles
@@ -1057,7 +1057,7 @@ def _get_flashrank_ranker():
         _FLASHRANK_RANKER = Ranker(
             model_name="ms-marco-MiniLM-L-12-v2",
             cache_dir="/tmp",
-        )
+    )
     return _FLASHRANK_RANKER
 
 
@@ -1294,7 +1294,7 @@ class SynthesisRunner:
             self._inference_pipeliner = InferencePipeliner(
                 engine=engine,
                 worker_thread=worker,
-            )
+    )
             logger.debug("[P2-1b] InferencePipeliner created with MLXWorkerThread")
         except Exception as e:
             logger.warning("[P2-1b] InferencePipeliner init failed: %s", e)
@@ -1361,7 +1361,7 @@ class SynthesisRunner:
             input_tokens=input_tokens,
             max_tokens=max_tokens,
             kv_bits_override=self._kv_bits,
-        )
+    )
         return config.as_kwargs()
 
     # ------------------------------------------------------------------
@@ -1488,7 +1488,7 @@ class SynthesisRunner:
                 report_produced=False,
                 confidence=0.0,
                 operator_note="windup guard blocked — not in WINDUP phase",
-            )
+    )
             return False
 
         # B.7: UMA RSS > 5.5GiB guard
@@ -1511,7 +1511,7 @@ class SynthesisRunner:
                 report_produced=False,
                 confidence=0.0,
                 operator_note="UMA RSS > 5.5GiB or EMERGENCY state",
-            )
+    )
             return False
 
         return True
@@ -1559,7 +1559,7 @@ class SynthesisRunner:
             results = await loop.run_in_executor(
                 None,  # default executor
                 lambda: triage.triage_batch(texts),
-            )
+    )
 
             filtered: list[dict] = [
                 f for f, keep in zip(findings, results) if keep
@@ -1574,7 +1574,7 @@ class SynthesisRunner:
                     filtered_out,
                     len(findings),
                     noise_pct,
-                )
+    )
 
             return filtered, stats
 
@@ -1607,12 +1607,12 @@ class SynthesisRunner:
                 if self._duckdb_store is not None:
                     tg_ep = tg.create_task(
                         self._build_episode_context(self._duckdb_store, query), name="syn:ep", eager_start=True
-                    )
+    )
                 else:
                     tg_ep = None
                 tg_rag = tg.create_task(
                     self._rag_query_safe(query, findings), name="syn:rag", eager_start=True
-                )
+    )
         except ExceptionGroup as eg:
             logger.debug("[SYNTHESIS] Parallel discovery partial failure: %s", eg)
 
@@ -1720,7 +1720,7 @@ class SynthesisRunner:
                         logger.debug(
                             f"[SYNTHESIS] [SWARM]-004: compress_prompt "
                             f"{original_len} → {compressed_len} chars ({reduction:.1f}% reduction)"
-                        )
+    )
                         return compressed
                 except Exception as compress_err:
                     logger.debug(f"[SYNTHESIS] [SWARM]-004: compress_prompt failed: {compress_err}")
@@ -1759,7 +1759,7 @@ class SynthesisRunner:
                 f"Findings:\n[No findings collected during this sprint]\n"
                 f"Current timestamp: {time.time()}\n"
                 f"Note: Provide a threat intelligence report based on the query and general knowledge."
-            )
+    )
 
         # NEXUS-018-04: Structured collapser output — richer, more compact
         if collapsed_markdown:
@@ -1777,19 +1777,19 @@ class SynthesisRunner:
                     f"{header}\n"
                     f"{collapsed_markdown}\n"
                     f"Current timestamp: {time.time()}"
-                )
+    )
             else:
                 return (
                     f"{header}\n"
                     f"{collapsed_markdown}\n"
                     f"Current timestamp: {time.time()}"
-                )
+    )
 
         # Legacy flat path — used when no collapser or findings below threshold
         findings_text = "\n".join(
             f"- [{f.get('source_type', '?')}] {f.get('text', '')[:200]}"
             for f in top
-        )
+    )
 
         context_parts = []
         if episode_ctx:
@@ -1805,13 +1805,13 @@ class SynthesisRunner:
                 f"Query: {query}{stix_context}\n"
                 f"Findings:\n{findings_text}\n"
                 f"Current timestamp: {time.time()}"
-            )
+    )
         else:
             return (
                 f"Query: {query}{stix_context}\n"
                 f"Findings:\n{findings_text}\n"
                 f"Current timestamp: {time.time()}"
-            )
+    )
 
     async def _synth_phase5_prompt_optimization(
         self,
@@ -1879,7 +1879,7 @@ class SynthesisRunner:
                     logger.info(
                         f"[SYNTHESIS] Context compressed: {prompt_len} → {len(compressed_prompt)} chars "
                         f"(ratio={compressed.compression_ratio:.2f})"
-                    )
+    )
                     prompt = compressed_prompt
                 except Exception as e:
                     logger.warning(f"[SYNTHESIS] Context compression failed (using original prompt): {e}")
@@ -1923,7 +1923,7 @@ class SynthesisRunner:
             absence_engine = await get_absence_engine(self._duckdb_store)
             absence_report: _AbsenceReport = await absence_engine.run(
                 report, self._duckdb_store,
-            )
+    )
             if not absence_report.absences:
                 return report, absence_report
             logger.info(
@@ -1932,10 +1932,10 @@ class SynthesisRunner:
                 len(absence_report.absences),
                 absence_report.total_checked,
                 absence_report.should_trigger_refetch,
-            )
+    )
             adjusted_conf = absence_engine.apply_confidence_adjustment(
                 report, absence_report,
-            )
+    )
             if adjusted_conf != report.confidence:
                 logger.debug(
                     "[SYNTHESIS] [FINAL]-019: Confidence adjusted %.3f → %.3f "
@@ -1943,14 +1943,14 @@ class SynthesisRunner:
                     report.confidence,
                     adjusted_conf,
                     len(absence_report.confidence_adjustments),
-                )
+    )
                 report = msgspec.replace(report, confidence=adjusted_conf)
             return report, absence_report
         except ImportError:
             logger.debug(
                 "[SYNTHESIS] [FINAL]-019: AbsenceMiningEngine unavailable "
                 "(dependency missing) — skipping",
-            )
+    )
         except Exception as e:
             logger.debug("[SYNTHESIS] [FINAL]-019: Absence mining exception (fail-soft): %s", e)
         return report, None
@@ -1976,7 +1976,7 @@ class SynthesisRunner:
         should_emit = (
             uncertainty_flags.hallucination_risk
             or uncertainty_flags.measured_entropy > _ENTROPY_THRESHOLD_BITS
-        )
+    )
         if not should_emit:
             logger.debug(
                 "[SYNTHESIS] APEX-1009 uncertainty_gate passed: "
@@ -1984,7 +1984,7 @@ class SynthesisRunner:
                 uncertainty_flags.confidence_divergence,
                 uncertainty_flags.risk_level,
                 uncertainty_flags.token_count,
-            )
+    )
             return report
 
         _entropy_feedback_enabled = os.environ.get(
@@ -1994,7 +1994,7 @@ class SynthesisRunner:
             logger.debug(
                 "[SYNTHESIS] UNIFIED-003: Entropy feedback disabled "
                 "(HLEDAC_ENABLE_ENTROPY_FEEDBACK=0) — alert suppressed",
-            )
+    )
             return report
 
         if uncertainty_flags.hallucination_risk:
@@ -2006,7 +2006,7 @@ class SynthesisRunner:
                 uncertainty_flags.measured_entropy,
                 uncertainty_flags.confidence_divergence,
                 uncertainty_flags.risk_level,
-            )
+    )
         else:
             logger.info(
                 "[SYNTHESIS] UNIFIED-003 high-entropy threshold "
@@ -2015,7 +2015,7 @@ class SynthesisRunner:
                 uncertainty_flags.measured_entropy,
                 _ENTROPY_THRESHOLD_BITS,
                 report.confidence,
-            )
+    )
 
         try:
             from .uncertainty_quant import EntropyAlert, get_entropy_bridge
@@ -2027,7 +2027,7 @@ class SynthesisRunner:
                 ioc_type = getattr(ioc_entity, 'ioc_type', 'unknown')
                 alt_protocols = _resolve_alternative_protocols(
                     ioc_type=ioc_type, entity_value=entity_value,
-                )
+    )
                 alert = EntropyAlert(
                     entity_id=entity_value[:100],
                     entropy=round(1.0 - uncertainty_flags.implied_confidence, 3),
@@ -2046,13 +2046,13 @@ class SynthesisRunner:
                             else "high_entropy"
                         ),
                     },
-                )
+    )
                 await bridge.emit(alert)
             logger.debug(
                 "[SYNTHESIS] UNIFIED-003: Emitted %d EntropyAlert(s) to bridge (trigger=%s)",
                 min(len(report.ioc_entities or []), 5),
                 alert.metadata.get("trigger_path", "unknown"),
-            )
+    )
         except Exception as e:
             logger.debug("[SYNTHESIS] UNIFIED-003: EntropyAlert emit failed (fail-soft): %s", e)
         return report
@@ -2084,7 +2084,7 @@ class SynthesisRunner:
                     content=(f.get("payload_text", "") or "")[:500],
                     timestamp=_dt.now(_utc),
                     reliability=float(f.get("confidence", 0.5)),
-                )
+    )
                 for i, f in enumerate(findings[:100])
                 if f.get("payload_text")
             ]
@@ -2100,7 +2100,7 @@ class SynthesisRunner:
                 ioc_entities=report.ioc_entities or [],
                 findings=findings,
                 sprint_id="",
-            )
+    )
             if not _alerts:
                 return
             from .uncertainty_quant import get_entropy_bridge
@@ -2110,7 +2110,7 @@ class SynthesisRunner:
             logger.info(
                 "[SYNTHESIS] [META]-011: Emitted %d contradiction EntropyAlert(s) (severity > 0.7)",
                 len(_alerts),
-            )
+    )
             await cb._auto_retract_systematic_dissenters()
         except Exception as e:
             logger.debug("[SYNTHESIS] [META]-011: ContradictionBridge failed (fail-soft): %s", e)
@@ -2131,7 +2131,7 @@ class SynthesisRunner:
                 report.threat_summary + " " +
                 " ".join(str(e) for e in report.ioc_entities) +
                 " ".join(report.threat_actors)
-            )
+    )
             response_len_norm = min(1.0, len(response_text) / 2000.0)
             reward = response_len_norm * report.confidence
             bandit.update_reward(arm_used, reward, reward)
@@ -2160,7 +2160,7 @@ class SynthesisRunner:
             hermes = getattr(self._hypothesis_engine, "_inference_engine", None)
             hyp_strings = await self._hypothesis_engine.generate_hypotheses_async(
                 context=ctx, hermes_engine=hermes,
-            )
+    )
             if hyp_strings:
                 logger.debug(f"[SYNTHESIS] Extracted {len(hyp_strings[:10])} hypotheses from report")
         except Exception as e:
@@ -2184,7 +2184,7 @@ class SynthesisRunner:
         try:
             from hledac.universal.knowledge.domain_reputation import (
                 get_domain_reputation_service as _get_rep_svc,
-            )
+    )
             _rep_svc = _get_rep_svc()
             if _rep_svc is None:
                 return report
@@ -2208,7 +2208,7 @@ class SynthesisRunner:
             _reps = await asyncio.gather(
                 *[_rep_svc.get(d) for d in _domains_to_check],
                 return_exceptions=True,
-            )
+    )
             _ok_reps, _err_reps = _check_gathered(_reps)
             _tarpit_domains: set[str] = set()
             for _d, _rep in zip(_domains_to_check, _ok_reps):
@@ -2232,11 +2232,11 @@ class SynthesisRunner:
                     "[SYNTHESIS] [ADVERSARY]-002: Dropped %d/%d IOCs "
                     "from cognitive tarpit domains: %s",
                     _dropped, _before_count, sorted(_tarpit_domains),
-                )
+    )
         except Exception as e:
             logger.debug(
                 "[SYNTHESIS] [ADVERSARY]-002: tarpit domain filter failed (fail-soft): %s", e,
-            )
+    )
         return report
 
     async def _synth_phase7_parse_and_validate(
@@ -2287,7 +2287,7 @@ class SynthesisRunner:
             logger.warning(
                 f"[SYNTHESIS] GAP-8 grounding warnings: "
                 f"{len(grounding_warnings)} unverified IOCs"
-            )
+    )
 
         sem_ok, sem_errors = validate_report_semantics(report)
         if not sem_ok:
@@ -2358,13 +2358,13 @@ class SynthesisRunner:
                 report_produced=False,
                 confidence=0.0,
                 operator_note=f"triage filtered all {triage_stats.get('total_triaged', 0)} findings",
-            )
+    )
             return None
 
         # ── Phase 2: Parallel discovery ──────────────────────────────────
         model_path, stix_context, episode_ctx, rag_context = (
             await self._synth_phase2_parallel_discovery(query, findings)
-        )
+    )
 
         if model_path is None:
             logger.warning("[SYNTHESIS] No model available — skipping")
@@ -2381,7 +2381,7 @@ class SynthesisRunner:
                 report_produced=False,
                 confidence=0.0,
                 operator_note="no model available after discovery and download attempt",
-            )
+    )
             return None
 
         # Update lifecycle model path for structured_generate
@@ -2391,7 +2391,7 @@ class SynthesisRunner:
         # ── Phase 3: Rerank + GraphRAG ──────────────────────────────────
         top, graph_context = await self._synth_phase3_rerank_and_graphrag(
             query, findings, max_findings
-        )
+    )
 
         # ── Phase 3.5: Collapse + categorize (NEXUS-018-04) ──────────────
         # Only triggers when findings exceed threshold to avoid overhead on small batches.
@@ -2405,7 +2405,7 @@ class SynthesisRunner:
             query, stix_context, episode_ctx, rag_context, graph_context,
             top, findings_count,
             collapsed_markdown=collapsed_markdown,
-        )
+    )
 
         # ── Phase 5: DSPy + Bandit ──────────────────────────────────────
         prompt = await self._synth_phase5_prompt_optimization(prompt)
@@ -2431,7 +2431,7 @@ class SynthesisRunner:
                 report_produced=False,
                 confidence=0.0,
                 operator_note=f"exception during generation: {e}",
-            )
+    )
             return None
 
         # Log engine used
@@ -2447,7 +2447,7 @@ class SynthesisRunner:
                 raw_dict, used_engine, findings,
                 bandit, arm_used, query, findings_count,
                 token_logprobs=token_logprobs,
-            )
+    )
             if report is not None:
                 self._last_synthesis_outcome = SynthesisOutcome(
                     status="success",
@@ -2462,7 +2462,7 @@ class SynthesisRunner:
                     report_produced=True,
                     confidence=report.confidence,
                     operator_note=f"report produced with confidence {report.confidence:.3f}",
-                )
+    )
                 return report
 
         # ── Phase 8 (inline): All engines failed or parse failed ────────
@@ -2479,7 +2479,7 @@ class SynthesisRunner:
             report_produced=False,
             confidence=0.0,
             operator_note=f"engines={used_engine}, raw_dict={'set' if raw_dict is not None else 'None'}",
-        )
+    )
         return None
 
     # ------------------------------------------------------------------
@@ -2533,7 +2533,7 @@ class SynthesisRunner:
                     findings=findings_batch,
                     max_findings=max_findings,
                     force_synthesis=force_synthesis,
-                )
+    )
                 findings_batch.clear()  # Free memory immediately
                 yield report
 
@@ -2544,7 +2544,7 @@ class SynthesisRunner:
                 findings=findings_batch,
                 max_findings=max_findings,
                 force_synthesis=force_synthesis,
-            )
+    )
             yield report
 
     async def close(self) -> None:
@@ -2583,7 +2583,7 @@ class SynthesisRunner:
                 query=query,
                 context_chunks=[f.get("text", "")[:500] for f in findings[:20]],
                 use_compression=False,
-            )
+    )
             if rag_result and rag_result.get("context"):
                 raw_ctx = rag_result["context"]
                 max_chars = 7200
@@ -2629,7 +2629,7 @@ class SynthesisRunner:
                     if conns:
                         conn_texts.append(
                             f"IOC {ioc_str}: {'; '.join(str(c)[:80] for c in conns[:3])}"
-                        )
+    )
                 except Exception:  # noqa: BLE001
                     pass
             if conn_texts:
@@ -2860,7 +2860,7 @@ class SynthesisRunner:
                 "You are a cybersecurity analyst. "
                 "Extract IOC entities from findings. "
                 "Respond with valid JSON matching the schema exactly."
-            )
+    )
         full_prompt = f"<|system|>{system_prompt}<|user|>{prompt}<|assistant|>"
 
         # Pokus o chat template
@@ -2879,7 +2879,7 @@ class SynthesisRunner:
                 ]
                 formatted = tokenizer.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
-                )
+    )
             else:
                 formatted = full_prompt
         except Exception:
@@ -3031,7 +3031,7 @@ class SynthesisRunner:
                 ]
                 formatted = tokenizer.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
-                )
+    )
             else:
                 formatted = f"<|system|>{system_prompt}<|user|>{prompt}<|assistant|>"
         except Exception:
@@ -3095,7 +3095,7 @@ class SynthesisRunner:
                                     kv_bits=self._get_adaptive_kv_bits(),
                                     **self._get_kv_cache_kwargs(_input_tokens, 512),
                                     verbose=False,
-                                )
+    )
                             except TypeError:
                                 # Old mlx_lm without logits_processors
                                 output = mlx_lm.generate(
@@ -3105,7 +3105,7 @@ class SynthesisRunner:
                                     kv_bits=self._get_adaptive_kv_bits(),
                                     **self._get_kv_cache_kwargs(_input_tokens, 512),
                                     verbose=False,
-                                )
+    )
                 except RuntimeError as _e:
                     if "Stream(gpu" in str(_e):
                         _stream_err = _e
@@ -3122,7 +3122,7 @@ class SynthesisRunner:
                                             kv_bits=self._get_adaptive_kv_bits(),
                                             **self._get_kv_cache_kwargs(_input_tokens, 512),
                                             verbose=False,
-                                        )
+    )
                                     except TypeError:
                                         output = mlx_lm.generate(
                                             model, tokenizer,
@@ -3131,7 +3131,7 @@ class SynthesisRunner:
                                             kv_bits=self._get_adaptive_kv_bits(),
                                             **self._get_kv_cache_kwargs(_input_tokens, 512),
                                             verbose=False,
-                                        )
+    )
                                 except Exception as _direct_err:
                                     logger.warning("[P0-1] [SYNTHESIS] Direct retry also failed: %s", _direct_err)
                     else:
@@ -3205,7 +3205,7 @@ class SynthesisRunner:
             [_check_model_size(mid, mgb) for mid, mgb in model_candidates],
             policy="log",
             ctx="synthesis:check_model_sizes",
-        )
+    )
         size_results = _size_result.ok
 
         # Filter eligible models (fit within budget)
@@ -3226,7 +3226,7 @@ class SynthesisRunner:
                 [_download_model(mid) for mid in eligible],
                 policy="log",
                 ctx="synthesis:download_models",
-            )
+    )
             # Re-scan disk for any successfully downloaded model
             for d in search:
                 for pat in ["**/config.json"]:
@@ -3434,7 +3434,7 @@ class SynthesisRunner:
                 sources_count=len(findings),
                 timestamp=float(timestamp) if timestamp else time.time(),
                 uncertainty_flags=uncertainty_flags,
-            )
+    )
         except Exception as e:
             logger.warning("[SYNTHESIS] _parse_raw_to_osintreport failed: %s", e)
             return None
@@ -3462,7 +3462,7 @@ class SynthesisRunner:
                     f"Generate 3-5 specific search queries for: {query}\n"
                     "Output ONLY a JSON array of strings, no explanation.\n"
                     'Example: ["LockBit IOCs 2026","LockBit C2 infra","LockBit victims list"]'
-                )
+    )
                 out = await pipeliner.generate(prompt, max_tokens=80, thinking=False)
                 m = _BRACKET_RE.search(out)
                 if m:
@@ -3567,7 +3567,7 @@ class SynthesisRunner:
         if self._stix_graph is not None:
             values, backend_name, error = await _extract_stix_nodes(
                 self._stix_graph, f"stix_graph '{type(self._stix_graph).__name__}'"
-            )
+    )
             if error:
                 self._stix_status = "unavailable" if "lacks" in error else "error"
                 self._stix_reason = f"stix_graph {error}"
@@ -3592,7 +3592,7 @@ class SynthesisRunner:
 
         values, backend_name, error = await _extract_stix_nodes(
             self._ioc_graph, f"backend '{type(self._ioc_graph).__name__}'"
-        )
+    )
         if error:
             self._stix_status = "unavailable" if "lacks" in error else "error"
             self._stix_reason = f"STIX {error}"

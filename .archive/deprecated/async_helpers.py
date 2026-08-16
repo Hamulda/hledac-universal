@@ -26,13 +26,13 @@ This module re-exports all public API from utils/asyncx/ package.
 All functionality has been moved to the modular package structure.
 
 Migration:
-    from hledac.universal.utils.async_helpers import parallel
+    from utils.async_helpers import parallel
     → from utils.asyncx import parallel
 
-    from hledac.universal.utils.async_helpers import silent_except
+    from utils.async_helpers import silent_except
     → from utils.asyncx import silent_except
 
-    from hledac.universal.utils.async_helpers import BoundedPerHostGate
+    from utils.async_helpers import BoundedPerHostGate
     → from utils.asyncx import BoundedPerHostGate
 """
 
@@ -50,11 +50,7 @@ warnings.warn(
 )
 
 # Re-export everything from the new package for backward compatibility
-
-
-
-
-
+from utils.asyncx import (
     # _monitor.py
     AsyncMonitor,
     get_async_monitor,
@@ -102,8 +98,7 @@ __all__ = [
     # _monitor.py
     "AsyncMonitor",
     "get_async_monitor",
-
-from _core import aclose    "init_async_monitoring",
+    "init_async_monitoring",
     # _fault.py
     "silent_except",
     "get_cascading_failure_id",

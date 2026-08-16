@@ -413,7 +413,7 @@ def _check_memory_blocked(data: dict, allow_high_swap: bool) -> TriageResult | N
             memory_restart_recommended=restart,
             extracted_metrics={'swap_gib': swap_gib, 'hardware_constrained': hw_constrained, 'swap_warning': swap_warn},
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile {profile} --query "{query}" --live {cmd_suffix}'
-        )
+    )
     return None
 
 
@@ -433,7 +433,7 @@ def _check_schema_drift(data: dict) -> TriageResult | None:
             memory_restart_recommended=False,
             extracted_metrics={'acquisition_report_keys': list(acquisition_report.keys()) if acquisition_report else []},
             exact_followup_command='python tools/live_artifact_triage.py --input <json> --output-json /tmp/triage.json --output-md /tmp/triage.md'
-        )
+    )
     return None
 
 
@@ -461,7 +461,7 @@ def _check_ct_failures(data: dict) -> TriageResult | None:
                 memory_restart_recommended=False,
                 extracted_metrics={'ct_provider_status': ct_status, 'ct_accepted': ct_accepted},
                 exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-            )
+    )
 
     # CT all quarantined
     if ct_attempted and ct_quarantine > 0 and ct_accepted == 0:
@@ -475,7 +475,7 @@ def _check_ct_failures(data: dict) -> TriageResult | None:
             memory_restart_recommended=False,
             extracted_metrics={'ct_quarantine_count': ct_quarantine, 'ct_accepted': ct_accepted, 'ct_attempted': ct_attempted},
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-        )
+    )
 
     # CT all rejected by bridge
     if _ct_all_rejected_by_bridge(data):
@@ -489,7 +489,7 @@ def _check_ct_failures(data: dict) -> TriageResult | None:
             memory_restart_recommended=False,
             extracted_metrics={'ct_accepted': ct_accepted, 'ct_attempted': ct_attempted},
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-        )
+    )
     return None
 
 
@@ -509,7 +509,7 @@ def _check_quality_gate(data: dict) -> TriageResult | None:
             memory_restart_recommended=False,
             extracted_metrics={'quality_gate': quality_gate},
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-        )
+    )
     return None
 
 
@@ -565,7 +565,7 @@ def _check_terminality(data: dict) -> TriageResult | None:
                 'public_fetch_attempted': pub_fetched
             },
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-        )
+    )
 
     # Use structural pattern matching for terminality sub-types (Python 3.10+)
     match (
@@ -594,7 +594,7 @@ def _check_terminality(data: dict) -> TriageResult | None:
                     'callback_executed_count': cb_count
                 },
                 exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-            )
+    )
         case (_, True, True, _):
             # PUBLIC required but not fetched
             return TriageResult(
@@ -615,7 +615,7 @@ def _check_terminality(data: dict) -> TriageResult | None:
                     'callback_executed_count': cb_count
                 },
                 exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-            )
+    )
         case (_, _, _, True):
             # Required lanes missing from observed
             missing = set(req_lanes) - set(obs_lanes)
@@ -637,7 +637,7 @@ def _check_terminality(data: dict) -> TriageResult | None:
                     'callback_executed_count': cb_count
                 },
                 exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-            )
+    )
         case _:
             # Generic terminality unsatisfied
             return TriageResult(
@@ -658,7 +658,7 @@ def _check_terminality(data: dict) -> TriageResult | None:
                     'callback_executed_count': cb_count
                 },
                 exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-            )
+    )
 
 
 def _check_benchmark_drift(data: dict) -> TriageResult | None:
@@ -683,7 +683,7 @@ def _check_benchmark_drift(data: dict) -> TriageResult | None:
             memory_restart_recommended=False,
             extracted_metrics={'run_quality_verdict': verdict},
             exact_followup_command='python benchmarks/live_sprint_measurement.py --print-preflight-only'
-        )
+    )
     return None
 
 
@@ -716,7 +716,7 @@ def _check_discovery_providers(data: dict) -> TriageResult | None:
                 'discovery_not_wired_providers': not_wired_providers
             },
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{query}" --live'
-        )
+    )
 
     # Required providers not wired
     if not_wired_providers and nonfeed_acc == 0:
@@ -740,7 +740,7 @@ def _check_discovery_providers(data: dict) -> TriageResult | None:
                 'nonfeed_accepted_findings': nonfeed_acc
             },
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-        )
+    )
     return None
 
 
@@ -763,7 +763,7 @@ def _check_nonfeed_evidence(data: dict) -> TriageResult | None:
             memory_restart_recommended=False,
             extracted_metrics={'run_quality_verdict': verdict},
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-        )
+    )
     return None
 
 
@@ -797,7 +797,7 @@ def _check_feed_dominated(data: dict) -> TriageResult | None:
                 'feed_dominance_score': _feed_dominance_score(data)
             },
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-        )
+    )
     return None
 
 
@@ -812,7 +812,7 @@ def _check_public_quality(data: dict) -> TriageResult | None:
         return _public_quality_rejected_result(
             data,
             f'public_acceptance_attempted={pub_acc_att}, accepted=0, rejected={pub_rej}, top_reason={top_reject}'
-        )
+    )
 
     # Check public stage counters too
     psc = _public_stage_counters(data)
@@ -824,7 +824,7 @@ def _check_public_quality(data: dict) -> TriageResult | None:
             return _public_quality_rejected_result(
                 data,
                 f'public_stage_counters: attempted={psc_acc_att}, accepted=0, rejected={psc_rej}'
-            )
+    )
     return None
 
 
@@ -847,7 +847,7 @@ def _check_nonfeed_scheduler(data: dict) -> TriageResult | None:
                 'nonfeed_starvation_reason': _get(data, 'live_kpi', 'nonfeed_starvation_reason')
             },
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{query}" --live'
-        )
+    )
     return None
 
 
@@ -874,7 +874,7 @@ def _check_public_discovery(data: dict) -> TriageResult | None:
                     'feed_share': round(feed_share, 3)
                 },
                 exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
-            )
+    )
         return TriageResult(
             root_cause_class=RootCause.PUBLIC_DISCOVERY_ZERO,
             confidence=0.8,
@@ -889,7 +889,7 @@ def _check_public_discovery(data: dict) -> TriageResult | None:
                 'feed_share': round(feed_share, 3)
             },
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{query}" --live'
-        )
+    )
 
     if pub_fetched and pub_acc == 0:
         pub_rej = _public_rejected(data)
@@ -909,7 +909,7 @@ def _check_public_discovery(data: dict) -> TriageResult | None:
                 'top_public_reject_reason': top_reject
             },
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{query}" --live'
-        )
+    )
     return None
 
 
@@ -934,7 +934,7 @@ def _check_healthy_or_empty(data: dict) -> TriageResult | None:
                 'feed_share': round(feed_share, 3)
             },
             exact_followup_command='python benchmarks/live_sprint_measurement.py --print-preflight-only'
-        )
+    )
 
     # Run appears healthy
     return TriageResult(
@@ -1056,7 +1056,7 @@ def _public_quality_rejected_result(data: dict, reason: str) -> TriageResult:
         exact_followup_command=(
             f'python benchmarks/live_sprint_measurement.py '
             f'--profile {profile} --query "{query}" --live'
-        )
+    )
     )
 
 def main() -> None:

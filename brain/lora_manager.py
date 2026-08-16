@@ -131,7 +131,7 @@ class LoRAManager:
             logger.info(f'[LoRA] Loading adapter: {adapter_path}')
             lora_model, lora_tokenizer = await asyncio.to_thread(
                 mlx_lm.lora.load_lora_model, model, adapter_path
-            )
+    )
             cache.put_lora(adapter_path, lora_model, lora_tokenizer)
             self._adapter_path = adapter_path
             self._stats.lora_cache_misses += 1

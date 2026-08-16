@@ -33,7 +33,7 @@ _ARCHIVE_DIR = os.path.join(
     "..",
     "archive",
     "scheduler_archives",
-)
+    )
 _ARCHIVE_MODULE_PATH = os.path.join(_ARCHIVE_DIR, "sprint_scheduler_v1_archived.py")
 
 # Cached reference to the loaded archive module
@@ -48,11 +48,11 @@ def __getattr__(name: str):
         # Use importlib to load from file path (archive/ is not a package)
         spec = importlib.util.spec_from_file_location(
             "sprint_scheduler_v1_archived", _ARCHIVE_MODULE_PATH
-        )
+    )
         if spec is None or spec.loader is None:
             raise ImportError(
                 f"Cannot load archived module from {_ARCHIVE_MODULE_PATH}"
-            )
+    )
         _archived_module = importlib.util.module_from_spec(spec)
         # Add to sys.modules so nested imports resolve correctly
         sys.modules["sprint_scheduler_v1_archived"] = _archived_module

@@ -194,7 +194,7 @@ class PythonFallbackPipelineDomain:
         transformed = self.pipeline_map(items, fn_name)
         return "".join(transformed) if fn_name in ("lower", "upper", "strip") else str(
             sum(int(x) for x in transformed if x.isdigit())
-        )
+    )
 
     def pipeline_count(self, items: list[str], fn_name: str) -> int:
         return len(self.pipeline_filter(items, fn_name))
@@ -205,7 +205,7 @@ class PythonFallbackPipelineDomain:
         after_one = self.pipeline_map(items, stage1)
         return self.pipeline_map(
             [s for s in after_one], stage2  # type: ignore[arg-type]
-        )
+    )
 
     def pipeline_batch_stats(self, items: list[str]) -> dict[str, Any]:
         if not items:

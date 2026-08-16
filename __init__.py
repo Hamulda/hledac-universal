@@ -70,7 +70,7 @@ def _ensure_bootstrap() -> None:
 # Lazy index builder (extracted for maintainability)
 # -----------------------------------------------------------------------------
 from _lazy_index import build_module_index
-from core._util import aclose
+from _core._util import aclose
 
 
 # -----------------------------------------------------------------------------

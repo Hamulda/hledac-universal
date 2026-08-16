@@ -785,7 +785,7 @@ def compact_sprint_lmdb() -> dict[str, object]:
             _logger.info(
                 "[LMDB-COMPACT] sprint_unified.lmdb compaction: %s",
                 "success" if success else "failed",
-            )
+    )
         except Exception as exc:
             _logger.warning("[LMDB-COMPACT] sprint_unified.lmdb compact failed: %s", exc)
 

@@ -205,7 +205,7 @@ class RobotsParser:
             rules=rules,
             sitemaps=sitemaps,
             crawl_delays=crawl_delays,
-        )
+    )
 
     def can_fetch(self, path: str, user_agent: str='*', robots_doc: RobotsDocument | None=None) -> bool:
         """

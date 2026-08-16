@@ -187,7 +187,7 @@ class LogitsCaptureProcessor:
                 entropy_bits=round(entropy_bits, 4),
                 top_k_logprobs=list(zip(top_k_indices_cpu, [round(lp, 4) for lp in top_k_logprobs_cpu])),
                 position=self._position,
-            )
+    )
             self._token_entropies.append(record)
             self._generated_texts.append(text)
             self._position += 1
@@ -228,7 +228,7 @@ class TokenUncertaintyCollector:
         output = mlx_lm.generate(
             model, tokenizer, prompt=prompt,
             logits_processors=[processor]
-        )
+    )
 
         # Entity uncertainty
         result = collector.get_entity_uncertainty("192.168.1.1", output)
@@ -244,7 +244,7 @@ class TokenUncertaintyCollector:
         self._processor = LogitsCaptureProcessor(
             top_k=self._top_k,
             max_window=self._max_window,
-        )
+    )
         if tokenizer is not None:
             self._processor.set_tokenizer(tokenizer)
         return self._processor
@@ -326,7 +326,7 @@ class TokenUncertaintyCollector:
             confidence=confidence,
             uncertainty_flag=uncertainty_flag,
             token_entropies=matching_entropies,
-        )
+    )
 
     def get_all_entity_uncertainties(
         self,

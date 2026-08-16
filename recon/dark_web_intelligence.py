@@ -343,7 +343,7 @@ class DarkWebCrawler:
             concurrency=min(3, len(links)),
             policy="collect",
             ctx="darkweb_crawl",
-        )
+    )
         all_results = []
         for content_list in result.ok:
             all_results.extend(content_list)
@@ -389,7 +389,7 @@ class DarkWebCrawler:
                 concurrency=5,
                 policy="collect",
                 ctx="darkweb_bfs",
-            )
+    )
             for content_list in result.ok:
                 if content_list:
                     for content in content_list:

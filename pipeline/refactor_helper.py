@@ -124,7 +124,7 @@ async def _store_report_and_inference(store, query: str, report_text: str, repor
             confidence=0.7, ts=time.time(),
             provenance=("source_family:public", "report_generation", hermes_engine.__class__.__name__),
             payload_text=report_text,
-        )
+    )
         await store.submit_findings([report_finding])
         logger.info(f"[REPORT] Stored report {report_id[:8]}")
     except Exception as e:
@@ -137,13 +137,13 @@ async def _store_report_and_inference(store, query: str, report_text: str, repor
             timestamp=time.time(), primary_text=report_text, confidence=0.7,
             key_iocs=key_iocs, key_entities=key_entities, pivot_suggestions=key_iocs[:10],
             bounded=False, tokens_used=0, model_name=hermes_engine.__class__.__name__, source_hints=("public",),
-        )
+    )
         hermes_finding = CanonicalFinding(
             finding_id=hermes_output.output_id, query=query, source_type="hermes_inference",
             confidence=hermes_output.confidence, ts=hermes_output.timestamp,
             provenance=("source_family:public", "hermes_inference", hermes_engine.__class__.__name__),
             payload_text=_json.encode(hermes_output.to_dict()).decode("utf-8")[:4096],
-        )
+    )
         await store.submit_findings([hermes_finding])
         logger.info(f"[F256] Stored hermes_inference {hermes_output.output_id[:8]}")
     except Exception as e:

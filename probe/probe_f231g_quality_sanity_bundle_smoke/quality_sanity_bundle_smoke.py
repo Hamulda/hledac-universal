@@ -127,7 +127,7 @@ evidence_depth_sim = _simulate_evidence_depth(
      "wayback_clues_seen": live_kpi.get("wayback_clues_seen", 0),
      "passivedns_clues_seen": live_kpi.get("passivedns_clues_seen", 0)},
     nonfeed=0,  # all feed
-)
+    )
 
 QUALITY_RESULT_FEED_ONLY = {
     "total_quality_score": 11.0,   # FEED_ONLY threshold < 20
@@ -183,7 +183,7 @@ errors = []
 GATE_FAIL_FEED_ONLY_OR_NONFEED_ZERO = (
     "QUALITY_FAIL_FEED_ONLY",
     "QUALITY_FAIL_NONFEED_ZERO",
-)
+    )
 
 print("\n" + "=" * 60)
 print("TASK 3: FEED_ONLY quality assertions")

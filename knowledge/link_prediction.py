@@ -182,7 +182,7 @@ class LinkPredictor:
             logger.warning(
                 "[SWARM-003] Rust link predictor not available: %s. "
                 "Falling back to Python implementation.", e
-            )
+    )
             self._available = False
 
     @property
@@ -218,7 +218,7 @@ class LinkPredictor:
         from hledac_rust_extensions.link_predictor import (
             LinkPredictorConfig as RustConfig,
             predict_links,
-        )
+    )
 
         rust_config = RustConfig(
             min_adamic_adar=config.min_adamic_adar,
@@ -226,7 +226,7 @@ class LinkPredictor:
             max_candidates=config.max_candidates,
             cross_type_only=config.cross_type_only,
             ioc_type_filter=list(config.ioc_type_filter),
-        )
+    )
 
         result = predict_links(self._db_path, rust_config)
 
@@ -239,16 +239,16 @@ class LinkPredictor:
                 jaccard=e.jaccard,
                 common_neighbors=e.common_neighbors,
                 method=e.method,
-            )
+    )
             for e in result.edges
-        )
+    )
 
         return LinkPredictionResult(
             edges=edges,
             total_candidates=result.total_candidates,
             above_threshold=result.above_threshold,
             compute_time_ms=result.compute_time_ms,
-        )
+    )
 
     def _predict_edges_python(
         self,
@@ -343,7 +343,7 @@ class LinkPredictor:
                 total_candidates=len(candidate_list),
                 above_threshold=len(edges),
                 compute_time_ms=0.0,  # Not tracked in Python fallback
-            )
+    )
 
         finally:
             conn.close()
@@ -371,7 +371,7 @@ class LinkPredictor:
             from hledac_rust_extensions.link_predictor import (
                 LinkPredictorConfig as RustConfig,
                 predict_links_for_node,
-            )
+    )
 
             rust_config = RustConfig(
                 min_adamic_adar=cfg.min_adamic_adar,
@@ -379,7 +379,7 @@ class LinkPredictor:
                 max_candidates=top_k,
                 cross_type_only=cfg.cross_type_only,
                 ioc_type_filter=list(cfg.ioc_type_filter),
-            )
+    )
 
             result = predict_links_for_node(self._db_path, node_id, top_k, rust_config)
 
@@ -392,16 +392,16 @@ class LinkPredictor:
                     jaccard=e.jaccard,
                     common_neighbors=e.common_neighbors,
                     method=e.method,
-                )
+    )
                 for e in result
-            )
+    )
         else:
             # Python fallback - use general predict and filter
             result = self._predict_edges_python(cfg)
             node_edges = tuple(
                 e for e in result.edges
                 if e.src_id == node_id or e.dst_id == node_id
-            )
+    )
             return node_edges[:top_k]
 
     async def add_predicted_edges_to_graph(
@@ -436,19 +436,19 @@ class LinkPredictor:
                         method=edge.method_name,
                         adamic_adar=edge.adamic_adar,
                         jaccard=edge.jaccard,
-                    )
+    )
                     if success:
                         count += 1
                 except Exception as e:
                     logger.warning(
                         "[SWARM-003] Failed to add predicted edge %s -> %s: %s",
                         edge.src_id, edge.dst_id, e
-                    )
+    )
 
         logger.info(
             "[SWARM-003] Added %d predicted edges to graph (threshold=%.2f)",
             count, min_confidence
-        )
+    )
         return count
 
 
@@ -557,7 +557,7 @@ class StreamingLinkPredictor:
             flush_interval_ms=50,
             max_pending_nodes=100,
             generate_url_candidates=True,
-        )
+    )
         self._rust_module: Any | None = None
         self._available = False
         self._pending_nodes: list[int] = []
@@ -577,7 +577,7 @@ class StreamingLinkPredictor:
             from hledac_rust_extensions.link_predictor import (
                 predict_links_streaming,
                 predict_links_add_node,
-            )
+    )
             self._rust_module = type('AsyncModule', (), {
                 'predict_links_streaming': predict_links_streaming,
                 'predict_links_add_node': predict_links_add_node,
@@ -588,7 +588,7 @@ class StreamingLinkPredictor:
             logger.warning(
                 "[BREAKTHROUGH-2] Rust async link predictor not available: %s. "
                 "Using Python fallback.", e
-            )
+    )
             self._available = False
     
     @property
@@ -659,7 +659,7 @@ class StreamingLinkPredictor:
         """
         from hledac_rust_extensions.link_predictor import (
             LinkPredictorConfig as RustConfig,
-        )
+    )
         
         # Capture and clear pending nodes atomically
         pending = list(self._pending_nodes)
@@ -676,7 +676,7 @@ class StreamingLinkPredictor:
             max_pending_nodes=self._config.max_pending_nodes,
             generate_url_candidates=self._config.generate_url_candidates,
             url_tlds=list(self._config.url_tlds),
-        )
+    )
         
         # BREAKTHROUGH #2: Build IOC values list for Rust streaming function
         # Include IOC values for pending nodes specifically
@@ -699,7 +699,7 @@ class StreamingLinkPredictor:
             pending_node_ids=pending,
             source_urls=[],  # Prefetch URLs are generated from edges
             ioc_values=ioc_values_to_pass,
-        )
+    )
         
         # FIX: Await the future once - it's a single result, not an async iterator
         try:
@@ -715,14 +715,14 @@ class StreamingLinkPredictor:
                             jaccard=e.jaccard,
                             common_neighbors=e.common_neighbors,
                             method=e.method,
-                        )
+    )
                         for e in batch.edges
                     ),
                     prefetch_urls=tuple(batch.prefetch_urls),
                     nodes_processed=batch.nodes_processed,
                     total_edges=batch.total_edges,
                     has_more=batch.has_more,
-                )
+    )
         except StopAsyncIteration:
             pass
         except Exception as e:
@@ -827,7 +827,7 @@ class StreamingLinkPredictor:
                             jaccard=jaccard,
                             common_neighbors=len(common),
                             method="adamic_adar" if adamic_adar > 0.3 else "jaccard",
-                        )
+    )
                         edges.append(edge)
                         self._total_edges += 1
                         
@@ -844,7 +844,7 @@ class StreamingLinkPredictor:
                 nodes_processed=len(batch_nodes),
                 total_edges=self._total_edges,
                 has_more=i + batch_size < len(pending),
-            )
+    )
             
             # Small delay for rate limiting
             await asyncio.sleep(0.001)
@@ -925,7 +925,7 @@ async def benchmark_streaming_link_predictor(
                 max_pending_nodes=100,
                 generate_url_candidates=True,
             ),
-        )
+    )
         
         # Override Rust availability for controlled benchmark
         if not run_rust:

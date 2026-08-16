@@ -34,7 +34,7 @@ from hledac.universal.utils.mlx_memory import (
     mlx_cleanup_aggressive as _canonical_mlx_cleanup_aggressive,
     mlx_cleanup_sync as _canonical_mlx_cleanup_sync,
     mlx_cleanup_decorator as _mlx_cleanup_decorator_canonical,
-)
+    )
 
 # === Metal memory management — DELEGATED to utils.mlx_cache (canonical) ===
 # All Metal limit management is handled by the canonical implementation in utils.mlx_cache.
@@ -44,7 +44,7 @@ from hledac.universal.utils.mlx_cache import (
     get_metal_limits_status as _canonical_get_metal_limits_status,
     reconfigure_metal_cache_limit as _canonical_reconfigure_metal_cache_limit,
     _ensure_metal_memory_limits as _canonical_ensure_metal_memory_limits,
-)
+    )
 
 logger = logging.getLogger(__name__)
 

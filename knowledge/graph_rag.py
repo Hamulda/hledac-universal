@@ -366,13 +366,68 @@ class GraphRAGOrchestrator:
             fact = {'content': node.content, 'node_id': node_id, 'node_type': node.node_type.value, 'hop': 0, 'similarity': similarity, 'path': [node_id], 'path_content': [node.content], 'relations': [], 'metadata': node.metadata, 'evidence_ids': [node_id], 'novelty_score': 0.0, 'novelty_failed': False}
             all_facts.append(fact)
             paths.append({'nodes': [node_id], 'node_types': [node.node_type.value], 'relations': [], 'score': similarity, 'evidence_ids': [node_id], 'hop': 0})
-        for hop in range(1, hops + 1):
-            new_facts, new_paths = self._traverse_hop_with_paths(visited, hop, max_nodes, seed_entities, seed_doc_entities)
-            all_facts.extend(new_facts)
-            paths.extend(new_paths)
-            logger.info(f'  Hop {hop}: Found {len(new_facts)} new nodes, {len(new_paths)} new paths')
-            if len(visited) >= max_nodes:
-                break
+        # MODERN-36 PERFORMANCE OPTIMIZATION: Parallel hop traversal
+        # Run multiple hops concurrently to reduce latency for deep graph queries
+        # Limit concurrency to 3 hops at a time to balance parallelism with memory
+        _max_concurrent_hops = min(3, hops)
+        _hop_semaphore = asyncio.Semaphore(_max_concurrent_hops)
+        _visited_lock = asyncio.Lock()
+
+        async def _traverse_hop_async(hop: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+            """
+            Async wrapper for hop traversal with semaphore-based concurrency control.
+            
+            MODERN-36 FIX: Runs _traverse_hop_with_paths in a thread pool executor
+            to avoid blocking the event loop during synchronous I/O operations.
+            """
+            async with _hop_semaphore:
+                # Use lock to safely read/write visited set across async boundary
+                async with _visited_lock:
+                    current_visited = visited.copy()
+                    current_len = len(visited)
+
+                # MODERN-36 FIX: Run synchronous traversal in thread pool
+                # This prevents blocking the event loop during graph traversal
+                # which involves I/O-bound get_node and get_related_sync calls
+                new_facts, new_paths = await asyncio.to_thread(
+                    self._traverse_hop_with_paths,
+                    current_visited, hop, max_nodes, seed_entities, seed_doc_entities
+                )
+
+                # Update visited with lock
+                async with _visited_lock:
+                    for fact in new_facts:
+                        if 'node_id' in fact and fact['node_id'] not in visited:
+                            visited.add(fact['node_id'])
+
+                return new_facts, new_paths
+
+        # Run hops in parallel with controlled concurrency
+        if hops > 1:
+            import asyncio
+            hop_tasks = [_traverse_hop_async(hop) for hop in range(1, hops + 1)]
+            # Use gather to run hops in parallel (semaphore limits concurrency)
+            hop_results = await asyncio.gather(*hop_tasks, return_exceptions=True)
+
+            for i, result in enumerate(hop_results):
+                if isinstance(result, Exception):
+                    logger.warning(f'Hop {i+1} traversal failed: {result}')
+                    continue
+                new_facts, new_paths = result
+                all_facts.extend(new_facts)
+                paths.extend(new_paths)
+                logger.info(f'  Hop {i+1}: Found {len(new_facts)} new nodes, {len(new_paths)} new paths')
+                if len(visited) >= max_nodes:
+                    break
+        else:
+            # Single hop - use original sequential path
+            for hop in range(1, hops + 1):
+                new_facts, new_paths = self._traverse_hop_with_paths(visited, hop, max_nodes, seed_entities, seed_doc_entities)
+                all_facts.extend(new_facts)
+                paths.extend(new_paths)
+                logger.info(f'  Hop {hop}: Found {len(new_facts)} new nodes, {len(new_paths)} new paths')
+                if len(visited) >= max_nodes:
+                    break
         all_facts = self._deduplicate_facts(all_facts)
         all_facts = self._rank_facts_with_novelty(all_facts)
         novel_facts = []
@@ -1496,7 +1551,7 @@ class GraphRAGOrchestrator:
             fact_copy = fact.copy()
             fact_copy['similarity'] = fact.get('similarity', 0.5) * (1.0 + recency_boost)
             boosted.append(fact_copy)
-        boosted.sort(key=itemgetter("'"), reverse=True)
+        boosted.sort(key=itemgetter("similarity"), reverse=True)
         return boosted
 
     def _generate_timeline(self, facts: list[dict[str, Any]], bucket: str, max_points: int) -> list[dict[str, Any]]:

@@ -84,14 +84,14 @@ class ExportStage:
                 findings=findings_list,
                 export_dir=str(export_path),
                 extra_context=extra_context,
-            )
+    )
             telemetry["export_markdown_path"] = str(md_path) if md_path else None
 
             # Export Graph HTML
             html_path = await _export_graph_html(
                 findings=findings_list,
                 export_dir=str(export_path),
-            )
+    )
             telemetry["export_graph_html_path"] = str(html_path) if html_path else None
 
         except Exception as exc:
@@ -113,7 +113,7 @@ class ExportStage:
             payloads=[],
             raw_payloads=[],
             matched_pattern_labels=[],
-        )
+    )
 
 
 def _build_findings_list(batch: FindingBatch) -> list[dict[str, Any]]:
@@ -162,7 +162,7 @@ async def _export_markdown(
             report=report,
             findings=findings,
             metadata=metadata,
-        )
+    )
         return md_path
 
     except Exception as exc:
@@ -190,7 +190,7 @@ async def _export_graph_html(
             graph_manager=graph,
             file_path=export_path,
             title="Hledac Entity Graph",
-        )
+    )
         return html_path
 
     except Exception as exc:
@@ -216,7 +216,7 @@ def _build_graph_from_findings(findings: list[dict[str, Any]]) -> Any | None:
                 confidence=f.get("confidence", 0.5),
                 source=f.get("source_type", "public"),
                 observed_at=observed_at,
-            )
+    )
         return graph
     except Exception:
         return None

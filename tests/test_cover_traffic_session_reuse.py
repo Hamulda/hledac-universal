@@ -128,13 +128,13 @@ async def test_cover_traffic_single_session():
 
         assert len(unique_sessions) == 1, (
             f"Expected 1 session for 100 URLs to same host, got {len(unique_sessions)}"
-        )
+    )
 
         # Host cache must have exactly 1 entry
         assert host in _mock_host_sessions, f"Host {host} not in session cache"
         assert len(_mock_host_sessions) == 1, (
             f"Expected 1 host in cache, got {len(_mock_host_sessions)}"
-        )
+    )
     finally:
         ccf.async_get_curl_cffi_session_for_host = original
 
@@ -170,7 +170,7 @@ async def test_cover_traffic_session_reuse_multiple_hosts():
         unique_sessions = {id(inst) for inst in MockAsyncSession._instances}
         assert len(unique_sessions) == 2, (
             f"Expected 2 sessions for 2 hosts, got {len(unique_sessions)}"
-        )
+    )
         assert len(_mock_host_sessions) == 2
     finally:
         ccf.async_get_curl_cffi_session_for_host = original

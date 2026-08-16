@@ -32,7 +32,7 @@ __all__ = ["struct", "Struct"]
 # msgspec version detection
 _MSGSPEC_VERSION: tuple[int, ...] = tuple(
     int(x) for x in msgspec.__version__.split(".")[:2]
-)
+    )
 _MSGSPEC_V022_PLUS: bool = _MSGSPEC_VERSION >= (0, 22)
 
 
@@ -76,11 +76,11 @@ def struct(
             if weakref and not gc:
                 raise ValueError(
                     "conflicting values: gc=False but weakref=True"
-                )
+    )
             if not weakref and gc:
                 raise ValueError(
                     "conflicting values: gc=True but weakref=False"
-                )
+    )
             weakref = gc  # identity: gc=False sets weakref=False, gc=True sets weakref=True
         return msgspec.Struct(
             frozen=frozen,
@@ -88,7 +88,7 @@ def struct(
             kw_only=kw_only,
             unsafe_hash=unsafe_hash,
             order=order,
-        )
+    )
     else:
         # msgspec < 0.22: pass gc through directly (native support)
         # msgspec 0.21.x accepts `gc` kwarg: gc=False = no GC tracking (fast path)

@@ -411,7 +411,7 @@ from hledac.universal._core.resource_governor import (
     CLEAN_SWAP_MAX_GIB,
     HARD_BLOCK_SWAP_GIB,
     sample_uma_status,
-)
+    )
 from hledac.universal.graph.lock_manager import GraphLockManager  # F266-LOCK
 from hledac.universal.paths import TOR_ROOT, get_sprint_json_report_path, get_sprint_lock_path
 from hledac.universal.runtime.power_assertion import PowerAssertion  # APEX-1001
@@ -423,10 +423,10 @@ from hledac.universal.runtime.acquisition_strategy import (
     complete_source_family_outcomes_from_lane_details,
     normalize_source_family_outcome,
     reconcile_lane_detail_fields,
-)
+    )
 from hledac.universal.runtime.acquisition_telemetry_reconcile import (
     complete_source_family_outcomes_from_prelude,
-)
+    )
 from hledac.universal.runtime.sprint_lifecycle import _PHASE_ORDER, SprintLifecycleManager
 # A2: Lazy import to avoid circular import with composition_root (which imports
 # _cancel_all_tasks from this module). build_runtime/run_runtime are resolved
@@ -440,7 +440,7 @@ from hledac.universal.utils.asyncx import (
     safe_create_task,
     safe_wait_for,
     _check_gathered,
-)
+    )
 from hledac.universal.utils.config_introspection import safe_attr_get
 
 # E3: macOS P-core QoS — apply USER_INITIATED to main asyncio event loop thread.
@@ -493,7 +493,7 @@ _REPORT_SERIALIZE_OPTIONS: int = (
     orjson.OPT_INDENT_2
     if os.environ.get("HLEDAC_REPORT_PRETTY_PRINT", "0") == "1"
     else orjson.OPT_APPEND_NEWLINE
-)
+    )
 
 # Sprint F500-O: Pre-computed platform info — avoid repeated __import__ calls.
 # Cached at module load to avoid import overhead during serialization.
@@ -631,7 +631,7 @@ def _is_meaningful_run(
     if actual_duration_s < 180 and accepted_findings == 0 and total_pattern_hits == 0:
         return False, (
             f"runtime {actual_duration_s:.0f}s < 180s floor, no findings, no pattern hits — below meaningful threshold"
-        )
+    )
 
     # Normal meaningful run
     return True, (
@@ -1292,7 +1292,7 @@ def _normalize_seed_context(
             or r.pivot_seed_urls
             or r.pivot_seed_hashes
             or r.pivot_seed_cves
-        )
+    )
         if has_seeds:
             report["seed_context_available"] = True
             report["seed_context_propagated"] = r.seed_context_propagated
@@ -1331,7 +1331,7 @@ def _build_sfo_list(r: AcqReportPayload) -> list[SourceFamilyOutcome]:
                     "timeout": False,
                     "duration_s": None,
                 },
-            )
+    )
         )
 
     # PUBLIC
@@ -1360,7 +1360,7 @@ def _build_sfo_list(r: AcqReportPayload) -> list[SourceFamilyOutcome]:
                     "timeout": r.public_terminal_stage == "DISCOVERY_TIMEOUT",
                     "duration_s": None,
                 },
-            )
+    )
         )
 
     # CT log
@@ -1390,7 +1390,7 @@ def _build_sfo_list(r: AcqReportPayload) -> list[SourceFamilyOutcome]:
                     "timeout": r.ct_terminal_stage == "request_timeout",
                     "duration_s": None,
                 },
-            )
+    )
         )
 
     # Map acquisition_lane_outcomes
@@ -1417,7 +1417,7 @@ def _build_sfo_list(r: AcqReportPayload) -> list[SourceFamilyOutcome]:
                     "timeout": getattr(_o, "timeout", False),
                     "duration_s": getattr(_o, "duration_s", None),
                 },
-            )
+    )
         )
 
     return canonicalize_source_family_outcomes(sfo_list)
@@ -1459,7 +1459,7 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, _duration_s: fl
         logger.exception(
             "[Issue9] msgspec.convert(SprintSchedulerResult->AcqReportPayload) failed: %s",
             _conv_exc,
-        )
+    )
         # Last-resort fallback: zero-filled payload
         r = AcqReportPayload()
 
@@ -1542,7 +1542,7 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, _duration_s: fl
             ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"]
             if acq_effective in ("nonfeed_diagnostic", "deep_osint_m1")
             else []
-        )
+    )
     )
     try:
         _acq_report = build_acquisition_report(
@@ -1640,7 +1640,7 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, _duration_s: fl
             nonfeed_prelude_accepted_by_lane=r.nonfeed_prelude_accepted_by_lane,
             nonfeed_prelude_duration_s=r.nonfeed_prelude_duration_s,
             nonfeed_prelude_feed_blocked_until_complete=r.nonfeed_prelude_feed_blocked_until_complete,
-        )
+    )
         # Post-processing
         # [ISSUE-007] Avoid unnecessary list() wrapping — fields are already correct type
         _acq_report["acquisition_profile_input"] = None
@@ -1660,7 +1660,7 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, _duration_s: fl
         logger.exception(
             "[Issue9-FALLBACK] build_acquisition_report raised: %s",
             _exc,
-        )
+    )
         # [Issue #9] Schema-driven fallback: msgspec.to_builtins(r) gives the same
         # 80-field structure that build_acquisition_report() would return — but
         # without retyping every field.  Then overlay only the 4 fallback-specific
@@ -1690,7 +1690,7 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, _duration_s: fl
                 | {o.family for o in sfo_list if o.attempted and o.family}
             ),
             plan_semantics=("effective_runtime" if any(o.attempted for o in sfo_list) else "prelude_only"),
-        )
+    )
         # ── 9b. Fallback path: post-processing (mirrors success path lines 1046-1072) ─
         # [ISSUE-007] Avoid unnecessary list() wrapping — fields are already correct type
         _acq_report["acquisition_profile_input"] = None
@@ -1883,7 +1883,7 @@ def _run_sprint_preflight_guards(
             _active_window_s,
             duration_s,
             _effective_windup_s,
-        )
+    )
         sys.exit(2)
 
     # F289-WINDUP: Sanity check — abort if windup consumes >= 80% of active window.
@@ -1895,7 +1895,7 @@ def _run_sprint_preflight_guards(
                 _effective_windup_s,
                 _pct,
                 _active_window_s,
-            )
+    )
         else:
             logger.error(
                 "[F289-ABORT] Windup %.0fs would consume %.0f%% of active window %.0fs. "
@@ -1903,7 +1903,7 @@ def _run_sprint_preflight_guards(
                 _effective_windup_s,
                 _pct,
                 _active_window_s,
-            )
+    )
             sys.exit(2)
 
     if _active_window_s < float(MIN_ACTIVE_WINDOW_S):
@@ -1915,7 +1915,7 @@ def _run_sprint_preflight_guards(
                 int(duration_s),
                 max(0, int(_active_window_s)),
                 int(_effective_windup_s),
-            )
+    )
         else:
             logger.error(
                 "[F221-ABORT] Sprint duration %ds gives only %ds active window "
@@ -1926,7 +1926,7 @@ def _run_sprint_preflight_guards(
                 max(0, int(_active_window_s)),
                 int(_effective_windup_s),
                 _required_duration_s,
-            )
+    )
             sys.exit(2)  # exit(2) = config error, distinguishable from exit(1) runtime
 
     # F289: windup_lead_s sanity check — warn if it would consume >90% of sprint
@@ -1941,7 +1941,7 @@ def _run_sprint_preflight_guards(
                 int(windup_lead_s),
                 _windup_fraction * 100,
                 int(duration_s),
-            )
+    )
 
     # F214Q: Remote debug OPSEC guard — strict exit if HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1
     # and PYTHON_DISABLE_REMOTE_DEBUG is not set. Python 3.14 activates safe-external-debugger by default.
@@ -1950,7 +1950,7 @@ def _run_sprint_preflight_guards(
             sys.exit(
                 "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1 but PYTHON_DISABLE_REMOTE_DEBUG not set — "
                 "OSINT runtime requires external debugger disabled"
-            )
+    )
 
     # F176A: Pre-sprint UMA state capture — hardware pressure before scheduler runs.
     _uma_pre_sprint = sample_uma_status()
@@ -2066,7 +2066,7 @@ def run_pre_sprint_checks() -> bool:
 
             logger.info(
                 f"[BOOT] MLX buffers: cache={_format_mib(status['cache_limit_bytes'])} wired={_format_mib(status['wired_limit_bytes'])} configured={status['configured']}"  # noqa: E501
-            )
+    )
         except Exception as exc:
             logger.warning(f"[BOOT] MLX buffer init failed: {exc}")
 
@@ -2078,13 +2078,13 @@ def run_pre_sprint_checks() -> bool:
             "[BOOT] SWAP %.1fGB > %.1fGB — HARD_BLOCK (restart required). Exit 2.",
             s.swap_used_gib,
             HARD_BLOCK_SWAP_GIB,
-        )
+    )
         sys.exit(2)
     elif s.swap_used_gib > CLEAN_SWAP_MAX_GIB:
         logger.warning(
             f"[BOOT] SWAP {s.swap_used_gib:.1f}GB > {CLEAN_SWAP_MAX_GIB:.1f}GB (diagnostic tier) — "
             f"doporučuji restart před long run"
-        )
+    )
 
     # SWARM-010: Feature flag validation — single source of truth.
     # Validates: deprecated flags, implications, conflicts, RAM budget.
@@ -2102,7 +2102,7 @@ def run_pre_sprint_checks() -> bool:
                 "[SWARM-010] Flag validation failed (%d error(s)). "
                 "Fix flags above or set --force to bypass.",
                 len(flag_errors),
-            )
+    )
             sys.exit(2)  # exit(2) = config/validation error
     except ImportError:
         logger.debug("[SWARM-010] FeatureFlags not available (skipping validation)")
@@ -2212,7 +2212,7 @@ async def write_sprint_delta(
             f"UMA delta: {uma_peak_gib - uma_baseline_gib:+.2f}GiB, "
             f"top_source: {top_source!r}, "
             f"findings_per_min: {findings_per_min:.2f}"
-        )
+    )
     except Exception as exc:
         logger.warning(f"[TEARDOWN] sprint_delta write failed: {exc}")
 
@@ -2301,7 +2301,7 @@ async def _probe_dns(target_host: str) -> tuple[dict | None, list[str], str]:
             asyncio.to_thread(socket.gethostbyname, target_host),
             timeout=5.0,
             label="dns_resolve",
-        )
+    )
         dns_result = {"target": target_host, "status": "ok"}
     except (TimeoutError, socket.gaierror) as e:
         issues.append(f"DNS resolve failed for '{target_host}': {e}")
@@ -2333,7 +2333,7 @@ async def _check_source_availability() -> tuple[dict[str, bool], list[str], str]
             [check_source(name, url) for name, url in src_checks],
             policy="collect",
             ctx="source_availability",
-        )
+    )
         for name, ok in result.ok:
             online_sources[name] = ok
     except Exception:  # noqa: BLE001
@@ -2500,7 +2500,7 @@ def _cleanup_stale_locks(lock_dir: Path, logger: logging.Logger) -> int:
                         removed_count += 1
                         logger.info(
                             f"[F320-JANITOR] Removed stale lock: {lock_file.name} (PID={lock_pid} dead)"
-                        )
+    )
             except Exception:  # noqa: BLE001
                 pass  # best-effort
     except Exception:  # noqa: BLE001
@@ -3168,7 +3168,7 @@ async def _run_sprint_boot(
             _duckdb_init_coro(ctx.store, logger),
             _cb_reset_coro,
             label="pre_init",
-        )
+    )
     
     if _init_results:
         _duckdb_result = _init_results[0]
@@ -3180,7 +3180,7 @@ async def _run_sprint_boot(
     if ctx.duckdb_init_ok and resume:
         ctx.resume_from, ctx.resume_step = await _attempt_tot_recovery(
             ctx.store, ctx.query_hash, logger
-        )
+    )
 
 
 async def _attempt_tot_recovery(
@@ -3227,7 +3227,7 @@ async def _attempt_tot_recovery(
                     depth=_ndata.get("depth", 0),
                     cost=_ndata.get("cost", 0.0),
                     uncertainty=_ndata.get("uncertainty", 0.0),
-                )
+    )
             except Exception:
                 pass
         
@@ -3235,7 +3235,7 @@ async def _attempt_tot_recovery(
             logger.warning(
                 "[UNIFIED-006] 🔄 RESUMING ToT from checkpoint: orphan_sprint=%s step=%d nodes=%d",
                 _orphan_sprint_id[:12], _orphan_step, len(_nodes)
-            )
+    )
             return _nodes, _orphan_step
         else:
             logger.warning("[UNIFIED-006] Checkpoint found but all nodes failed deserialization")
@@ -3501,7 +3501,7 @@ async def _run_sprint_windup(
             ctx=ctx,
             result=result,
             acq_payload_filtered=_acq_payload_filtered,
-        )
+    )
     )
     ctx.report_path.write_bytes(_serialize_report(report_dict))
     logger.info(f"[REPORT] {ctx.report_path}")
@@ -3525,7 +3525,7 @@ async def _windup_phase1_early(ctx: SprintRunContext, query: str, actual_duratio
                 event_type="observation",
                 payload={"phase": "WINDUP", "sprint_id": ctx.sprint_id, "query": query},
                 confidence=1.0,
-            )
+    )
 
     # CT log discovery (if not aggressive mode)
     if not ctx.scheduler._config.aggressive_mode:
@@ -3560,7 +3560,7 @@ async def _windup_phase1_early(ctx: SprintRunContext, query: str, actual_duratio
                 event_type="observation",
                 payload={"phase": "TEARDOWN", "sprint_id": ctx.sprint_id, "actual_duration_s": round(actual_duration, 2)},
                 confidence=1.0,
-            )
+    )
 
 
 def _windup_phase2_timing(ctx: SprintRunContext, duration_s: float) -> dict[str, float]:
@@ -3658,7 +3658,7 @@ def _windup_phase3_compute_classifications(ctx: SprintRunContext, result: Any, m
             total_pattern_hits=result.total_pattern_hits,
             public_fetched=result.public_fetched,
             stop_requested=result.stop_requested,
-        )
+    )
     )
 
     # Runtime truth
@@ -3680,7 +3680,7 @@ def _windup_phase3_compute_classifications(ctx: SprintRunContext, result: Any, m
             branch_timeout_count=result.branch_timeout_count,
             public_branch_timed_out=result.public_branch_timed_out,
             ct_branch_timed_out=result.ct_branch_timed_out,
-        )
+    )
     )
     is_meaningful = runtime_truth["is_meaningful"]
     evidence_note = runtime_truth["evidence_note"]
@@ -3805,13 +3805,13 @@ async def _windup_phase5_export(
                 top_seed_nodes=top_seed_nodes,
                 live_feed_urls=ctx.live_feed_urls,
                 acq_payload=acq_payload,
-            )
+    )
         )
 
         _elog_instance = ctx.scheduler._evidence_log.value if ctx.scheduler._evidence_log else None
         export_result = await export_sprint(
             store=ctx.store, handoff=handoff, sprint_id=ctx.sprint_id, evidence_log=_elog_instance,
-        )
+    )
         logger.info(f"[EXPORT] finish layer → seeds={export_result.get('seeds_json', '')}")
 
         if deep_probe_enabled:
@@ -3819,7 +3819,7 @@ async def _windup_phase5_export(
                 from hledac.universal.deep_research.probe_runner import run_deep_probe_if_enabled
                 probe_result = await run_deep_probe_if_enabled(
                     query=query, store=ctx.store, deep_probe_enabled=True
-                )
+    )
                 if probe_result:
                     logger.info(f"[DEEP_PROBE] completed: {probe_result}")
 
@@ -4138,7 +4138,7 @@ async def _teardown_evidence_log(ctx: SprintRunContext) -> None:
                 _core_close_targets,
                 concurrency=2,
                 ctx="teardown.core",
-            )
+    )
             for _err in _core_close_errors:
                 if _err is not None:
                     logger.debug(f"[TEARDOWN] Resource close error: {_err}")
@@ -4162,7 +4162,7 @@ async def _teardown_transports(ctx: SprintRunContext) -> None:
             ],
             concurrency=4,
             ctx="teardown.transports",
-        )
+    )
         failed_transports = [name for name, exc in _transport_close_errors.items() if exc is not None]
         if failed_transports:
             logger.debug(f"[TEARDOWN] transport close failures: {failed_transports}")
@@ -4191,7 +4191,7 @@ async def _teardown_cleanup(ctx: SprintRunContext) -> None:
                 interval_s=30.0,
                 lmdb_incremental=True,
                 fs_fallback=True,
-            )
+    )
             await _cleanup_ckpt.cleanup()
             logger.debug("[UNIFIED-007] ToT checkpoints cleaned up")
 
@@ -4258,7 +4258,7 @@ async def run_sprint(
         logger.warning(
             "[ULTIMATE-001] Replay mode without --warc-dir: "
             "live HTTP fetching will be used instead of WARC responses"
-        )
+    )
     
     try:
         # MODERN-35: Initialize per-sprint resources BEFORE boot phase
@@ -4281,7 +4281,7 @@ async def run_sprint(
             resume=resume,
             prng_seed=prng_seed,
             replay_seed=replay_seed,
-        )
+    )
         
         # PHASE 2: EXECUTE - Scheduler setup, sprint race, execution
         await _run_sprint_execute(
@@ -4296,7 +4296,7 @@ async def run_sprint(
             rl_train_mode=rl_train_mode,
             ui_mode=ui_mode,
             export_dir=export_dir,
-        )
+    )
         
         # PHASE 3: WINDUP - Result processing, report generation, export
         await _run_sprint_windup(
@@ -4305,7 +4305,7 @@ async def run_sprint(
             duration_s=duration_s,
             export_dir=export_dir,
             deep_probe_enabled=deep_probe_enabled,
-        )
+    )
         
     except asyncio.CancelledError:
         # Handle cancellation gracefully
@@ -4392,7 +4392,7 @@ class _SignalHandlerContext:
             getattr(signal.Signals, "SIGINT", None) and signal.Signals(signum).name
             if hasattr(signal, "Signals")
             else str(signum)
-        )
+    )
         logging.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
         try:
             if self.loop.is_running():
@@ -4510,7 +4510,7 @@ async def _cancel_all_tasks(timeout_s: float = 5.0) -> None:
             "[SHUTDOWN] Task %s did not drain in %ss — abandoning",
             t.get_name(),
             timeout_s,
-        )
+    )
 
 
 async def _duckdb_init_coro(
@@ -4536,7 +4536,7 @@ async def _duckdb_init_coro(
     except Exception as _init_err:
         logger.warning(
             f"[P0-3] DuckDB pre-init failed (fail-soft, store will init on first ingest): {_init_err}"
-        )
+    )
         return False
 
 
@@ -4625,7 +4625,7 @@ def _run_sprint_loop(args: argparse.Namespace) -> None:
         from hledac.universal._core.composition_root import (
             build_runtime as _br,
             run_runtime as _rr,
-        )
+    )
         _build_runtime = _br
         _run_runtime = _rr
 
@@ -4900,7 +4900,7 @@ def _main_dispatch() -> None:
         # F270: Print DeepSourceRegistry catalog and exit.
         from hledac.universal.discovery.deep_source_registry import (
             DeepSourceRegistry,
-        )
+    )
 
         registry = DeepSourceRegistry()
         sources = registry.get_sources(tier=args.tier)
@@ -4919,7 +4919,7 @@ def _main_dispatch() -> None:
                 f"{src.reliability:<5.2f} "
                 f"{src.name[:28]:<30} "
                 f"{src.base_url}"
-            )
+    )
         print("-" * 110)
         print(f"Total: {len(sources)} sources (catalog cap: 200)")
         return

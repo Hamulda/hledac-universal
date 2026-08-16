@@ -194,7 +194,7 @@ class _DocumentMetadataExtractor:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
                     timestamp INTEGER NOT NULL
-                )
+    )
             ''')
             self._conn.execute('''
                 CREATE INDEX IF NOT EXISTS idx_timestamp
@@ -225,7 +225,7 @@ class _DocumentMetadataExtractor:
             cursor = self._conn.execute(
                 'SELECT value, timestamp FROM doc_meta_cache WHERE key = ?',
                 (key,)
-            )
+    )
             row = cursor.fetchone()
             if row and self._is_cache_valid(row[1]):
                 import json
@@ -247,7 +247,7 @@ class _DocumentMetadataExtractor:
             self._conn.execute(
                 'INSERT OR REPLACE INTO doc_meta_cache (key, value, timestamp) VALUES (?, ?, ?)',
                 (key, value, timestamp)
-            )
+    )
             self._conn.commit()
         except Exception:  # noqa: BLE001
             pass
@@ -293,7 +293,7 @@ class _DocumentMetadataExtractor:
                 "[DOCMETA] Timeout extracting from %s (%.1fs)",
                 url, EXTRACTION_TIMEOUT,
                 extra={"url": url, "ext": ext, "timeout_s": EXTRACTION_TIMEOUT},
-            )
+    )
             return {}
         except Exception as e:
             logger.debug(f"[DOCMETA] Extraction failed for {url}: {e}")

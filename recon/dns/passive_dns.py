@@ -296,7 +296,7 @@ class PassiveDNSResolver:
                 base_delay=_DOH_RETRY_DELAY_S,
                 max_delay=30.0,
                 jitter=True,
-            )
+    )
         except RetryableError as e:
             logger.debug(f'[DoH] Query failed for {resolver}: {e}')
             return []

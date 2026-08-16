@@ -140,7 +140,7 @@ def scan_unbounded_lru() -> list[dict[str, Any]]:
             r'@[\w.]*lru_cache\s*\([^)]*maxsize\s*=\s*None[^)]*\)',
             content,
             re.DOTALL,
-        )
+    )
         if multi:
             # approximate line number: count newlines before match
             line_num = content[:multi.start()].count('\n') + 1
@@ -149,7 +149,7 @@ def scan_unbounded_lru() -> list[dict[str, Any]]:
             existing = any(
                 r["file"] == rel and r["line"] == line_num
                 for r in results
-            )
+    )
             if not existing:
                 results.append({
                     "file": rel,

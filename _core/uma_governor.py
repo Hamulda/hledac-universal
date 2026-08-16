@@ -25,14 +25,13 @@ from __future__ import annotations
 
 # Re-export everything from canonical source for backward compatibility
 from hledac.universal._core.resource_governor import (
-from _core._util import aclose
     PressureState,
     UMAGovernor,
     UMAStateToPressureState,
     PressureStateToUMAState,
     uma_state_to_pressure_state,
     pressure_state_to_uma_state,
-)
+    )
 
 __all__ = [
     "PressureState",

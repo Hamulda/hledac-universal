@@ -103,7 +103,7 @@ class StoreStage:
                 should_flush = (
                     len(self._batch) >= self._batch_size
                     or (time.monotonic() - self._last_flush) >= self._flush_interval_s
-                )
+    )
                 if should_flush and self._batch:
                     flushed = await self._flush_batch()
                     stored_count += flushed

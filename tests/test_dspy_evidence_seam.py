@@ -35,7 +35,7 @@ class TestDspyEvidenceSeam:
                         "result": '{"hosts": ["1.2.3.4"], "domains": ["target.com"]}',
                     },
                 }
-            )
+    )
             + "\n"
             + json.dumps(
                 {
@@ -45,9 +45,9 @@ class TestDspyEvidenceSeam:
                         "response": {"content": '{"records": 42, "sources": ["ct"]}'},
                     },
                 }
-            )
+    )
             + "\n"
-        )
+    )
 
         # File 2: 1 decision event
         f2 = evidence_dir / "run_002.jsonl"
@@ -60,9 +60,9 @@ class TestDspyEvidenceSeam:
                         "result": '{"certs": ["cert1", "cert2"]}',
                     },
                 }
-            )
+    )
             + "\n"
-        )
+    )
 
         # File 3: non-decision events (should be filtered out)
         f3 = evidence_dir / "run_003.jsonl"
@@ -74,9 +74,9 @@ class TestDspyEvidenceSeam:
                     "event_type": "observation",
                     "payload": {"result": '{"data": "also ignored"}'},
                 }
-            )
+    )
             + "\n"
-        )
+    )
 
         return evidence_dir
 
@@ -196,7 +196,7 @@ class TestDspyEvidenceSeam:
             (
                 f"query {i} needs at least twenty chars",
                 f"valid result with enough length here and even more content for testing purposes {i}"
-            )
+    )
             for i in range(10)
         ]
 
@@ -209,7 +209,7 @@ class TestDspyEvidenceSeam:
 
         assert optimizer._failure_count == 3, (
             f"Expected failure_count=3 after DSPy failure, got {optimizer._failure_count}"
-        )
+    )
         assert time.time() < optimizer._circuit_open_until, (
             "Circuit breaker should be open"
-        )
+    )

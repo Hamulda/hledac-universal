@@ -109,7 +109,7 @@ def _detect_interpreter_flags() -> dict[str, Any]:
                 "GIL disabled (free-threaded build)"
                 if val
                 else "GIL enabled (standard build)"
-            )
+    )
         else:
             flags["free_threaded_reason"] = "attribute _is_gil_disabled not present"
     except AttributeError:
@@ -456,7 +456,7 @@ def bench_wal_manager_single_write_smoke() -> dict[str, Any]:
                 query="bench_query",
                 source_type="bench_source",
                 confidence=0.75,
-            )
+    )
 
         t_result = _time_it(one_write, runs=7, warmups=2)
 
@@ -503,7 +503,7 @@ def bench_batch_scheduler_queue_flush_smoke() -> dict[str, Any]:
             prompt="test prompt",
             response_model=str,  # simplest schema key
             priority=1.0,
-        )
+    )
         # Consume future result to suppress "never retrieved" warnings
         future.add_done_callback(lambda f: None)
         await asyncio.sleep(0.05)
@@ -618,7 +618,7 @@ def main() -> int:
                 rss_start_kb=rss_start_kb,
                 rss_psutil_start=rss_psutil_start,
                 quick=args.quick,
-            )
+    )
             _write_jsonl(record, out_path)
             status = result.get("status", "unknown")
             print(status)
@@ -634,7 +634,7 @@ def main() -> int:
                 rss_start_kb=rss_start_kb,
                 rss_psutil_start=rss_psutil_start,
                 quick=args.quick,
-            )
+    )
             _write_jsonl(record, out_path)
 
     rss_end_kb = _rss_kb()

@@ -62,7 +62,7 @@ class TestKVCacheManagerInit:
             kv_pool_maxsize=8,
             session_cache_maxsize=16,
             prefix_cache_maxsize=128,
-        )
+    )
         assert manager.kv_pool_maxsize == 8
         assert manager.session_cache_maxsize == 16
         assert manager.prefix_cache_maxsize == 128

@@ -9,9 +9,6 @@ PEP 698: Extracted from DeepHermes3Engine inference orchestration.
 Central facade for all inference operations.
 
 M1 8GB: Unified inference interface with memory-aware scheduling.
-
-NOTE (MODERN-35): P-core affinity must be set before mlx_lm.generate().
-See brain/deephermes3_engine.py for proper implementation pattern.
 """
 
 from __future__ import annotations
@@ -19,33 +16,17 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
-
-if TYPE_CHECKING:
-    from mlx_lm import Model as MLXModel
-    from mlx_lm import TokenizerWrapper as MLXTokenizer
-from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
     from hledac.universal.brain._metal.metal_device import MetalDevice
     from hledac.universal.brain._cache.kv_cache_manager import KVCacheManager
 
-# MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
-
-
-
-
-
-    set_mlx_affinity,
-    is_apple_silicon,
-)
-
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-
-from _core import acloseclass GenerateConfig:
+@dataclass
+class GenerateConfig:
     """Configuration for inference generation."""
     max_tokens: int = 512
     temperature: float = 0.7
@@ -56,7 +37,7 @@ from _core import acloseclass GenerateConfig:
     kv_bits: int = 4
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class GenerateResult:
     """Result of generate operation."""
     text: str
@@ -83,8 +64,8 @@ class GenerationFacade:
 
     def __init__(
         self,
-        model_getter: Callable[[], MLXModel] | None = None,
-        tokenizer_getter: Callable[[], MLXTokenizer] | None = None,
+        model_getter: Any | None = None,
+        tokenizer_getter: Any | None = None,
         metal_device: MetalDevice | None = None,
         kv_cache: KVCacheManager | None = None,
     ) -> None:
@@ -97,8 +78,8 @@ class GenerationFacade:
 
     def set_model_accessors(
         self,
-        model_getter: Callable[[], MLXModel],
-        tokenizer_getter: Callable[[], MLXTokenizer],
+        model_getter: Any,
+        tokenizer_getter: Any,
     ) -> None:
         """Set model and tokenizer accessors."""
         self._model_getter = model_getter
@@ -255,10 +236,6 @@ class GenerationFacade:
 
         async def generator() -> AsyncIterator[str]:
             import mlx_lm
-            # MODERN-35 Fix: Set P-core affinity before MLX Metal inference
-            # E-cores are strictly reserved for I/O operations only
-            if is_apple_silicon():
-                set_mlx_affinity()
             for token in mlx_lm.generate(model, tokenizer, **gen_kwargs):
                 yield token
 
@@ -350,18 +327,14 @@ class GenerationFacade:
 
     async def _run_mlx_generate(
         self,
-        model: MLXModel,
-        tokenizer: MLXTokenizer,
+        model: Any,
+        tokenizer: Any,
         kwargs: dict[str, Any],
     ) -> str:
         """Run MLX generation in thread pool."""
         import mlx_lm
 
         def generate() -> str:
-            # MODERN-35 Fix: Set P-core affinity before MLX Metal inference
-            # E-cores are strictly reserved for I/O operations only
-            if is_apple_silicon():
-                set_mlx_affinity()
             return mlx_lm.generate(
                 model=model,
                 tokenizer=tokenizer,

@@ -99,7 +99,7 @@ class RustExtensionStale(RustExtensionError):
         return (
             self.__class__,
             (self.reason, self.source_hash, self.current_hash, self.rebuild_command, self.reason),
-        )
+    )
 
 
 class RustExtensionABIError(RustExtensionError):
@@ -127,13 +127,13 @@ class RustExtensionABIError(RustExtensionError):
                 f"Rust extension ABI version {actual_version} is newer than expected "
                 f"{expected_version}. Rebuild required with: "
                 f"cd rust_extensions && maturin develop --release"
-            )
+    )
         else:
             msg = (
                 f"Rust extension ABI version {actual_version} is older than required "
                 f"{expected_version}. Rebuild required with: "
                 f"cd rust_extensions && maturin develop --release"
-            )
+    )
 
         super().__init__(msg)
 
@@ -158,7 +158,7 @@ class RustExtensionArchitectureError(RustExtensionError):
         msg = (
             f"Rust extension architecture mismatch: built for {built_for}, "
             f"running on {running_on}. "
-        )
+    )
         if rebuild_command:
             msg += f"Rebuild with: {rebuild_command}"
         else:

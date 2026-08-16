@@ -796,7 +796,7 @@ class ArchiveResurrector:
             metadata: dict[str, Any] = {}
             title_match = re.search(
                 r'<title[^>]*>([^<]+)</title>', content, re.IGNORECASE
-            )
+    )
             if title_match:
                 metadata['title'] = title_match.group(1).strip()
             for match in re.finditer(
@@ -821,7 +821,7 @@ class ArchiveResurrector:
                 r'<meta\s+name=["\']description["\']\s+content=["\']([^"\']+)["\']',
                 content,
                 re.IGNORECASE,
-            )
+    )
             if desc_match:
                 metadata['description'] = desc_match.group(1)
             return metadata

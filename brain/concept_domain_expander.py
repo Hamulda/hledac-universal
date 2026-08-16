@@ -45,7 +45,7 @@ _OSINT_RELEVANT_TLDS = frozenset({
 _BRAND_TLD_RE = re.compile(
     r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}",
     re.ASCII,
-)
+    )
 
 # Suspicious/new TLDs often used in OSINT
 _SUSPICIOUS_TLDS = frozenset({
@@ -316,7 +316,7 @@ _KEYWORD_DOMAIN_TEMPLATES: tuple[tuple[frozenset[str], list[str]], ...] = (
             "{kw}monitor.org", "{kw}alert.com", "{kw}root.com",
         ],
     ),
-)
+    )
 
 
 def _heuristic_expand_concept(query: str) -> list[SyntheticDomainCandidate]:
@@ -378,7 +378,7 @@ def _heuristic_expand_concept(query: str) -> list[SyntheticDomainCandidate]:
                     confidence=confidence,
                     source="heuristic",
                     reason=f"keyword_template:{best_word}",
-                )
+    )
             )
 
     # Also add pure n-gram based candidates if we have few results
@@ -397,7 +397,7 @@ def _heuristic_expand_concept(query: str) -> list[SyntheticDomainCandidate]:
                         confidence=0.5,
                         source="heuristic",
                         reason=f"ngram:{ngram}",
-                    )
+    )
                 )
 
     # Sort by confidence, return top 5
@@ -445,7 +445,7 @@ async def _mlx_expand_concept(
                 thinking=False,   # fast path, no deep thinking needed
             ),
             timeout=timeout_s, label="concept_domain_expand",
-        )
+    )
 
         candidates: list[SyntheticDomainCandidate] = []
         seen: set[str] = set()
@@ -474,7 +474,7 @@ async def _mlx_expand_concept(
                     confidence=0.8,
                     source="mlx",
                     reason="llm_generated",
-                )
+    )
             )
 
         return candidates[:5]
@@ -538,7 +538,7 @@ async def expand_concept_domains(
                 "[P0-2] MLX expanded %d domain candidates for query '%s...'",
                 len(mlx_candidates),
                 query[:30],
-            )
+    )
             return mlx_candidates
 
     # Fall back to fast heuristic expansion
@@ -548,7 +548,7 @@ async def expand_concept_domains(
             "[P0-2] Heuristic expanded %d domain candidates for query '%s...'",
             len(heuristic_candidates),
             query[:30],
-        )
+    )
     return heuristic_candidates
 
 

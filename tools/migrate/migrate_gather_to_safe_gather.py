@@ -254,8 +254,8 @@ def _find_matching_paren(text: str, start: int) -> int:
                     i += 1
         i += 1
     return -1
-_RE_FROM_ASYNC_HELPERS = re.compile('^(\\s*from\\s+utils\\.async_helpers\\s+import\\s+)(?P<names>[^\\n]+)$', re.MULTILINE)
-_RE_FROM_HLEDAC_ASYNC_HELPERS = re.compile('^(\\s*from\\s+hledac\\.universal\\.utils\\.async_helpers\\s+import\\s+)(?P<names>[^\\n]+)$', re.MULTILINE)
+_RE_FROM_ASYNCX = re.compile('^(\\s*from\\s+utils\\.asyncx\\s+import\\s+)(?P<names>[^\\n]+)$', re.MULTILINE)
+_RE_FROM_HLEDAC_ASYNCX = re.compile('^(\\s*from\\s+hledac\\.universal\\.utils\\.asyncx\\s+import\\s+)(?P<names>[^\\n]+)$', re.MULTILINE)
 
 def _parse_existing_names(names_text: str) -> set[str]:
     """Extract import names from the RHS of `from x import (...)`."""
@@ -266,11 +266,11 @@ def _parse_existing_names(names_text: str) -> set[str]:
     return {p for p in parts if p and (not p.startswith('#'))}
 
 def _ensure_imports(source: str, needed: set[str]) -> str:
-    """Add a `from utils.async_helpers import ...` line if not present.
+    """Add a `from utils.asyncx import ...` line if not present.
 
     Idempotent: re-running is a no-op.
     """
-    for pattern in (_RE_FROM_ASYNC_HELPERS, _RE_FROM_HLEDAC_ASYNC_HELPERS):
+    for pattern in (_RE_FROM_ASYNCX, _RE_FROM_HLEDAC_ASYNCX):
         m = pattern.search(source)
         if m:
             existing = _parse_existing_names(m.group('names'))
@@ -289,7 +289,7 @@ def _ensure_imports(source: str, needed: set[str]) -> str:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             last_top_import_end_lineno = node.end_lineno or node.lineno
     lines = source.splitlines(keepends=True)
-    import_line = f"from utils.async_helpers import {', '.join(sorted(needed))}\n"
+    import_line = f"from utils.asyncx import {', '.join(sorted(needed))}\n"
     if last_top_import_end_lineno > 0:
         insert_at = last_top_import_end_lineno
         if insert_at < len(lines) and lines[insert_at].strip() == '':

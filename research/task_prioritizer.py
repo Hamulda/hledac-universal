@@ -132,7 +132,7 @@ def cpu_heuristic_predict(task_metadata: dict) -> tuple[float, float]:
     if isinstance(source_type, str):
         base_gain, base_duration = source_type_map.get(
             source_type.lower(), (0.5, 1.0)
-        )
+    )
     else:
         base_gain, base_duration = (0.5, 1.0)
 
@@ -166,14 +166,14 @@ class TaskPrioritizerWrapper:
             "optimizer",
             "trained",
             "update_counter",
-        )
+    )
     )
 
     def __init__(self, model_path: Path) -> None:
         self.model_path = model_path
         self.model: TaskPrioritizer | None = (
             TaskPrioritizer() if MLX_AVAILABLE else None
-        )
+    )
         if MLX_AVAILABLE:
             try:
                 import mlx.optimizers as optim
@@ -226,7 +226,7 @@ class TaskPrioritizerWrapper:
                 self.trained = True
                 logger.info(
                     "Loaded TaskPrioritizer from %s", self.model_path
-                )
+    )
         except Exception as e:
             logger.warning("Failed to load TaskPrioritizer: %s", e)
 
@@ -255,7 +255,7 @@ class TaskPrioritizerWrapper:
         estimated_duration_raw = task_metadata.get("estimated_duration", 1.0)
         estimated_duration = max(
             0.0, min(1.0, (estimated_duration_raw - 0.1) / 119.9)
-        )
+    )
         complexity = max(0.0, min(1.0, task_metadata.get("complexity", 0.5)))
         source_type_map = {
             "feed": 0.1,
@@ -275,21 +275,21 @@ class TaskPrioritizerWrapper:
         else:
             source_type = (
                 float(source_type_raw) if source_type_raw else 0.5
-            )
+    )
         entity_count_raw = task_metadata.get("entity_count", 0)
         entity_count = max(0.0, min(1.0, entity_count_raw / 1000.0))
         novelty = max(0.0, min(1.0, task_metadata.get("novelty", 0.5)))
         contradiction_score = max(
             0.0, min(1.0, task_metadata.get("contradiction_score", 0.0))
-        )
+    )
         centrality = max(0.0, min(1.0, task_metadata.get("centrality", 0.0)))
         historical_gain = max(
             0.0, min(1.0, task_metadata.get("historical_gain", 0.5))
-        )
+    )
         historical_duration_raw = task_metadata.get("historical_duration", 1.0)
         historical_duration = max(
             0.0, min(1.0, (historical_duration_raw - 0.1) / 119.9)
-        )
+    )
         features = [
             priority,
             estimated_duration,
@@ -346,7 +346,7 @@ class TaskPrioritizerWrapper:
         _nn_mod = _get_nn()
         target = _mlx.array(
             [actual_gain, actual_duration], dtype=_mlx.float32
-        )
+    )
 
         def loss_fn(m: Any) -> Any:
             return _nn_mod.losses.mse_loss(m(features), target)
@@ -397,7 +397,7 @@ class TaskPrioritizationRouter:
             "_mlx_wrapper",
             "_random_counter",
             "_switch_count",
-        )
+    )
     )
 
     def __init__(
@@ -461,7 +461,7 @@ class TaskPrioritizationRouter:
         """Online update MLX modelu."""
         await self._mlx_wrapper.update(
             task_metadata, actual_gain, actual_duration
-        )
+    )
 
     @property
     def ab_stats(self) -> dict:
@@ -487,7 +487,7 @@ class TaskPrioritizationRouter:
                     self._mlx_counter
                     + self._cpu_counter
                     + self._random_counter,
-                )
+    )
             ),
         }
 
@@ -497,7 +497,7 @@ class TaskPrioritizationRouter:
             raise ValueError(
                 f"Unknown strategy: {strategy!r}. "
                 "Must be 'mlx', 'cpu', or 'random'."
-            )
+    )
         self._ab_mode = strategy
 
     @property

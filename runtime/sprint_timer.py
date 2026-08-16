@@ -61,7 +61,7 @@ _CANONICAL_PHASES: tuple[str, ...] = (
     "export",
     "investigation_packet_build",
     "next_sprint_seeds_generation",
-)
+    )
 
 
 class SprintTimer:
@@ -192,7 +192,7 @@ _PHASE_LABELS = (
     "export",
     "investigation_packet_build",
     "next_sprint_seeds_generation",
-)
+    )
 
 
 def compute_runtime_loop_telemetry(

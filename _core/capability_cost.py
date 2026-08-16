@@ -115,7 +115,7 @@ class CapabilityCost(msgspec.Struct, frozen=True, gc=False):
         return (
             f"CapabilityCost(name={self.name!r}, rss_mb={self.rss_mb}, "
             f"peak_mb={self.peak_mb}, tier={self.tier!r})"
-        )
+    )
 
     @property
     def savings_mb(self) -> int:
@@ -155,7 +155,7 @@ class TriageDecision(msgspec.Struct, frozen=True, gc=False):
         return (
             f"TriageDecision(disable={self.disable_order!r}, "
             f"savings={self.total_savings_mb}MB, met={self.target_met})"
-        )
+    )
 
 
 class CapabilityCostRegistry:
@@ -440,7 +440,7 @@ class QoSLadderController:
             target_mb=target_mb,
             target_met=total_savings >= target_mb,
             already_disabled=already_disabled,
-        )
+    )
 
     def estimate_savings(self, capabilities: list[str]) -> int:
         """

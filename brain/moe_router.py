@@ -256,7 +256,7 @@ class MoERouter:
                 memory_budget_mb=None,  # Use adaptive budget
                 preload_models=True,
                 use_adaptive_budget=True,
-            )
+    )
             logger.info('[SWARM-001] MicroModelSwarmRouter initialized')
             
             # Preload priority models in background
@@ -519,7 +519,7 @@ class MoERouter:
         # EmbeddingCache.get_or_encode with torch embed fn for correct 768-dim output
         result: np.ndarray | None = await self._embed_cache.get_or_encode(
             query, encode_fn=self._embed_with_torch
-        )
+    )
         if result is not None:
             return result
         # Fallback: stateless hash embedding when nothing works
@@ -747,7 +747,7 @@ class MoERouter:
                         formatted_prompt,
                         max_tokens=self.config.max_tokens_per_expert,
                         temp=self.config.temperature,
-                    )
+    )
                     return result.strip()
                 else:
                     logger.warning('[SWARM-001] Swarm router not available, falling back to main model')
@@ -769,7 +769,7 @@ class MoERouter:
                 kv_bits=4,
                 prompt_cache=self._prompt_cache_by_expert.get(expert_name),
                 verbose=False,
-            )
+    )
             return response.strip()
         except Exception as e:
             logger.error(f'Expert {expert_name} generation failed: {e}')
@@ -843,7 +843,7 @@ class MoERouter:
             f"{prefix} {label} ({score_label}: {output['score']:.2f})"
             if index is None
             else f"\n{index}. {label} (confidence: {output['score']:.2f}):"
-        )
+    )
         text = output["output"]
         if max_chars is not None and len(text) > max_chars:
             text = text[:max_chars]

@@ -70,7 +70,7 @@ class SprintContext(msgspec.Struct, frozen=True, gc=False):
 
 _sprint_ctx: ContextVar[SprintContext | None] = ContextVar(
     "sprint_context", default=None
-)
+    )
 
 
 # =============================================================================

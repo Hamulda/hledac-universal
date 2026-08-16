@@ -240,7 +240,7 @@ async def cdx_deep_search_full(
                 CDX_API,
                 params=params,
                 timeout=httpx.Timeout(TIMEOUT_PER_REQUEST),
-            )
+    )
             if resp.status_code == 429:
                 logger.warning(f'CDX rate limited for {domain}, stopping pagination')
                 break
@@ -456,7 +456,7 @@ class WaybackCDXDeepSearch:
                     from_date=from_date,
                     to_date=to_date,
                     max_total=max_per_domain,
-                )
+    )
 
         gathered = await parallel_ok(*[_fetch_one(d) for d in domains_or_urls], label='wayback_cdx:search_full')
 
@@ -482,7 +482,7 @@ class WaybackCDXDeepSearch:
             total_rows=len(all_results),
             results=all_results,
             duration_s=elapsed,
-        )
+    )
 
     async def search_batch(self, domains: list[str], *, match_type: str='domain', concurrency: int=3) -> list[CDXSearchResult]:
         """Batch search across domains with concurrency + rate limiting."""

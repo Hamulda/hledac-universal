@@ -115,14 +115,14 @@ def _check_import_contract(
             valid=valid,
             parse_error='; '.join(failures) if failures else None,
             blocks_live=blocks_live,
-        )
+    )
     except ImportError as exc:
         return ImportCheckResult(
             found=False,
             valid=False,
             parse_error=str(exc),
             blocks_live=blocks_live,
-        )
+    )
 
 class OneButtonVerdict(StrEnum):
     RUN_NOW = 'RUN_NOW'
@@ -345,7 +345,7 @@ _DERIVE_LOGICAL_NAME_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('analyst_brief_reality',), 'F223F_ANALYST_BRIEF_REALITY'),
     (('persistent_dedup_audit',), 'F223G_PERSISTENT_DEDUP_AUDIT'),
     (('cwd_invocation_guard',), 'F223H_CWD_INVOCATION_GUARD'),
-)
+    )
 
 
 def _derive_logical_name(probe_dir: str) -> str:
@@ -639,7 +639,7 @@ def _compute_verdict(
             feed_baseline_allowed=False,
             reasons=tuple(reasons),
             warnings=tuple(warnings),
-        )
+    )
 
     # Not blocked
     feed_baseline_allowed = True
@@ -746,7 +746,7 @@ def _compute_run_mode(
             max_safe_iter=result.max_safe_iter,
             max_safe_piv=result.max_safe_piv,
             investigation_reason=f'provider_surface_broken: {result.investigation_reason}',
-        )
+    )
     if fallback_blocked:
         result = _RunModeResult(
             can_run_live=False,
@@ -756,7 +756,7 @@ def _compute_run_mode(
             max_safe_iter=result.max_safe_iter,
             max_safe_piv=result.max_safe_piv,
             investigation_reason=f'fallback_schema_blocked: {result.investigation_reason}',
-        )
+    )
 
     return result
 
@@ -1094,7 +1094,7 @@ _USAGE_TEMPLATE: tuple[str, ...] = (
     '  --decision-gate-json probe_f219f_prelive_decision_gate/prelive_decision.json \\',
     '  --output-json ... --output-md ...',
     '```',
-)
+    )
 
 
 def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
@@ -1188,7 +1188,7 @@ _F229_CONTRACT_CHECKS: tuple[_F229ContractCheck, ...] = (
         category='F229-NONFEED-A',
         failures=('nonfeed_profile_expected_lanes', 'acquisition_report'),
     ),
-)
+    )
 
 
 def _run_f229_contract_checks() -> tuple[list[dict], list[str]]:

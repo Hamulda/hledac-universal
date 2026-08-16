@@ -68,11 +68,7 @@ from hledac.universal.runtime.patterns.discovery import (
     _WILDCARD_RE,
     is_ip_like as _is_ip_like_pattern,
 )
-
-
-
-
-
+from hledac.universal.runtime.source_finding_config import (
     is_private_hostname,
     is_private_ip_prefix,
 )
@@ -81,8 +77,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
-from _core import acloseexcept ImportError:
+except ImportError:
     CanonicalFinding = None  # type: ignore[assignment]
 
 try:

@@ -30,11 +30,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # Import from the new coordinator
-
-
-
-
-
+from _core.inference_coordinator import (
     InferenceBackend,
     InferenceCoordinator,
     InferenceError,
@@ -52,7 +48,6 @@ import pytest
 
 # ─── Fixtures ──────────────────────────────────────────────────────────────────
 
-from _core import aclose
 @pytest.fixture
 def mock_env_mlx_inproc():
     """Force mlx_inproc backend."""
@@ -540,7 +535,7 @@ class TestSprintM10Invariants:
 
     def test_ic1_no_mlx_lm_in_core_coordinator(self):
         """IC.1: core/inference_coordinator.py must NOT import mlx_lm at module level."""
-        import _core as core.inference_coordinator as mod
+        import _core.inference_coordinator as mod
 
         source = open(mod.__file__).read()
         # Check for actual import statements, not docstring mentions
@@ -559,7 +554,7 @@ class TestSprintM10Invariants:
 
     def test_ic5_lazy_lock_no_module_level_lock(self):
         """IC.5: No asyncio.Lock at module level in coordinator (only lazy _get_lock())."""
-        import _core as core.inference_coordinator as mod
+        import _core.inference_coordinator as mod
         source = open(mod.__file__).read()
         lines = source.split("\n")
         for line in lines:

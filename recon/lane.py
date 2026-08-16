@@ -313,7 +313,7 @@ class BaseIntelligenceLane(ABC):
                 self._bloom_filter = RotatingBloomFilter(
                     max_elements=self.MAX_BLOOM_ENTRIES,
                     error_rate=0.01,
-                )
+    )
             except Exception:
                 # Fallback: simple bounded set (not thread-safe but lanes are async)
                 class _FallbackBloom:
@@ -419,7 +419,7 @@ class BaseIntelligenceLane(ABC):
                     ts=ts_now,
                     provenance=(self.sidecar_id, ctx.sprint_id),
                     payload_text=f"{ioc_type}:{value}\n{payload[:500]}",
-                )
+    )
                 findings.append(finding)
 
         # If no IOCs, emit one generic finding
@@ -434,7 +434,7 @@ class BaseIntelligenceLane(ABC):
                     ts=ts_now,
                     provenance=(self.sidecar_id, ctx.sprint_id),
                     payload_text=payload,
-                )
+    )
             )
 
         self._stats["findings_emitted"] += len(findings)
@@ -492,7 +492,7 @@ class BaseIntelligenceLane(ABC):
                 logger.warning(
                     "BaseIntelligenceLane(%s).run(%r): fail-soft",
                     self.sidecar_id, target, exc_info=True,
-                )
+    )
                 return []
 
     # -------------------------------------------------------------------------

@@ -144,7 +144,7 @@ def main() -> None:
         result = subprocess.run(
             ['rg', '-l', 'safe_gather_ok', args.root, '--type', 'py'],
             capture_output=True, text=True, cwd=args.root
-        )
+    )
         if result.returncode != 0:
             print("No files found with safe_gather_ok")
             sys.exit(0)

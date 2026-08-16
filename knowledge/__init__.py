@@ -195,6 +195,65 @@ class _LegacyCompatModule:
 
 _legacy_compat = _LegacyCompatModule()
 
+# MODERN-36 PERFORMANCE FIX: Module-level cache tracking for memory leak prevention.
+# Tracks which modules have been loaded via __getattr__ so they can be
+# cleaned up when the module is unloaded or the process exits.
+_LOADED_MODULES: dict[str, frozenset[str]] = {}  # module_path -> set of exported names
+
+def _track_module_load(module_path: str, name: str) -> None:
+    """Track a loaded module for cleanup."""
+    if module_path not in _LOADED_MODULES:
+        _LOADED_MODULES[module_path] = frozenset()
+    _LOADED_MODULES[module_path] = _LOADED_MODULES[module_path] | {name}
+
+def _get_loaded_modules() -> dict[str, frozenset[str]]:
+    """Return copy of loaded modules registry."""
+    return dict(_LOADED_MODULES)
+
+def _clear_knowledge_cache(clear_sys_modules: bool = True) -> int:
+    """
+    Clear all loaded module symbols from globals() and optionally from sys.modules.
+    
+    Args:
+        clear_sys_modules: If True (default), also remove loaded modules from
+            sys.modules to fully unload them and free their memory.
+    
+    Returns:
+        Number of module symbols cleared from globals().
+    
+    MODERN-36 PERFORMANCE FIX: Call this from shutdown hooks to prevent
+    memory leaks from accumulated globals() entries and sys.modules references.
+    Typically called when the process is exiting or when memory pressure is high.
+    
+    Note: Setting clear_sys_modules=True fully unloads the modules, which may
+    break existing references. Only use when the application is shutting down.
+    """
+    import sys
+    cleared = 0
+    g = globals()
+    unloaded_modules: list[str] = []
+    
+    for module_path, names in list(_LOADED_MODULES.items()):
+        for name in names:
+            if name in g:
+                g[name] = None
+                cleared += 1
+        
+        # MODERN-36 FIX: Also clear from sys.modules for full module unload
+        if clear_sys_modules:
+            # Module names are prefixed with package path
+            module_names_to_remove = [
+                f"hledac.universal.{module_path}",
+                module_path,
+            ]
+            for mod_name in module_names_to_remove:
+                if mod_name in sys.modules:
+                    sys.modules.pop(mod_name, None)
+                    unloaded_modules.append(mod_name)
+    
+    _LOADED_MODULES.clear()
+    return cleared
+
 # Canonical exports — no heavy modules loaded at import time
 __all__ = sorted(_LAZY_EXPORT_MAP.keys()) + sorted(_LEGACY_NAMES)
 
@@ -223,6 +282,8 @@ def __getattr__(name: str) -> Any:
                 raise
         value = getattr(module, name)
         globals()[name] = value
+        # MODERN-36: Track loaded module for cleanup
+        _track_module_load(module_path, name)
         return value
     if name in _LEGACY_NAMES:
         try:

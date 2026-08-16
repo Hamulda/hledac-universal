@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from importlib import import_module
 from typing import Any
-from core import aclose
+from _core import aclose
 
 
 def _scan_module_public_attrs(mod_path: str) -> list[str]:

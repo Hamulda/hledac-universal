@@ -241,7 +241,6 @@ pub type UnfairLock = OsUnfairLock;
 // ~5ns lock/unlock vs ~25ns for threading.Lock on M1.
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "extension-module")]
 mod py_bindings {
     use super::*;
     use pyo3::prelude::*;
@@ -259,19 +258,16 @@ mod py_bindings {
     ///
     /// NOT reentrant: calling `with lock:` inside another `with lock:` on the
     /// same thread will DEADLOCK. Use for very short critical sections only.
-    #[cfg(feature = "extension-module")]
     #[pyclass]
     pub struct PyUnfairLock {
         inner: OsUnfairLock,
     }
 
-    #[cfg(feature = "extension-module")]
     #[pyclass]
     pub struct PyUnfairLockGuard {
         lock: Py<PyUnfairLock>,
     }
 
-    #[cfg(feature = "extension-module")]
     #[pymethods]
     impl PyUnfairLock {
         #[new]
@@ -333,7 +329,6 @@ mod py_bindings {
         }
     }
 
-    #[cfg(feature = "extension-module")]
     #[pymethods]
     impl PyUnfairLockGuard {
         /// Guard's __exit__ is a no-op — the lock's __exit__ does the unlock.
@@ -349,7 +344,6 @@ mod py_bindings {
     }
 
     /// Register the unfair_lock module classes in the Python module.
-    #[cfg(feature = "extension-module")]
     pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<PyUnfairLock>()?;
         m.add_class::<PyUnfairLockGuard>()?;
@@ -357,7 +351,6 @@ mod py_bindings {
     }
 }
 
-#[cfg(feature = "extension-module")]
 pub use py_bindings::register;
 
 #[cfg(test)]

@@ -177,7 +177,7 @@ class LocalGraphStore:
         bucket_key, _ = await self.key_manager.get_bucket_key(self.bucket_id)
         encrypted = encrypt_aes_gcm(
             bucket_key, plaintext, associated_data=node_id.encode()
-        )
+    )
         neighbors_json = encode(neighbors[:1000])
 
         # Rust LMDB path: single Python→Rust call, no asyncio.to_thread
@@ -188,7 +188,7 @@ class LocalGraphStore:
                 node_id.encode(),
                 encrypted,
                 neighbors_json,
-            )
+    )
         else:
             # P2-1 Fallback: dedicated LMDB pool (not default asyncio executor)
             def _put():
@@ -202,7 +202,7 @@ class LocalGraphStore:
                         ),
                     ],
                     overwrite=True,
-                )
+    )
 
             await _get_lmdb_pool().run_lmdb(_put)
 
@@ -226,17 +226,17 @@ class LocalGraphStore:
             path_str = str(self.db_path.parent)
             result = _get_lmdb_dht().lmdb_dht_get_node(
                 path_str, node_id.encode()
-            )
+    )
             if result is None:
                 return None
             blob, neigh_data = result
             neighbors = decode(neigh_data) if neigh_data else []
             bucket_key, _ = await self.key_manager.get_bucket_key(
                 self.bucket_id
-            )
+    )
             plaintext = decrypt_aes_gcm(
                 bucket_key, blob, associated_data=node_id.encode()
-            )
+    )
             node_data = decode(plaintext)
             arr = np.frombuffer(
                 bytes.fromhex(node_data["features"]), dtype=np.float16
@@ -285,7 +285,7 @@ class LocalGraphStore:
         blob, neighbors = result
         plaintext = decrypt_aes_gcm(
             bucket_key, blob, associated_data=node_id.encode()
-        )
+    )
         node_data = decode(plaintext)
         arr = np.frombuffer(
             bytes.fromhex(node_data["features"]), dtype=np.float16
@@ -314,7 +314,7 @@ class LocalGraphStore:
         # Fallback: asyncio.to_thread scan
         keys = await _get_lmdb_pool().run_lmdb(
             lambda: _scan_lmdb_by_prefix(self.env, b"neighbors:", limit, include_prefix=False)
-        )
+    )
         return [{"id": k.decode(errors="replace")} for k in keys]
 
     async def put_dht_node(
@@ -330,18 +330,18 @@ class LocalGraphStore:
         """
         node_data = encode(
             {"host": host, "port": port, "node_id": node_id}
-        )
+    )
         try:
             bucket_key = self.key_manager.get_key_for_bucket(self.bucket_id)
             encrypted = encrypt_aes_gcm(
                 bucket_key, node_data, associated_data=node_id.encode()
-            )
+    )
 
             if _use_rust_lmdb():
                 path_str = str(self.db_path.parent)
                 _get_lmdb_dht().lmdb_dht_put_dht_node(
                     path_str, node_id.encode(), encrypted
-                )
+    )
             else:
                 def _put():
                     with self.env.begin(write=True) as txn:
@@ -360,12 +360,12 @@ class LocalGraphStore:
                 path_str = str(self.db_path.parent)
                 blob = _get_lmdb_dht().lmdb_dht_get_dht_node(
                     path_str, node_id.encode()
-                )
+    )
                 if blob is None:
                     return None
                 plaintext = decrypt_aes_gcm(
                     bucket_key, blob, associated_data=node_id.encode()
-                )
+    )
                 return decode(plaintext)
 
             def _get():
@@ -375,7 +375,7 @@ class LocalGraphStore:
                         return None
                     plaintext = decrypt_aes_gcm(
                         bucket_key, blob, associated_data=node_id.encode()
-                    )
+    )
                     return decode(plaintext)
 
             return await _get_lmdb_pool().run_lmdb(_get)
@@ -390,13 +390,13 @@ class LocalGraphStore:
             path_str = str(self.db_path.parent)
             results = _get_lmdb_dht().lmdb_dht_get_all_dht_nodes(
                 path_str, limit
-            )
+    )
             return [{"id": k.decode()} for k, _ in results]
 
         # Fallback: asyncio.to_thread scan
         keys = await _get_lmdb_pool().run_lmdb(
             lambda: _scan_lmdb_by_prefix(self.env, b"dht_node:", limit, include_prefix=True)
-        )
+    )
         return [{"id": k.decode().replace("dht_node:", "")} for k in keys]
 
     async def count_dht_nodes(self) -> int:
@@ -412,7 +412,7 @@ class LocalGraphStore:
 
         keys = await _get_lmdb_pool().run_lmdb(
             lambda: _scan_lmdb_by_prefix(self.env, b"dht_node:", 1_000_000, include_prefix=True)
-        )
+    )
         return len(keys)
 
     async def clear_dht_nodes(self) -> None:
@@ -444,13 +444,13 @@ class LocalGraphStore:
             bucket_key = self.key_manager.get_key_for_bucket(self.bucket_id)
             encrypted = encrypt_aes_gcm(
                 bucket_key, payload, associated_data=b"routing_table_v1"
-            )
+    )
 
             if _use_rust_lmdb():
                 path_str = str(self.db_path.parent)
                 _get_lmdb_dht().lmdb_dht_save_routing_snapshot(
                     path_str, encrypted
-                )
+    )
             else:
                 def _put():
                     with self.env.begin(write=True) as txn:
@@ -472,12 +472,12 @@ class LocalGraphStore:
                 path_str = str(self.db_path.parent)
                 blob = _get_lmdb_dht().lmdb_dht_load_routing_snapshot(
                     path_str
-                )
+    )
                 if not blob:
                     return []
                 plaintext = decrypt_aes_gcm(
                     bucket_key, blob, associated_data=b"routing_table_v1"
-                )
+    )
                 data = decode(plaintext)
                 nodes = data.get("nodes", []) if isinstance(data, dict) else []
                 return nodes if isinstance(nodes, list) else []
@@ -489,7 +489,7 @@ class LocalGraphStore:
                             return None
                         return decrypt_aes_gcm(
                             bucket_key, blob, associated_data=b"routing_table_v1"
-                        )
+    )
 
                 plaintext = await _get_lmdb_pool().run_lmdb(_get)
                 if not plaintext:

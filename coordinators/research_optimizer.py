@@ -260,7 +260,7 @@ class ResearchOptimizer:
         else:
             avg_time = sum(self._execution_times) / len(self._execution_times)
             max_time = max(self._execution_times)
-        return {'config': {'strategy': self.config.strategy.value, 'cache_policy': self.config.cache_policy.value, 'max_concurrent': self.config.max_concurrent_requests}, 'cache': {'size': len(self._cache), 'active_in_flight': len(self._in_flight)}, 'performance': {'total_executions': len(self._execution_times), 'avg_duration': avg_time, 'max_duration': max_time, 'unique_queries': len(self._query_metrics)}, 'query_patterns': sorted([{'hash': m.query_hash[:8], 'count': m.count, 'avg_duration': m.avg_duration, 'success_rate': m.success_rate} for m in self._query_metrics.values()], key=itemgetter("'"), reverse=True)[:10]}
+        return {'config': {'strategy': self.config.strategy.value, 'cache_policy': self.config.cache_policy.value, 'max_concurrent': self.config.max_concurrent_requests}, 'cache': {'size': len(self._cache), 'active_in_flight': len(self._in_flight)}, 'performance': {'total_executions': len(self._execution_times), 'avg_duration': avg_time, 'max_duration': max_time, 'unique_queries': len(self._query_metrics)}, 'query_patterns': sorted([{'hash': m.query_hash[:8], 'count': m.count, 'avg_duration': m.avg_duration, 'success_rate': m.success_rate} for m in self._query_metrics.values()], key=itemgetter("count"), reverse=True)[:10]}
 
     def clear_cache(self) -> int:
         """Clear all cached results. Returns count of cleared entries."""

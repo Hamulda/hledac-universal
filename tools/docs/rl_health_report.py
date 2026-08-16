@@ -130,13 +130,13 @@ def _detect_anomalies(
             anomalies.append(
                 f"A1: epsilon stuck at {epsilon_history[-1]:.4f} after {train_steps} train steps "
                 f"(no decay)"
-            )
+    )
     # A2: Q-value explosion — any single entry above threshold
     for i, q in enumerate(mean_q_history):
         if q > Q_EXPLOSION_THRESHOLD:
             anomalies.append(
                 f"A2: Q-value explosion at step {i}: mean_q={q:.2f} > {Q_EXPLOSION_THRESHOLD}"
-            )
+    )
             break  # report first occurrence
     # A3: reward decay — slope over last 20 below threshold
     if len(reward_window) >= 20:
@@ -144,7 +144,7 @@ def _detect_anomalies(
         if slope < REWARD_TREND_SLOPE_THRESHOLD:
             anomalies.append(
                 f"A3: reward trend slope={slope:.3f}/sprint over last 20 (below {REWARD_TREND_SLOPE_THRESHOLD})"
-            )
+    )
     return anomalies
 
 
@@ -200,12 +200,12 @@ def _format_report(data: dict, reward_window_size: int, trend_window_size: int) 
         lines.append(
             f"Sprints: {seq}   Train steps: {train_steps}   "
             f"Epsilon: {eps:.3f} (↓ decaying toward floor 0.05)"
-        )
+    )
         lines.append("Q-value mean: — (no training steps recorded yet)")
         lines.append(
             f"Reward avg (last {reward_window_size}): "
             f"{reward_rolling:.2f} (trend over last {trend_window_size}: {reward_slope:+.3f}/sprint {reward_trend})"
-        )
+    )
         lines.append(f"Training frequency: {train_freq_str}")
         lines.append(f"Status: {status} {verdict_glyph}")
         lines.append("")
@@ -231,7 +231,7 @@ def _format_report(data: dict, reward_window_size: int, trend_window_size: int) 
         loss_max = max(loss_hist)
         lines.append(
             f"Loss (last/min/max): {loss_last:.4f} / {loss_min:.4f} / {loss_max:.4f}"
-        )
+    )
     lines.append(f"Status: {status} {verdict_glyph}")
     if anomalies:
         lines.append("")

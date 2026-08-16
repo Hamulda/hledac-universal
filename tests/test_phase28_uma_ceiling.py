@@ -267,7 +267,7 @@ class TestNoHardcodedCeilings:
                                 if isinstance(node.value, ast.Constant) and node.value.value == 6.25:
                                     violations.append(
                                         f"{py_file.name}:{node.lineno}: hardcoded 6.25"
-                                    )
+    )
             except SyntaxError:
                 continue
 

@@ -397,13 +397,13 @@ def _build_md_report(result: TraceResult) -> str:
             f"**Likely Cause:** terminality_computed_before_nonfeed_predispatch\n\n"
             f"| Stale Lane | Explanation |\n"
             f"|------------|-------------|\n"
-        )
+    )
         for lane in mismatch:
             parts.append(
                 f'| {lane} | appears attempted in `source_family_outcomes` '
                 f'but still listed in `missing_lanes` — terminality snapshot '
                 f'was taken before CT/PUBLIC predispatch completed |\n'
-            )
+    )
 
     return ''.join(parts)
 

@@ -117,7 +117,7 @@ class ParallelResearchScheduler:
             "_resource_allocator",
             "_seq",
             "_shutdown",
-        )
+    )
     )
 
     def __init__(
@@ -182,7 +182,7 @@ class ParallelResearchScheduler:
             metadata=metadata or {},
             is_coro=is_coro,
             timeout=timeout or (30.0 if is_coro else 10.0),
-        )
+    )
         if is_coro:
             await self._io_queue.put((task.priority, self._next_seq(), task))
         else:
@@ -214,7 +214,7 @@ class ParallelResearchScheduler:
             timeout=(
                 deadline - time.time() if deadline > time.time() else 1.0
             ),
-        )
+    )
 
     async def wait_all(self, timeout: float | None = None) -> None:
         """Wait for all submitted tasks to complete.
@@ -319,7 +319,7 @@ class ParallelResearchScheduler:
         ):
             return await self._resource_allocator.get_recommended_concurrency(
                 task_type
-            )
+    )
         if task_type == "io":
             return self._max_io
         return self._max_cpu
@@ -396,7 +396,7 @@ class ParallelResearchScheduler:
                 ))
             logger.warning(
                 "Task %s timed out after %ss", task.task_id, task.timeout
-            )
+    )
         except BaseException as e:  # noqa: BLE001 — intentional: must catch ALL exceptions including CancelledError/SystemExit
             async with self._get_lock():
                 # D9 FIX: Use bounded dict with LRU eviction
@@ -406,7 +406,7 @@ class ParallelResearchScheduler:
                 task.task_id,
                 type(e).__name__,
                 e,
-            )
+    )
         finally:
             await self._task_done(task.task_id)
 
@@ -440,7 +440,7 @@ class ParallelResearchScheduler:
                 ))
             logger.warning(
                 "CPU task %s timed out after %ss", task.task_id, task.timeout
-            )
+    )
         except BaseException as e:  # noqa: BLE001 — intentional: must catch ALL exceptions including CancelledError/SystemExit
             async with self._get_lock():
                 # D9 FIX: Use bounded dict with LRU eviction
@@ -450,7 +450,7 @@ class ParallelResearchScheduler:
                 task.task_id,
                 type(e).__name__,
                 e,
-            )
+    )
         finally:
             await self._task_done(task.task_id)
 

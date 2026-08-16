@@ -264,16 +264,16 @@ def generate_manifest(check: bool = False) -> dict:
             print(
                 f"[build_ffi_manifest] MANIFEST STALE: git rev {old_rev} -> {new_rev}",
                 file=sys.stderr,
-            )
+    )
             print(
                 f"  Run: python rust_extensions/build_ffi_manifest.py to regenerate",
                 file=sys.stderr,
-            )
+    )
             sys.exit(1)
         print(
             f"[build_ffi_manifest] MANIFEST OK: rev={new_rev}, "
             f"modules={len(lib_rs_symbols)}, symbols={len(all_lib_rs)}"
-        )
+    )
     else:
         ABI_OUT.mkdir(parents=True, exist_ok=True)
         MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
@@ -281,7 +281,7 @@ def generate_manifest(check: bool = False) -> dict:
         print(
             f"  modules={len(lib_rs_symbols)}, "
             f"symbols={len(all_lib_rs)}"
-        )
+    )
 
     return manifest
 

@@ -1,4 +1,5 @@
 """
+from _core import aclose
 Cleanup Protocol — canonical aclose implementation for core modules.
 
 This module provides the canonical shutdown_aclose() function that was previously
@@ -79,7 +80,7 @@ async def shutdown_aclose(
             "[shutdown:force] %s aclose() timed out after %.1fs",
             name,
             timeout_s,
-        )
+    )
         if hasattr(coro, "close"):
             coro.close()
         await asyncio.sleep(1.0)

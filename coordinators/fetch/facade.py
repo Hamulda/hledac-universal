@@ -37,7 +37,7 @@ from .services import (
     FetchResult,
     FetchServiceConfig,
     FetchServiceRegistry,
-)
+    )
 from _core import aclose
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,7 @@ class FetchCoordinatorFacade:
             rate_limit_rps=self._config.rate_limit_rps,
             max_retries=self._config.max_retries,
             timeout=self._config.timeout,
-        )
+    )
 
         self._services = FetchServiceRegistry(config=config)
         await self._services.initialize()
@@ -125,7 +125,7 @@ class FetchCoordinatorFacade:
         options = options or FetchOptions(
             timeout=self._config.timeout,
             max_retries=self._config.max_retries,
-        )
+    )
 
         # Determine transport
         transport_name = services.get_transport(url)
@@ -133,13 +133,13 @@ class FetchCoordinatorFacade:
         # Check circuit breaker
         allowed, reason, _retry_after = services.circuit_breaker.check_domain(
             url.split('/')[2] if '://' in url else url
-        )
+    )
         if not allowed:
             return FetchResult(
                 success=False,
                 error=f"circuit_breaker_blocked:{reason}",
                 transport=transport_name,
-            )
+    )
 
         # Check rate limiter
         domain = url.split('/')[2] if '://' in url else url
@@ -149,7 +149,7 @@ class FetchCoordinatorFacade:
                 success=False,
                 error=f"rate_limited:{reason}",
                 transport=transport_name,
-            )
+    )
 
         # Get transport and fetch
         start_time = time.monotonic()
@@ -177,7 +177,7 @@ class FetchCoordinatorFacade:
                 headers=result.headers,
                 transport=transport_name,
                 fetch_time_ms=fetch_time_ms,
-            )
+    )
 
         except Exception as e:
             fetch_time_ms = (time.monotonic() - start_time) * 1000
@@ -189,7 +189,7 @@ class FetchCoordinatorFacade:
                 error=str(e),
                 transport=transport_name,
                 fetch_time_ms=fetch_time_ms,
-            )
+    )
 
     async def _fetch_clearnet(
         self, url: str, options: FetchOptions
@@ -206,7 +206,7 @@ class FetchCoordinatorFacade:
                 content=response.content,
                 content_type=response.headers.get('content-type', ''),
                 headers=dict(response.headers),
-            )
+    )
 
     # -------------------------------------------------------------------------
     # Coordinator Interface
@@ -251,7 +251,7 @@ class FetchCoordinatorFacade:
             *[fetch_one(url) for url in urls_to_fetch],
             policy="log",
             concurrency=16,
-        )
+    )
         # Type checker limitation: cast to resolve ParallelResult overload correctly
         results: list[FetchResult] = cast(ParallelResult, _result).ok
 

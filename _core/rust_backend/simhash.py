@@ -39,7 +39,7 @@ class _RustSimhashDomain:
                 return self._ext.compute_simhash(text)
             result = self._ffi_cb.call_or_fallback(
                 FFI_MODULE_SIMHASH, rust_call, text
-            )
+    )
             if result.success:
                 return result.value  # type: ignore[return-value]
             return _python_compute_simhash(text)
@@ -52,7 +52,7 @@ class _RustSimhashDomain:
                 return self._ext.batch_compute_simhash(texts)
             result = self._ffi_cb.call_or_fallback(
                 FFI_MODULE_SIMHASH, rust_call, texts
-            )
+    )
             if result.success:
                 return result.value  # type: ignore[return-value]
             return [_python_compute_simhash(t) for t in texts]

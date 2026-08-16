@@ -105,7 +105,7 @@ class TestUniversalMemoryCoordinatorFunctionality(unittest.TestCase):
         """UniversalMemoryCoordinator should instantiate."""
         from hledac.universal.coordinators.memory_coordinator import (
             UniversalMemoryCoordinator,
-        )
+    )
 
         coord = UniversalMemoryCoordinator(memory_limit_mb=500)
         self.assertEqual(coord.memory_limit_mb, 500)

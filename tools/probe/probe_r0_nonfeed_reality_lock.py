@@ -134,11 +134,11 @@ def check_q1_canonical_owner() -> CheckResult:
             name="canonical_sprint_owner",
             passed=passed,
             detail=f"CANONICAL_SPRINT_OWNER={CANONICAL_SPRINT_OWNER!r} expected={expected!r}",
-        )
+    )
     except Exception as e:
         return CheckResult(
             question="Q1", name="canonical_sprint_owner", passed=False, detail=f"import failed: {e}"
-        )
+    )
 
 
 # ── Q2-Q3: sprint_scheduler wiring ──────────────────────────────────────────
@@ -165,7 +165,7 @@ def check_q2_q3_scheduler_wiring() -> list[CheckResult]:
             "scheduler_imports_acquisition_strategy",
             has_acq,
             f"imported={sorted(m for m in imports if 'acquisition' in m)}",
-        )
+    )
     )
 
     has_run_enabled = "run_enabled_acquisition_lanes" in calls
@@ -175,7 +175,7 @@ def check_q2_q3_scheduler_wiring() -> list[CheckResult]:
             "scheduler_calls_run_enabled_acquisition_lanes",
             has_run_enabled,
             f"present={has_run_enabled}",
-        )
+    )
     )
 
     has_bridge = any("source_finding_bridge" in m for m in imports)
@@ -185,7 +185,7 @@ def check_q2_q3_scheduler_wiring() -> list[CheckResult]:
             "scheduler_imports_source_finding_bridge",
             has_bridge,
             f"imported={sorted(m for m in imports if 'source_finding' in m)}",
-        )
+    )
     )
 
     return results
@@ -245,7 +245,7 @@ def check_q5_bridge() -> list[CheckResult]:
                 f"source_finding_bridge.{fn_name}_callable",
                 _check_callable("runtime.source_finding_bridge", fn_name),
                 f"family={family}",
-            )
+    )
         )
     return results
 
@@ -272,7 +272,7 @@ def check_q9_ledger() -> list[CheckResult]:
             STAGE_QUARANTINED,
             STAGE_REJECTED,
             STAGE_STORED,
-        )
+    )
 
         families_ok = (
             FAMILY_PUBLIC == "PUBLIC"
@@ -280,14 +280,14 @@ def check_q9_ledger() -> list[CheckResult]:
             and FAMILY_WAYBACK == "WAYBACK"
             and FAMILY_PASSIVE_DNS == "PASSIVE_DNS"
             and FAMILY_PIVOT == "PIVOT"
-        )
+    )
         results.append(
             CheckResult(
                 "Q9",
                 "ledger_family_constants",
                 families_ok,
                 "PUBLIC/CT/WAYBACK/PASSIVE_DNS/PIVOT defined",
-            )
+    )
         )
 
         stages_ok = (
@@ -297,14 +297,14 @@ def check_q9_ledger() -> list[CheckResult]:
             and STAGE_STORED == "stored"
             and STAGE_ACCEPTED == "accepted"
             and STAGE_PROVIDER_FAILED == "provider_failed"
-        )
+    )
         results.append(
             CheckResult(
                 "Q9",
                 "ledger_stage_constants",
                 stages_ok,
                 "6 stages defined",
-            )
+    )
         )
 
         results.append(
@@ -313,12 +313,12 @@ def check_q9_ledger() -> list[CheckResult]:
                 "ledger_max_size_bound",
                 MAX_LEDGER_SIZE == 500,
                 f"MAX_LEDGER_SIZE={MAX_LEDGER_SIZE}",
-            )
+    )
         )
     except Exception as e:
         results.append(
             CheckResult("Q9", "ledger_imports", False, f"import failed: {e}")
-        )
+    )
 
     return results
 

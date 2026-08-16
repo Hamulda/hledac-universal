@@ -182,7 +182,7 @@ class DuckDBQualityGate:
                     entropy=0.0,
                     normalized_hash=None,
                     duplicate=False,
-                )
+    )
 
             payload = getattr(finding, "payload_text", None)
             if payload is None or (isinstance(payload, str) and not payload.strip()):
@@ -193,7 +193,7 @@ class DuckDBQualityGate:
                     entropy=0.0,
                     normalized_hash=None,
                     duplicate=False,
-                )
+    )
 
             source_type = getattr(finding, "source_type", None)
             if source_type is None or not str(source_type).strip():
@@ -204,7 +204,7 @@ class DuckDBQualityGate:
                     entropy=0.0,
                     normalized_hash=None,
                     duplicate=False,
-                )
+    )
 
             self._state.record_accepted()
             return FindingQualityDecision(
@@ -213,7 +213,7 @@ class DuckDBQualityGate:
                 entropy=0.0,
                 normalized_hash=None,
                 duplicate=False,
-            )
+    )
 
         except Exception as e:  # noqa: BLE001 — best-effort; fail open
             self._state.record_fail_open()
@@ -274,7 +274,7 @@ class DuckDBQualityGate:
         try:
             dedup_key = getattr(finding, "dedup_key", None) or getattr(
                 finding, "fingerprint", None
-            )
+    )
             if dedup_key and getattr(finding, "_dedup_hit", False):
                 self._state.record_duplicate(persistent=True)
                 return False, "dedup_hit"
@@ -374,7 +374,7 @@ class DuckDBQualityGate:
         try:
             from hledac.universal.knowledge.duckdb_store import (
                 DuckDBShadowStore,
-            )
+    )
 
             # Get the canonical store instance to delegate
             # F360: In the refactored architecture, this will be passed in __init__

@@ -18,12 +18,11 @@ if TYPE_CHECKING:
 
 # ISSUE-04: Use canonical pool instead of inline pool
 from hledac.universal._core.duckdb_pool import (
-from _core._util import aclose
     duckdb_ro_acquire,
     duckdb_ro_pool,
     get_pool_stats,
     close_all_pools,
-)
+    )
 
 
 # =============================================================================

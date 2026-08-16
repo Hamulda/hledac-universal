@@ -61,7 +61,7 @@ class EmbeddingResult(msgspec.Struct, frozen=True, gc=False):
             raise ValueError(
                 f"EmbeddingResult dimension mismatch: dimensions={self.dimensions} "
                 f"but len(vector)={len(self.vector)}"
-            )
+    )
 
     @classmethod
     def from_text(
@@ -82,7 +82,7 @@ class EmbeddingResult(msgspec.Struct, frozen=True, gc=False):
             dimensions=dimensions,
             vector=vector,
             model=model,
-        )
+    )
 _unified_manager: UnifiedEmbeddingManager | None = None
 _manager_lock = threading.Lock()
 SUPPORTED_DIMS = (256, 512, 768)
@@ -279,7 +279,7 @@ class UnifiedEmbeddingManager:
                 [asyncio.to_thread(self._encode_chunk_sync, chunk) for chunk in chunks],
                 policy="raise",
                 ctx=ctx,
-            )
+    )
             embeddings: list[list[float]] = []
             for result in p_result.ok:
                 embeddings.extend(result)
@@ -315,14 +315,14 @@ class UnifiedEmbeddingManager:
                     f"[FLOW-04] Wrong-dimension embedding detected: "
                     f"expected dim={self._dim}, got {len(vector)}. "
                     f"Returning zero vector for text[{i}]."
-                )
+    )
                 vector = [0.0] * self._dim
             result = EmbeddingResult.from_text(
                 text=text,
                 vector=vector,
                 dimensions=self._dim,
                 model=model_name,
-            )
+    )
             results.append(result)
         return results
 

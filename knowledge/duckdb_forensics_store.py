@@ -116,7 +116,7 @@ class ForensicsMetadataStore:
                 """,
                 (file_hash, mod_time, file_size),
             ).fetchall()
-        )
+    )
 
         if not rows:
             return None
@@ -161,7 +161,7 @@ class ForensicsMetadataStore:
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (file_hash, mod_time, file_size, file_type, metadata_json, extracted_at),
-            )
+    )
         )
 
     async def delete(self, file_hash: str) -> None:
@@ -179,7 +179,7 @@ class ForensicsMetadataStore:
             lambda: conn.execute(
                 "DELETE FROM forensics_metadata WHERE file_hash = ?",
                 (file_hash,),
-            )
+    )
         )
 
     async def get_by_type(self, file_type: str, limit: int = 100) -> list[dict[str, Any]]:
@@ -209,7 +209,7 @@ class ForensicsMetadataStore:
                 """,
                 (file_type, limit),
             ).fetchall()
-        )
+    )
 
         results = []
         for row in rows:

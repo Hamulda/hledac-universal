@@ -1,4 +1,5 @@
 """
+from _core import aclose
 ToolExecLog - Tamper-evident tool execution logging
 ===================================================
 
@@ -39,7 +40,7 @@ from pathlib import Path
 from typing import Any
 import orjson
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 BOUNDED_ERROR_CLASSES = frozenset(['TimeoutError', 'ConnectionError', 'HTTPError', 'ValueError', 'TypeError', 'AttributeError', 'KeyError', 'IOError', 'RuntimeError', 'CancelledError', 'AuthenticationError', 'PermissionError', 'NotFoundError', 'ValidationError', 'RateLimitError', 'CircuitBreakerError', 'Unknown'])
 BOUNDED_STATUSES = frozenset(['success', 'error', 'cancelled'])
@@ -340,7 +341,7 @@ class ToolExecLog:
                     logger.warning(
                         f'[ToolExecLog] Write queue overflow ({self._WRITE_QUEUE_MAXSIZE} full), '
                         f'counting overflow events (last seq={event.seq_no})'
-                    )
+    )
             except RuntimeError:  # noqa: BLE001
                 pass
         self._log.append(event)

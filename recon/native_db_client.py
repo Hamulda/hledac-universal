@@ -57,14 +57,14 @@ def _probe_native_db() -> bool:
                 _RedisDumper is not None,
                 _ElasticsearchDumper is not None,
             ]
-        )
+    )
         if _native_db_available:
             logger.debug("Rust native_db dumpers available (MongoDB, Redis, Elasticsearch)")
         else:
             logger.warning(
                 "hledac_rust_extensions loaded but native_db classes missing "
                 "(compile with --features native_db)"
-            )
+    )
     else:
         logger.debug("hledac_rust_extensions not available — using Python fallbacks")
         _native_db_available = False
@@ -164,7 +164,7 @@ async def _dump_mongodb_rust(
                 port,
                 limit,
                 timeout_s,
-            )
+    )
             # Convert Rust PyClass objects to plain dicts for safe serialization
             results: list[dict[str, Any]] = []
             for entry in entries:
@@ -176,11 +176,11 @@ async def _dump_mongodb_rust(
                         "documents_json": entry.documents_json,
                         "error": entry.error,
                     }
-                )
+    )
             logger.info(
                 f"MongoDB extraction complete: {host}:{port} — "
                 f"{len(results)} entries, {limit=}"
-            )
+    )
             return results
         except Exception as e:
             logger.warning(f"MongoDB extraction failed {host}:{port}: {e}")
@@ -208,7 +208,7 @@ async def _dump_redis_rust(
                 port,
                 max_keys,
                 timeout_s,
-            )
+    )
             results: list[dict[str, Any]] = []
             for entry in entries:
                 # Convert value bytes to hex for JSON-safe transport
@@ -222,11 +222,11 @@ async def _dump_redis_rust(
                         "ttl": entry.ttl,
                         "error": entry.error,
                     }
-                )
+    )
             logger.info(
                 f"Redis extraction complete: {host}:{port} — "
                 f"{len(results)} keys"
-            )
+    )
             return results
         except Exception as e:
             logger.warning(f"Redis extraction failed {host}:{port}: {e}")
@@ -255,7 +255,7 @@ async def _dump_elasticsearch_rust(
                 port,
                 limit,
                 timeout_s,
-            )
+    )
             results: list[dict[str, Any]] = []
             for entry in entries:
                 results.append(
@@ -265,11 +265,11 @@ async def _dump_elasticsearch_rust(
                         "documents_json": entry.documents_json,
                         "error": entry.error,
                     }
-                )
+    )
             logger.info(
                 f"Elasticsearch extraction complete: {host}:{port} — "
                 f"{len(results)} indices"
-            )
+    )
             return results
         except Exception as e:
             logger.warning(f"Elasticsearch extraction failed {host}:{port}: {e}")
@@ -314,7 +314,7 @@ async def _dump_mongodb_python(
             b"\x00\x00\x00\x00admin.$cmd\x00\x00"
             b"\x00\x00\x00\xff\xff\xff\xff\x13\x00\x00\x00\x10isMa"
             b"ster\x00\x01\x00\x00\x00\x00"
-        )
+    )
         writer.write(is_master_cmd)
         await writer.drain()
 
@@ -332,7 +332,7 @@ async def _dump_mongodb_python(
         if version_match:
             result["database"] = (
                 f"version={version_match.group(1).decode('utf-8', errors='ignore')}"
-            )
+    )
     except Exception as e:
         result["error"] = str(e)
 
@@ -411,7 +411,7 @@ async def _dump_elasticsearch_python(
                             "documents_json": None,
                             "error": "python_fallback: index listed but docs not extracted (Rust native_db not compiled)",
                         }
-                    )
+    )
                 return results if results else [result]
             else:
                 result["error"] = f"HTTP {resp.status_code}"

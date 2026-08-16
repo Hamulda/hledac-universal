@@ -247,7 +247,7 @@ class ANE_MLX_Mutex(_MLXFamilyMutex):
             'ANE_MLX_Mutex.acquire_ane() is deprecated. Use acquire_embed_ane() instead.',
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         return self.acquire_embed_ane(model_size_mb)
 
     def acquire_mlx(self, model_size_mb: float = 0.0) -> None:
@@ -256,7 +256,7 @@ class ANE_MLX_Mutex(_MLXFamilyMutex):
             'ANE_MLX_Mutex.acquire_mlx() is deprecated. Use acquire_llm() instead.',
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         return self.acquire_llm(model_size_mb)
 
     def release(self, runtime: Literal['ane', 'mlx'] | Literal['llm', 'embed_ane', 'embed_coreml']) -> None:  # type: ignore[override]
@@ -266,7 +266,7 @@ class ANE_MLX_Mutex(_MLXFamilyMutex):
             'ANE_MLX_Mutex.release() is deprecated. Use release() with llm/embed_ane/embed_coreml instead.',
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         if runtime == 'ane':
             return super().release('embed_ane')
         if runtime == 'mlx':

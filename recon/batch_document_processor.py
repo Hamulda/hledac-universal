@@ -171,7 +171,7 @@ class BatchPDFProcessor:
             source_dir="/path/to/pdfs",
             output_dir="/path/to/output",
             max_concurrent=10,
-        )
+    )
         await processor.initialize()
         result = await processor.process_directory()
     """
@@ -250,7 +250,7 @@ class BatchPDFProcessor:
                         success=result_dict.get("success", True),
                         error=result_dict.get("error"),
                         processing_time_seconds=result_dict.get("processing_time_seconds", 0.0),
-                    )
+    )
                 logger.info(f"[BATCH:PDF] Loaded manifest with {len(self._manifest)} existing entries")
             except Exception as e:
                 logger.warning(f"[BATCH:PDF] Failed to load manifest: {e}")
@@ -335,13 +335,13 @@ class BatchPDFProcessor:
             f"{self._stats.failed_count} failed, "
             f"{self._stats.skipped_count} skipped, "
             f"{self._stats.total_duration_seconds:.2f}s total"
-        )
+    )
 
         return BatchProcessingResult(
             stats=self._stats,
             results=self._results,
             manifest_path=str(manifest_path),
-        )
+    )
 
     async def _process_single_pdf(self, pdf_path: Path) -> PDFProcessingResult:
         """
@@ -409,7 +409,7 @@ class BatchPDFProcessor:
                     ioc_list_path=ioc_list_path,
                     success=True,
                     processing_time_seconds=time.time() - start_time,
-                )
+    )
 
                 # Update manifest
                 self._manifest[doc_id] = result
@@ -420,7 +420,7 @@ class BatchPDFProcessor:
                         self._stats.processed_count + self._stats.failed_count + 1,
                         self._stats.total_files,
                         result,
-                    )
+    )
 
                 return result
 
@@ -433,7 +433,7 @@ class BatchPDFProcessor:
                     success=False,
                     error=str(e),
                     processing_time_seconds=time.time() - start_time,
-                )
+    )
 
                 # Update manifest
                 self._manifest[doc_id] = result
@@ -444,7 +444,7 @@ class BatchPDFProcessor:
                         self._stats.processed_count + self._stats.failed_count + 1,
                         self._stats.total_files,
                         result,
-                    )
+    )
 
                 return result
 
@@ -472,7 +472,7 @@ async def batch_process_pdfs(
             source_dir="/path/to/pdfs",
             output_dir="/path/to/output",
             max_concurrent=10,
-        )
+    )
         print(f"Processed {result.processed_count} PDFs in {result.duration_seconds:.2f}s")
     """
     processor = BatchPDFProcessor(
@@ -507,7 +507,7 @@ if __name__ == "__main__":
             output_dir=output_dir,
             max_concurrent=10,
             progress_callback=on_progress,
-        )
+    )
 
         print("\nBatch processing complete:")
         print(f"  Total files: {result.stats.total_files}")

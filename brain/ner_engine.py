@@ -100,7 +100,7 @@ class _NERPersistentWorker:
             "_response_queues",
             "_request_id",
             "_started",
-        )
+    )
     )
 
     def __init__(self, model_name: str) -> None:
@@ -150,7 +150,7 @@ class _NERPersistentWorker:
                 stderr=asyncio.subprocess.PIPE,
                 env={**os.environ, "TOKENIZERS_PARALLELISM": "false"},
                 limit=10 * 1024 * 1024,  # 10 MB stdout buffer
-            )
+    )
             self._stdout_reader = self._proc.stdout
 
             # Start stderr collector (non-blocking)
@@ -473,7 +473,7 @@ class NEREngine:
             # SPRINT F320: správný API — List[Dict] s text/label/score/start/end
             result: list[dict] = self._mlx_gliner2_extractor.extract_entities(
                 text, labels, threshold=threshold, include_confidence=True, include_spans=True
-            )
+    )
             entities = []
             for item in result:
                 if isinstance(item, dict):
@@ -504,7 +504,7 @@ class NEREngine:
             results: list[list[dict]] = self._mlx_gliner2_extractor.batch_extract_entities(
                 texts, labels, threshold=threshold, batch_size=batch_size,
                 include_confidence=True, include_spans=True
-            )
+    )
             # Normalizace na stejný formát jako _mlx_gliner2_extract
             normalized: list[list[dict]] = []
             for batch_result in results:
@@ -803,7 +803,7 @@ n        Pokud je model již načten, nic nedělá.
             # SPRINT F320: MLX batch path — paralelní Metal inference
             return await asyncio.to_thread(
                 self._mlx_gliner2_extract_batch, texts, labels, threshold, batch_size
-            )
+    )
         # Fallback: serial per-text inference
         return await asyncio.to_thread(self.predict_batch, texts, labels, threshold, batch_size)
 
@@ -1249,7 +1249,7 @@ def extract_entities_from_texts(texts: list[str], *, min_count: int=1, max_entit
             continue
         ent['confidence'] = round(min(1.0, ent['confidence'] + _math.log1p(ent['count'] - 1) * 0.05), 4)
         entities.append(ent)
-    entities.sort(key=itemgetter("'") * e['confidence'], reverse=True)
+    entities.sort(key=lambda e: e['count'] * e['confidence'], reverse=True)
     return entities[:max_entities]
 
 def extract_entities_from_findings(findings: list[dict], *, min_count: int=1, max_entities: int=100, include_types: list[str] | None=None) -> list[dict]:
@@ -1323,7 +1323,7 @@ def extract_entities_from_findings(findings: list[dict], *, min_count: int=1, ma
             continue
         ent['confidence'] = round(min(1.0, ent['confidence'] + _math.log1p(ent['count'] - 1) * 0.05), 4)
         entities.append(ent)
-    entities.sort(key=itemgetter("'") * e['confidence'], reverse=True)
+    entities.sort(key=lambda e: e['count'] * e['confidence'], reverse=True)
     return entities[:max_entities]
 
 def _extract_cooccurrence_hints_from_text(text: str) -> dict[str, list[str]]:
@@ -1438,7 +1438,7 @@ def _top_by_score(entities: list[dict], k: int=10) -> list[dict]:
     """Return top-k entities sorted by count * confidence."""
     if not entities:
         return []
-    scored = sorted(entities, key=itemgetter("'") * e.get('confidence', 0.5), reverse=True)
+    scored = sorted(entities, key=lambda e: e.get('count', 1) * e.get('confidence', 0.5), reverse=True)
     return scored[:k]
 
 def _corroborated_findings(entities: list[dict], min_sources: int=2) -> list[dict]:

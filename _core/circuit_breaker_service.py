@@ -180,7 +180,7 @@ class CircuitBreaker:
             logger.debug(
                 "[CircuitBreaker] %s recorded failure #%d: %s",
                 self._config.name, self._failure_count, error_msg
-            )
+    )
 
             if self._state == CircuitState.HALF_OPEN:
                 # Any failure in HALF_OPEN → immediately OPEN
@@ -208,7 +208,7 @@ class CircuitBreaker:
         logger.warning(
             "[CircuitBreaker] %s OPEN (failures=%d, threshold=%d)",
             self._config.name, self._failure_count, self._config.failure_threshold
-        )
+    )
 
     def _transition_to_half_open(self) -> None:
         """Transition to HALF_OPEN state."""
@@ -249,7 +249,7 @@ class CircuitBreaker:
                 raise CircuitBreakerOpen(
                     self._config.name,
                     f"half_open limit reached ({self._config.half_open_max_calls})"
-                )
+    )
             self._half_open_calls += 1
             return True
 
@@ -264,7 +264,7 @@ class CircuitBreaker:
                 last_failure_time=self._last_failure_time,
                 last_success_time=self._last_success_time,
                 open_since=self._open_since,
-            )
+    )
 
     def reset(self) -> None:
         """Reset circuit to CLOSED state (for testing or manual intervention)."""
@@ -392,7 +392,7 @@ DEFAULT_LANCEDB_CONFIG = CircuitBreakerConfig(
     success_threshold=2,
     recovery_timeout=60.0,  # 1 minute recovery
     half_open_max_calls=2,
-)
+    )
 
 # MLX model loading: expensive, lower threshold
 DEFAULT_MLX_CONFIG = CircuitBreakerConfig(
@@ -401,7 +401,7 @@ DEFAULT_MLX_CONFIG = CircuitBreakerConfig(
     success_threshold=1,
     recovery_timeout=120.0,  # 2 minutes (model load is expensive)
     half_open_max_calls=1,
-)
+    )
 
 # DuckDB operations: fast, higher threshold
 DEFAULT_DUCKDB_CONFIG = CircuitBreakerConfig(
@@ -410,7 +410,7 @@ DEFAULT_DUCKDB_CONFIG = CircuitBreakerConfig(
     success_threshold=2,
     recovery_timeout=30.0,
     half_open_max_calls=3,
-)
+    )
 
 # Transport operations: fast, high threshold
 DEFAULT_TRANSPORT_CONFIG = CircuitBreakerConfig(
@@ -419,4 +419,4 @@ DEFAULT_TRANSPORT_CONFIG = CircuitBreakerConfig(
     success_threshold=3,
     recovery_timeout=30.0,
     half_open_max_calls=5,
-)
+    )

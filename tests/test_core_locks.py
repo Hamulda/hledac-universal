@@ -29,11 +29,7 @@ from collections.abc import Generator
 
 import pytest
 
-
-
-
-
-
+from hledac.universal._core.locks import (
     AsyncLockDCLP,
     LockCategory,
     LockInfo,
@@ -46,8 +42,7 @@ import pytest
 )
 
 # Unique name generator for tests — avoids id() memory address collisions
-
-from _core import aclose_test_id = uuid.uuid4().hex[:8]
+_test_id = uuid.uuid4().hex[:8]
 
 
 class TestLockCategory:

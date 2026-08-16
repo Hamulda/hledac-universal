@@ -78,7 +78,7 @@ class BridgeConfig(msgspec.Struct, frozen=True, gc=False):
         if not (0.0 < self.confidence <= 1.0):
             raise ValueError(
                 f"confidence must be in (0.0, 1.0], got {self.confidence}"
-            )
+    )
         if not self.salt:
             raise ValueError("salt must be non-empty")
 
@@ -218,7 +218,7 @@ _PRIVATE_IP_PREFIXES: Final[tuple[str, ...]] = (
     "fe80:",
     "fc00:",
     "fd00:",
-)
+    )
 
 
 def is_private_hostname(hostname: str) -> bool:

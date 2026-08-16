@@ -253,7 +253,7 @@ async def extract_iocs_batch(
         iocs = await extract_iocs_batch(
             ["Contact admin@example.com", "Server 192.168.1.1"],
             timeout=30.0,
-        )
+    )
         # iocs[0] → [("email", "admin@example.com")]
         # iocs[1] → [("ipv4", "192.168.1.1")]
     """
@@ -268,7 +268,7 @@ async def extract_iocs_batch(
             _extract_iocs_sync,
             texts,
             timeout=timeout,
-        )
+    )
         if result is None:
             return [[] for _ in texts]
         return result

@@ -15,11 +15,7 @@ from __future__ import annotations
 import warnings
 
 # Re-export from core location
-
-
-
-
-
+from hledac.universal._core.bounded_collections import (
     BoundedList,
     SlottedBoundedList,
 )
@@ -30,8 +26,7 @@ __all__ = [
 ]
 
 # Emit deprecation warning when imported
-
-from _core import aclosewarnings.warn(
+warnings.warn(
     "utils.bounded_collections is deprecated; "
     "import from hledac.universal._core.bounded_collections instead",
     DeprecationWarning,

@@ -151,12 +151,12 @@ class ExtractStage:
                 text_len = input_batch.text_lens[i] if i < len(input_batch.text_lens) else 0
                 fetch_error = (
                     input_batch.fetch_errors[i] if i < len(input_batch.fetch_errors) else None
-                )
+    )
                 failure_stage = (
                     input_batch.failure_stages[i]
                     if i < len(input_batch.failure_stages)
                     else None
-                )
+    )
 
                 # Compute quality signal
                 signal, tier, waste_cat, structural, is_fp, skip_reason = _score_one(
@@ -164,7 +164,7 @@ class ExtractStage:
                     text_len=text_len,
                     fetch_error=fetch_error,
                     failure_stage=failure_stage,
-                )
+    )
 
                 quality_signals.append(signal)
                 usable_signals.append(tier != "waste")
@@ -199,7 +199,7 @@ class ExtractStage:
             structural_qualities=structural_qualities,
             discovery_false_positives=discovery_false_positives,
             skipped_reasons=skipped_reasons,
-        )
+    )
 
         return batch, telemetry
 
@@ -214,7 +214,7 @@ class ExtractStage:
             structural_qualities=[],
             discovery_false_positives=[],
             skipped_reasons=[],
-        )
+    )
 
 
 def _score_one(

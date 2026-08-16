@@ -411,7 +411,7 @@ class _ModuleBreaker:
                     self.module, prev, new_state,
                     self._last_failure_reason or "threshold_exceeded",
                     "python_native"
-                )
+    )
                 _metrics_increment("ffi_circuit_breaker_open_total")
             elif new_state == FFIState.HALF_OPEN:
                 _metrics_increment("ffi_circuit_breaker_half_open_total")
@@ -493,7 +493,7 @@ def register_fallback(
             FFI_MODULE_GRAPH_TRAVERSE,
             python_graph_traverse,
             lambda *args, **kwargs: {},
-        )
+    )
     """
     _fallback_registry.register(module, python_fallback, noop)
 
@@ -530,14 +530,14 @@ class UniversalCircuitBreaker:
             FFI_MODULE_GRAPH_TRAVERSE,
             python_batch_graph_traverse,
             lambda *args, **kwargs: {},
-        )
+    )
         
         # Wrap FFI calls
         result: FFICallResult = cb.call_or_fallback(
             module=FFI_MODULE_GRAPH_TRAVERSE,
             rust_fn=lambda: rust.batch_graph_traverse(db_path, values, max_hops),
             rust_args=(db_path, values, max_hops),
-        )
+    )
         
         if result.success:
             data = result.value
@@ -595,13 +595,13 @@ class UniversalCircuitBreaker:
                 if random.random() < 0.01:  # 1% sampling
                     logger.debug(
                         f"[FFI-CB] {module}: rust_simd success in {duration_ms:.2f}ms"
-                    )
+    )
                 
                 return FFICallResult(
                     value=value,
                     path="rust_simd",
                     success=True,
-                )
+    )
             except Exception as e:
                 duration_ms = (time.monotonic() - start) * 1000
                 error_msg = f"{type(e).__name__}: {e}"
@@ -610,12 +610,12 @@ class UniversalCircuitBreaker:
                 _emit_fallback_event(
                     module, FFIState.CLOSED, FFIState.HALF_OPEN,
                     f"exception: {error_msg}", "python_native", duration_ms
-                )
+    )
                 
                 logger.warning(
                     f"[FFI-CB] {module}: Rust failed after {duration_ms:.2f}ms, "
                     f"trying Python fallback: {error_msg}"
-                )
+    )
                 # Fall through to Python fallback
         
         # Circuit is OPEN or Rust failed — try Python fallback
@@ -632,7 +632,7 @@ class UniversalCircuitBreaker:
                 _emit_fallback_event(
                     module, FFIState.OPEN, FFIState.HALF_OPEN,
                     "python_fallback_success", "python_native", duration_ms
-                )
+    )
                 
                 _metrics_increment("ffi_fallback_python_total")
                 
@@ -640,14 +640,14 @@ class UniversalCircuitBreaker:
                     value=value,
                     path="python_native",
                     success=True,
-                )
+    )
             except Exception as e:
                 error_msg = f"{type(e).__name__}: {e}"
                 breaker.record_failure(f"python_exception: {error_msg}")
                 
                 logger.warning(
                     f"[FFI-CB] {module}: Python fallback also failed: {error_msg}"
-                )
+    )
                 # Fall through to no-op
         
         # Python fallback failed or not registered — use no-op
@@ -659,14 +659,14 @@ class UniversalCircuitBreaker:
                 _emit_fallback_event(
                     module, FFIState.OPEN, FFIState.OPEN,
                     "noop_activated", "noop"
-                )
+    )
                 
                 return FFICallResult(
                     value=value,
                     path="noop",
                     success=True,
                     error="Both Rust and Python failed, using no-op",
-                )
+    )
             except Exception as e:
                 # Even no-op failed — return None
                 _metrics_increment("ffi_fallback_noop_failed_total")
@@ -676,7 +676,7 @@ class UniversalCircuitBreaker:
                     path="noop",
                     success=False,
                     error=f"No-op failed: {type(e).__name__}: {e}",
-                )
+    )
         
         # No fallback registered — return None
         _metrics_increment("ffi_fallback_none_total")
@@ -686,7 +686,7 @@ class UniversalCircuitBreaker:
             path="noop",
             success=False,
             error=f"No fallback registered for module: {module}",
-        )
+    )
 
     def get_module_state(self, module: str) -> FFIState:
         """Get state of a specific module."""
@@ -714,7 +714,7 @@ class UniversalCircuitBreaker:
                 _emit_fallback_event(
                     module, FFIState.OPEN, FFIState.CLOSED,
                     "manual_reset", "rust_simd"
-                )
+    )
 
     def reset_all(self) -> None:
         """Reset all circuit breakers."""
@@ -770,7 +770,7 @@ def call_or_fallback(
             FFI_MODULE_GRAPH_TRAVERSE,
             lambda: rust_batch_graph_traverse(db_path, values, max_hops),
             db_path, values, max_hops
-        )
+    )
         
         if result.success:
             data = result.value
@@ -802,7 +802,7 @@ def _python_batch_graph_traverse(
     except ImportError:
         logger.warning(
             "[FFI-CB] graph_traverse: networkx not available, returning empty results"
-        )
+    )
         return {v: [] for v in values}
     
     result: dict[str, list[dict[str, Any]]] = {}
@@ -852,7 +852,7 @@ def _python_collapse_findings(
                 group,
                 key=attrgetter("get")("confidence", f.get("score", 0.0)),
                 reverse=True
-            )
+    )
             
             # Take top findings
             for f in sorted_group[:20]:  # Max 20 per entity

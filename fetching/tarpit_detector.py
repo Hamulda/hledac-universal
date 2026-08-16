@@ -105,13 +105,13 @@ _HIDDEN_CSS_RE: Final[re.Pattern] = re.compile(
     r'text-indent\s*:\s*-9999px|'
     r'clip\s*:\s*rect\s*\(\s*0\s*,?\s*0\s*,?\s*0\s*,?\s*0\s*\))',
     re.IGNORECASE,
-)
+    )
 
 # Hidden form fields (type=hidden)
 _HIDDEN_INPUT_RE: Final[re.Pattern] = re.compile(
     r'<input[^>]*type\s*=\s*["\']?hidden["\']?[^>]*/?>',
     re.IGNORECASE,
-)
+    )
 
 # Invisible links (links with no visible text, tiny dimensions, or off-screen)
 _INVISIBLE_LINK_RE: Final[re.Pattern] = re.compile(
@@ -122,7 +122,7 @@ _INVISIBLE_LINK_RE: Final[re.Pattern] = re.compile(
     r'\s*)'
     r'</a>',
     re.IGNORECASE | re.DOTALL,
-)
+    )
 
 # JavaScript-based traps (eval, setTimeout with large delays, document.location redirects)
 _JS_TRAP_RE: Final[re.Pattern] = re.compile(
@@ -133,14 +133,14 @@ _JS_TRAP_RE: Final[re.Pattern] = re.compile(
     r'window\.top\.location|'
     r'<meta\s+http-equiv\s*=\s*["\']?refresh["\']?\s+content\s*=\s*["\']?\d)',
     re.IGNORECASE,
-)
+    )
 
 # Common tarpit/honeypot URL path patterns
 _TARPIT_URL_RE: Final[re.Pattern] = re.compile(
     r'(?:/trap/|/honeypot/|/crawler/|/bot/|/spider/|/scraper/|'
     r'tarpit|crawl.?trap|honey.?pot)',
     re.IGNORECASE,
-)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ class _DomainTimingTracker:
                     response_times=[response_time_ms],
                     trend_score=0.0,
                     last_seen=now,
-                )
+    )
                 self._data[domain] = rec
                 if len(self._data) > self._max_entries:
                     self._data.popitem(last=False)  # LRU eviction
@@ -224,7 +224,7 @@ class _DomainTimingTracker:
                 logger.info(
                     '[TarpitDetector] NEXTGEN-02: Domain ABANDONED: %s reason=%s',
                     domain, reason,
-                )
+    )
             else:
                 # Create new abandoned record
                 rec = DomainTimingRecord(
@@ -234,14 +234,14 @@ class _DomainTimingTracker:
                     last_seen=now,
                     abandoned=True,
                     abandon_reason=reason,
-                )
+    )
                 self._data[domain] = rec
                 if len(self._data) > self._max_entries:
                     self._data.popitem(last=False)  # LRU eviction
                 logger.info(
                     '[TarpitDetector] NEXTGEN-02: Domain ABANDONED: %s reason=%s',
                     domain, reason,
-                )
+    )
 
     def is_abandoned(self, domain: str) -> tuple[bool, str]:
         """Check if a domain is abandoned and get the reason.
@@ -275,7 +275,7 @@ class _DomainTimingTracker:
                 logger.info(
                     '[TarpitDetector] NEXTGEN-02: Cleared %d abandoned domains',
                     cleared,
-                )
+    )
 
     def get_abandoned_domains(self) -> list[tuple[str, str]]:
         """Get list of all abandoned domains with reasons."""
@@ -377,7 +377,7 @@ class TarpitDetector:
                 timing_score=0.0,
                 link_labyrinth_score=0.0,
                 honeypot_score=0.0,
-            )
+    )
 
         # Resolve domain
         if not domain:
@@ -394,7 +394,7 @@ class TarpitDetector:
             timing_score * 0.3 +
             link_score * 0.4 +
             honeypot_score * 0.3
-        )
+    )
 
         # Critical single-signal override: a strong single detection method
         # can independently trigger the tarpit abort.  Without this, even a
@@ -420,7 +420,7 @@ class TarpitDetector:
             logger.info(
                 '[TarpitDetector] TARPIT DETECTED: score=%.2f reasons=%s url=%s',
                 composite, ';'.join(reasons), url,
-            )
+    )
 
         return TarpitResult(
             is_tarpit=is_tarpit,
@@ -434,7 +434,7 @@ class TarpitDetector:
             hidden_element_count=hidden_count,
             response_time_ms=response_time_ms,
             domain=domain,
-        )
+    )
 
     # ------------------------------------------------------------------
     # Method 1: Timing Tarpit Detection
@@ -765,7 +765,7 @@ def sync_rust_abandoned() -> None:
             logger.debug(
                 '[NEXTGEN-02] Synced %d abandoned domains to Rust tracker',
                 len(python_abandoned),
-            )
+    )
     except ImportError:
         # Rust anti_analysis not available
         pass

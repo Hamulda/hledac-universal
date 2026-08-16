@@ -10,11 +10,7 @@ until full migration is complete.
 """
 
 # Re-export from acquisition_strategy.py for now (until full extraction)
-
-
-
-
-
+from hledac.universal.runtime.acquisition_strategy import (
     NonfeedPlanDebug,
     NonfeedSeedContext,
     NonfeedMissionSnapshot,
@@ -28,8 +24,7 @@ __all__ = [
     'NonfeedPlanDebug',
     'NonfeedSeedContext',
     'NonfeedMissionSnapshot',
-
-from _core import aclose    'NonfeedMissionExitReason',
+    'NonfeedMissionExitReason',
     'NonfeedMissionController',
     'MissionIntent',
     'MissionTargetKind',

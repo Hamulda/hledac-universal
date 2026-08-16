@@ -185,7 +185,7 @@ def render_graph_html(
         type_dots = "".join(
             f'<div class="comm-type-dot" style="background:{_IOC_COLORS.get(t, _DEFAULT_COLOR)}" title="{_esc_attr(t)}"></div>'
             for t in ioc_type_list
-        )
+    )
         comm_items.append(
             f'<div class="community-item" data-comm-id="{cid}">'
             f'<div class="comm-header">'
@@ -195,7 +195,7 @@ def render_graph_html(
             f'<div class="comm-types">{type_dots}</div>'
             f'<div class="comm-cohesion">Cohesion: {cohesion:.2f}</div>'
             f'</div>'
-        )
+    )
     comm_items_html = "\n".join(comm_items)
 
     # Legend items
@@ -206,7 +206,7 @@ def render_graph_html(
             f'<div class="legend-dot" style="background:{_IOC_COLORS.get(t, _DEFAULT_COLOR)}"></div>'
             f'<span>{_esc_attr(t)}</span>'
             f'</div>'
-        )
+    )
     legend_html = "\n".join(legend_items)
 
     # Node list items (first 200)
@@ -222,12 +222,12 @@ def render_graph_html(
             f'<span class="node-type-badge" '
             f'style="background:{color}22;color:{color}">{itype}</span>'
             f'</div>'
-        )
+    )
     more_count = len(nodes) - 200
     if more_count > 0:
         node_items.append(
             f'<div class="node-list-item" style="color:#8b949e">... and {more_count} more</div>'
-        )
+    )
     node_list_html = "\n".join(node_items)
 
     # Pre-compute stats display values
@@ -732,12 +732,12 @@ class GraphDashboardBuilder:
                 graph_topology,
                 title=title,
                 sprint_id=sprint_id,
-            )
+    )
             target.write_text(html, encoding="utf-8")
             self._log.info(
                 f"[META]-010 Dashboard written: {target} "
                 f"({len(html) / 1024:.1f} KiB)"
-            )
+    )
             return target
         except Exception as e:
             self._log.warning(f"[META]-010 Dashboard write failed: {e}")

@@ -243,7 +243,7 @@ def _build_indicator_from_ioc(finding: dict, ioc: dict) -> dict[str, Any] | None
             labels=labels,
             valid_from=_safe_str(finding.get("ts", "")) or "2020-01-01T00:00:00Z",
             description=f"hledac_ioc:{ioc_value}",
-        )
+    )
         return ind
     except Exception:
         return None

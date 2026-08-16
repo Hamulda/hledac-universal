@@ -178,7 +178,7 @@ class FetchStage:
                     discovery_reason=discovery_reason,
                     vector_store=ctx.vector_store,
                     graph=ctx.graph,
-                )
+    )
                 return result
             except asyncio.CancelledError:
                 raise

@@ -160,7 +160,7 @@ class TestCostModel:
             {"url": "http://test.com"},
             {"active_tasks": 1, "rss_gb": 3.0, "avg_latency": 0.2},
             (1.0, 50.0, 0.5, 1.0),
-        )
+    )
 
         assert model.baseline_ready is True
 
@@ -256,7 +256,7 @@ class TestSearch:
             ram_budget_mb=1000.0,
             net_budget_mb=100.0,
             beam_width=5,
-        )
+    )
 
         assert plan is not None
 
@@ -298,7 +298,7 @@ class TestHTNPlanner:
             decomposer=mock_components["decomposer"],
             scheduler=mock_components["scheduler"],
             evidence_log=mock_components["evidence_log"],
-        )
+    )
 
         assert planner.governor is not None
         assert not planner._task_types
@@ -313,7 +313,7 @@ class TestHTNPlanner:
             decomposer=mock_components["decomposer"],
             scheduler=mock_components["scheduler"],
             evidence_log=mock_components["evidence_log"],
-        )
+    )
 
         def dummy_expander(task, context):
             return []

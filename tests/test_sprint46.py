@@ -134,7 +134,7 @@ class TestSprint46:
             proc = AsyncMock()
             proc.communicate = AsyncMock(
                 return_value=(b"[+] https://twitter.com/testuser\n[+] https://github.com/testuser\n", b"")
-            )
+    )
             mock_exec.return_value = proc
             findings = await runner.run_sherlock("testuser")
             assert len(findings) == 2

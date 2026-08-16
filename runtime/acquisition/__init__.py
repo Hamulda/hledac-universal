@@ -127,11 +127,7 @@ from hledac.universal.runtime.acquisition.report_builder import (
 )
 
 # ── Acquisition lanes (shim during transition) ───────────────────────────────
-
-
-
-
-
+from hledac.universal.runtime.acquisition.acquisition_lanes import (
     run_enabled_acquisition_lanes,
     run_enabled_acquisition_lanes_streaming,
 )
@@ -141,8 +137,7 @@ __all__ = [
     "lookup_threat_entity",
     # domain_expansion
     "DOMAIN_EXPANSIONS",
-
-from _core import aclose    "_expand_keyword_query",
+    "_expand_keyword_query",
     # profile
     "AcquisitionProfile",
     "normalize_acquisition_profile",

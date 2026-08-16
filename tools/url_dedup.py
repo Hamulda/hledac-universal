@@ -369,7 +369,7 @@ class MmapBloomFilterAdapter:
         if not _RUST_MMAP_BLOOM_AVAILABLE:
             raise ImportError(
                 "MmapBloomFilter unavailable — Rust extension not built. Run `maturin develop` in rust_extensions/."
-            )
+    )
         # Enforce URL_ESTIMATE upper bound (same policy as in-memory filter).
         capacity = min(capacity, MAX_URL_ESTIMATE)
         self._path = path
@@ -385,7 +385,7 @@ class MmapBloomFilterAdapter:
             capacity=capacity,
             fp_rate=fp_rate,
             force_new=force_new,
-        )
+    )
         self._lock = threading.Lock()
 
     @property
@@ -613,7 +613,7 @@ class CrossProcessBloomFilter:
         if not _RUST_MMAP_BLOOM_AVAILABLE:
             raise ImportError(
                 "MmapBloomFilter unavailable — Rust extension not built. Run `maturin develop` in rust_extensions/."
-            )
+    )
         self._path = path
         self._capacity = min(capacity, MAX_URL_ESTIMATE)
         self._fp_rate = fp_rate
@@ -634,7 +634,7 @@ class CrossProcessBloomFilter:
                     capacity=self._capacity,
                     fp_rate=fp_rate,
                     force_new=False,
-                )
+    )
                 self._slots.append(adapter)
             except Exception:
                 # Fail-soft: if any slot fails, we still have the others.
@@ -649,7 +649,7 @@ class CrossProcessBloomFilter:
                 target=self._prewarm_secondary,
                 daemon=True,
                 name="bloom-prewarm",
-            )
+    )
             self._bg_thread.start()
 
     def _prewarm_secondary(self) -> None:
@@ -705,7 +705,7 @@ class CrossProcessBloomFilter:
                     args=(bg_slot,),
                     daemon=True,
                     name="bloom-prewarm",
-                )
+    )
                 t.start()
 
         return results
@@ -887,7 +887,7 @@ def create_rotating_bloom_filter(
                         fp_rate=false_positive_rate,
                         force_new=False,  # P3-3: persist across sprints (cross-restart dedup)
                     ),
-                )
+    )
             except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fall through to in-memory Rust BloomFilter
 
@@ -896,13 +896,13 @@ def create_rotating_bloom_filter(
         return cast(
             DeduplicationStrategy,
             RustRotatingBloomFilter(est_elements, false_positive_rate),
-        )
+    )
 
     if not _PROBABLES_AVAILABLE:
         raise ImportError(
             "No BloomFilter implementation available — install hledac-rust-extensions "
             "(maturin develop) or probables: pip install probables"
-        )
+    )
     if _RotatingBloomFilter is None:
         raise ImportError("Neither 'probables' nor 'pyprobables' is installed")
     return cast(

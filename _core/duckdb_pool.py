@@ -72,7 +72,7 @@ _M1_DUCKDB_SETTINGS: tuple[tuple[str, Any], ...] = (
     ("threads", 2),
     ("preserve_insertion_order", False),
     ("busy_timeout", "30s"),
-)
+    )
 
 
 @functools.cache
@@ -102,7 +102,7 @@ def _get_ro_pool_size() -> int:
         from hledac.universal._core.resource_governor import (
             ConcurrencyPreset,
             evaluate_uma_state,
-        )
+    )
         import psutil
 
         mem = psutil.virtual_memory()

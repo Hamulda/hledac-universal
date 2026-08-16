@@ -18,11 +18,7 @@ from hledac.universal.runtime.acquisition.nonfeed_outcomes import (
     AcquisitionStrategySnapshot,
     MandatoryLaneTerminality,
 )
-
-
-
-
-
+from hledac.universal.runtime.acquisition.plan_builder import (
     ACQUISITION_REPORT_SCHEMA_VERSION,
 )
 
@@ -30,8 +26,7 @@ from hledac.universal.runtime.acquisition.nonfeed_outcomes import (
 def build_acquisition_report(
     query: str = "",
     plan: AcquisitionStrategySnapshot | None = None,
-
-from _core import aclose    terminality: dict | None = None,
+    terminality: dict | None = None,
     nonfeed_plan_debug: Any = None,
     source_family_outcomes: list[dict] | None = None,
     return_guard: dict | None = None,

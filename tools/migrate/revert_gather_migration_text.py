@@ -14,13 +14,13 @@ REVERT_FUNCS = r"safe_gather(?:_dropin|_fire_and_forget|_strict)?"
 PATTERN = re.compile(
     rf"\b({REVERT_FUNCS})\s*\(",
     re.MULTILINE,
-)
+    )
 
-# Match: `from utils.async_helpers import ...`
+# Match: `from utils.asyncx import ...`
 IMPORT_PATTERN = re.compile(
-    r"^from\s+utils\.async_helpers\s+import\s+[^\n]+$",
+    r"^from\s+utils\.asyncx\s+import\s+[^\n]+$",
     re.MULTILINE,
-)
+    )
 
 
 def find_balanced_paren(text: str, start: int) -> int | None:
@@ -75,12 +75,12 @@ def revert_text(source: str) -> tuple[str, int]:
             r",\s*label\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^,)]+)\s*",
             "",
             args_text,
-        )
+    )
         args_text = re.sub(
             r"^\s*label\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^,)]+)\s*,\s*",
             "",
             args_text,
-        )
+    )
         args_text = args_text.strip().rstrip(",")
 
         # Build replacement
@@ -96,14 +96,14 @@ def revert_text(source: str) -> tuple[str, int]:
     def fix_import(m):
         text = m.group(0)
         # Extract names
-        body = re.sub(r"^from\s+utils\.async_helpers\s+import\s+", "", text).strip()
+        body = re.sub(r"^from\s+utils\.asyncx\s+import\s+", "", text).strip()
         if body.startswith("(") and body.endswith(")"):
             body = body[1:-1]
         names = [n.strip() for n in body.split(",") if n.strip()]
         kept = [n for n in names if not re.fullmatch(REVERT_FUNCS, n)]
         if not kept:
             return ""
-        return f"from utils.async_helpers import {', '.join(kept)}"
+        return f"from utils.asyncx import {', '.join(kept)}"
 
     source = IMPORT_PATTERN.sub(fix_import, source)
 

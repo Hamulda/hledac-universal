@@ -605,7 +605,7 @@ def create_input_detector(config: IntelligenceConfig | None=None) -> Intelligent
     Example:
         detector = create_input_detector(
             config=IntelligenceConfig(max_file_size=500*1024*1024)
-        )
+    )
         analysis = await detector.detect("/path/to/file.bin")
     """
     return IntelligentInputDetector(config)

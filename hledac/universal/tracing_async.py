@@ -172,7 +172,7 @@ class AsyncSpan:
             f"AsyncSpan(name={self._name!r}, "
             f"trace_id={self._trace_id[:8]!r}..., "
             f"is_active={self._is_active})"
-        )
+    )
 
 
 def traced_async(
@@ -287,7 +287,7 @@ def span_context(name: str, **attributes):
                 start_span as _sync_start,
                 span_enter as _sync_enter,
                 span_exit as _sync_exit,
-            )
+    )
             trace_id, span_id = _sync_start("", name)
             if trace_id:
                 _sync_enter(trace_id, span_id)

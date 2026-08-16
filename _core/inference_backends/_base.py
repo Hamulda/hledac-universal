@@ -41,7 +41,7 @@ else:
             InferenceRequest,
             InferenceResponse,
             Token,
-        )
+    )
     except ImportError:  # pragma: no cover
         InferenceBackend = Any  # type: ignore[assignment,misc]
         InferenceError = Any  # type: ignore[assignment,misc]
@@ -114,7 +114,7 @@ class BaseInferenceBackend(ABC):
             f"{backend.name.lower()} {operation} failed: {exc}",
             backend=backend,
             cause=cause or exc,
-        )
+    )
 
     # ─── generate() — Template Method ─────────────────────────────────────────
 
@@ -133,7 +133,7 @@ class BaseInferenceBackend(ABC):
                 tokens_generated=result.tokens_generated,
                 latency_ms=latency_ms,
                 backend=self._backend or InferenceBackend.MLXCEL,
-            )
+    )
         except InferenceError:
             raise
         except Exception as exc:

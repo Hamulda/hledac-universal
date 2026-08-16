@@ -178,7 +178,7 @@ def _python_get_total_memory() -> int:
                 ["sysctl", "-n", "hw.memsize"],
                 capture_output=True,
                 text=True,
-            )
+    )
             if result.returncode == 0:
                 return int(result.stdout.strip())
         elif sys.platform == "win32":

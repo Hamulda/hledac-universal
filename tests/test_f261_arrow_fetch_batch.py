@@ -58,7 +58,7 @@ class TestArrowFetchBatchSignature:
         src = DUCKDB_STORE.read_text(encoding="utf-8")
         assert "def arrow_fetch_batch(" in src, (
             "arrow_fetch_batch() must be defined on DuckDBShadowStore"
-        )
+    )
 
     def test_signature_has_required_params(self):
         tree = _parse_module()
@@ -95,7 +95,7 @@ class TestArrowFetchBatchSignature:
                     if isinstance(last_default, ast.Constant):
                         assert last_default.value == 2048, (
                             f"batch_size default must be 2048 for M1 8GB UMA, got {last_default.value}"
-                        )
+    )
                 return
         pytest.fail("arrow_fetch_batch not found in module")
 
@@ -114,7 +114,7 @@ class TestArrowFetchBatchIteration:
         # Both paths should yield list-like values
         assert "yield list(rows)" in src or "yield [tuple" in src, (
             "arrow_fetch_batch must yield list[tuple] chunks"
-        )
+    )
 
     def test_returns_generator_when_called(self):
         """The function must be a generator (contains `yield`)."""
@@ -141,7 +141,7 @@ class TestArrowFetchBatchFailSoft:
         # The if-block must `return` (not raise) — search for `if conn is None:`
         m = re.search(
             r"if conn is None:\s*\n\s*return", src
-        )
+    )
         assert m is not None, "conn=None must early-return, not raise"
 
     def test_execute_exception_swallowed(self):
@@ -150,13 +150,13 @@ class TestArrowFetchBatchFailSoft:
         # Find: try: result = conn.execute(...)
         m = re.search(
             r"try:\s*\n\s*result = conn\.execute\(", src
-        )
+    )
         assert m is not None, "conn.execute() must be wrapped in try/except"
         # Match: the except block should `return` (empty generator)
         # Look for `except Exception:\s*\n\s*return`
         m2 = re.search(
             r"except Exception:\s*\n\s*return", src
-        )
+    )
         assert m2 is not None, "execute failure must early-return (empty gen)"
 
     def test_arrow_path_falls_back_to_fetchmany(self):
@@ -228,7 +228,7 @@ class TestCallsitesMigrated:
             f"Found {len(violations)} unbounded .fetchall() callsites "
             f"outside arrow_fetch_batch + healthcheck + textual mentions:\n"
             + "\n".join(f"  L{l}: {t}" for l, t in violations[:10])  # noqa: E741
-        )
+    )
 
     def test_at_least_25_arrow_fetch_batch_callsites(self):
         """Audit found 27 multi-line + 2 one-liner = 29 production callsites."""
@@ -241,7 +241,7 @@ class TestCallsitesMigrated:
         assert call_count >= 25, (
             f"Expected ≥25 production callsites, got {call_count}. "
             f"Refactor incomplete."
-        )
+    )
 
 
 # ── Test 5: existing async path is preserved ──────────────────────────────────
@@ -273,7 +273,7 @@ class TestNoNewHeavyImports:
         # No `import pyarrow` at top level
         assert "import pyarrow" not in top_section, (
             "pyarrow must remain lazy (not at module top level — M1 8GB UMA constraint)"
-        )
+    )
 
 
 # ── Test 7: bounded memory contract ──────────────────────────────────────────
@@ -288,11 +288,11 @@ class TestBoundedMemoryContract:
             r'def arrow_fetch_batch\([^)]*\)[^:]*:\s*\n\s*"""(.*?)"""',
             src,
             re.DOTALL,
-        )
+    )
         assert m is not None, "arrow_fetch_batch must have a docstring"
         doc = m.group(1)
         assert "2048" in doc, "Docstring must document batch_size=2048"
         assert "M1" in doc or "UMA" in doc, "Docstring must explain M1 8GB rationale"
         assert "fail-soft" in doc.lower() or "fail soft" in doc.lower(), (
             "Docstring must mention fail-soft behavior"
-        )
+    )

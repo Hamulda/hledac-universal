@@ -59,7 +59,7 @@ from hledac.universal._core.capabilities import (
     STEALTH_MANAGER,
     ZERO_ATTR,
     ZSTD,
-)
+    )
 from hledac.universal._core.constants import NETWORK
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.runtime.logging_setup import get_logger
@@ -73,7 +73,7 @@ from hledac.universal.utils.asyncx import (
     parallel,
     safe_create_task,
     safe_wait_for,
-)
+    )
 from hledac.universal.utils.batch_dns import get_batch_dns_resolver
 from hledac.universal.utils.flow_trace import (
     is_enabled,
@@ -81,7 +81,7 @@ from hledac.universal.utils.flow_trace import (
     trace_dedup_decision,
     trace_fetch_end,
     trace_fetch_start,
-)
+    )
 from hledac.universal.utils.locks import LazyAsyncioLock  # ISSUE-011: asyncio-safe lock
 
 from ..tools.url_dedup import DeduplicationStrategy, dedupe_url_list
@@ -561,7 +561,7 @@ class SpeculativePrefetcher:
             from hledac.universal.knowledge.link_prediction import (
                 StreamingLinkPredictor,
                 LinkPredictorConfig,
-            )
+    )
             
             # Get DuckDB path from coordinator context
             db_path = self._get_duckdb_path()
@@ -571,7 +571,7 @@ class SpeculativePrefetcher:
                     flush_interval_ms=50,
                     max_pending_nodes=100,
                     generate_url_candidates=True,
-                )
+    )
                 self._link_predictor = StreamingLinkPredictor(db_path, config)
                 self._available = True
                 logger.debug("[BREAKTHROUGH-2] SpeculativePrefetcher initialized")
@@ -719,7 +719,7 @@ class SpeculativePrefetcher:
             dedup_skipped=dedup_skipped,
             dns_prefetched=dns_prefetched,
             latency_ms=elapsed_ms,
-        )
+    )
     
     async def prefetch_dns_batch(self, urls: list[str]) -> dict[str, list[str]]:
         """
@@ -1088,7 +1088,7 @@ class FetchCoordinator(UniversalCoordinator):
             self._orchestrator._meta_reasoning_coordinator._igd_policy.report_iocs(
                 branch_id=branch.node_id,
                 ioc_values=[ioc.estimated_value for ioc in findings],
-            )
+    )
 
         Note:
             This is a fire-and-forget telemetry method. Errors are logged
@@ -1146,7 +1146,7 @@ class FetchCoordinator(UniversalCoordinator):
                     node_id=node_id,
                     neighbors=neighbors,
                     ioc_value=entity_value if ioc_type in ('domain', 'url', 'hostname') else None,
-                )
+    )
         except Exception as e:
             logger.debug('[BREAKTHROUGH-2] SpeculativePrefetcher report failed: %s', e)
 
@@ -1922,13 +1922,13 @@ class FetchCoordinator(UniversalCoordinator):
                 fetch_via_curl_cffi_with_caps_check,
                 is_curl_cffi_capable,
                 next_ja3_profile,
-            )
+    )
             _capable, _cap_reason = is_curl_cffi_capable()
             if not _capable:
                 logger.warning(
                     "[ISSUE-0.2] curl_cffi not CAPS-capable (%s) — FAIL-FAST ( refusing httpx fallback)",
                     _cap_reason,
-                )
+    )
                 return {'url': url, 'content': b'', 'error': f'curl_cffi_unavailable: {_cap_reason}'}
         except ImportError:
             logger.warning("[ISSUE-0.2] fetching.curl_cffi_fetch unavailable — FAIL-FAST")
@@ -1939,7 +1939,7 @@ class FetchCoordinator(UniversalCoordinator):
                 _altsvc_extract_host,
                 _altsvc_http_version_for,
                 _altsvc_record_from_result,
-            )
+    )
             # PERFORMANCE FIX: Only probe Alt-Svc when cache is cold.
             # Previously, probe_altsvc_speculative was called unconditionally per-request,
             # causing redundant H3 probes even when cache was warm. Now we check
@@ -2022,7 +2022,7 @@ class FetchCoordinator(UniversalCoordinator):
                 body,
                 headers,
                 timeout_s,
-            )
+    )
 
             if quic_response is None:
                 return None
@@ -2106,23 +2106,23 @@ class FetchCoordinator(UniversalCoordinator):
                 self._speculative_prefetcher = SpeculativePrefetcher(
                     coordinator=self,
                     max_prefetch=100,
-                )
+    )
                 if self._speculative_prefetcher.is_available:
                     logger.info(
                         '[BREAKTHROUGH-2] Speculative prefetch enabled '
                         '(target: 70%+ coverage, +35% IGD)',
-                    )
+    )
                 else:
                     logger.debug(
                         '[BREAKTHROUGH-2] Speculative prefetch unavailable '
                         '(streaming link predictor not available)',
-                    )
+    )
                     self._speculative_prefetcher = None
             except Exception as e:
                 logger.debug(
                     '[BREAKTHROUGH-2] Speculative prefetch init failed '
                     '(fail-soft): %s', e,
-                )
+    )
                 self._speculative_prefetcher = None
         
         # UNIFIED-003: Subscribe to EntropyFetchBridge for high-uncertainty alerts.
@@ -2135,7 +2135,7 @@ class FetchCoordinator(UniversalCoordinator):
                 from hledac.universal.brain.uncertainty_quant import (
                     get_entropy_bridge,
                     SeverityPriorityQueue,
-                )
+    )
                 bridge = get_entropy_bridge()
                 if bridge is not None:
                     # ISSUE-022-03 FIX: Use SeverityPriorityQueue instead of asyncio.Queue
@@ -2144,39 +2144,39 @@ class FetchCoordinator(UniversalCoordinator):
                     self._entropy_bridge_queue = SeverityPriorityQueue(maxsize=64)
                     subscribed = await bridge.subscribe(
                         'fetch_coordinator', self._entropy_bridge_queue,
-                    )
+    )
                     if subscribed:
                         logger.info(
                             '[UNIFIED-003] Subscribed to EntropyFetchBridge '
                             'for entropy alerts (severity-priority queue enabled)',
-                        )
+    )
                         # Set _running flag before starting background tasks
                         self._running = True
                         # Start background task to consume alerts
                         self._entropy_bridge_task = safe_create_task(
                             self._entropy_alert_consumer_loop(),
                             name='fetch_coordinator.entropy_consumer',
-                        )
+    )
                         # Start micro-sprint worker task
                         self._micro_sprint_worker_task = safe_create_task(
                             self._micro_sprint_worker_loop(),
                             name='fetch_coordinator.micro_sprint_worker',
-                        )
+    )
                     else:
                         logger.warning(
                             '[UNIFIED-003] Failed to subscribe to '
                             'EntropyFetchBridge',
-                        )
+    )
             except Exception as e:
                 logger.debug(
                     '[UNIFIED-003] EntropyFetchBridge subscription failed '
                     '(fail-soft): %s', e,
-                )
+    )
         else:
             logger.info(
                 '[UNIFIED-003] Entropy feedback loop disabled '
                 '(HLEDAC_ENABLE_ENTROPY_FEEDBACK=0)',
-            )
+    )
         # SILICON-07: Initialize SwarmDAG for dynamic lane rebalancing.
         _swarm_dag_enabled = FeatureFlags.get(FeatureFlag.SWARM_DAG)
         if _swarm_dag_enabled:
@@ -2187,12 +2187,12 @@ class FetchCoordinator(UniversalCoordinator):
                     '[SILICON-07] SwarmDAG initialized: type=%s, running=%s',
                     type(self._swarm_dag).__name__,
                     self._swarm_dag.is_running,
-                )
+    )
                 # Start rebalancer loop in background (fires every 10s)
                 self._swarm_dag_rebalance_task = safe_create_task(
                     self._swarm_dag_rebalance_loop(),
                     name='fetch_coordinator.swarm_dag_rebalancer',
-                )
+    )
             except Exception as e:
                 logger.warning('[SILICON-07] SwarmDAG init failed (fail-soft): %s', e)
                 self._swarm_dag = None
@@ -2277,7 +2277,7 @@ class FetchCoordinator(UniversalCoordinator):
                         '[META-002] DeltaSyncEngine cache loaded: %d entities '
                         '(sprint=%s, prior=%s)',
                         _loaded, _sid, _prior,
-                    )
+    )
                     # [META-002: Inject DuckDB store into SprintDeltaIndex for CrossSprintGate]
                     if self._cross_sprint_gate is not None and self._cross_sprint_gate._delta_index is not None:
                         self._cross_sprint_gate._delta_index._duckdb_store = _duckdb
@@ -2303,7 +2303,7 @@ class FetchCoordinator(UniversalCoordinator):
                     logger.info(
                         '[NEXTGEN-04] MmapDeltaIndex loaded: %d entities from %d sprints',
                         _registered, len(_prior),
-                    )
+    )
                 # [NEXTGEN-04] CRITICAL: Inject MmapDeltaIndex into CrossSprintGate
                 # This enables tier-1 zero-latency lookups in should_skip_batch()
                 if self._cross_sprint_gate is not None:
@@ -2319,7 +2319,7 @@ class FetchCoordinator(UniversalCoordinator):
             from ..knowledge.link_prediction import (
                 StreamingLinkPredictor,
                 LinkPredictorConfig,
-            )
+    )
             # [BREAKTHROUGH-2]: Get DuckDB path from orchestrator or ctx
             db_path: str | None = None
             if self._orchestrator:
@@ -2338,11 +2338,11 @@ class FetchCoordinator(UniversalCoordinator):
                     flush_interval_ms=50,
                     max_pending_nodes=100,
                     generate_url_candidates=True,
-                )
+    )
                 self._speculative_prefetcher = SpeculativePrefetcher(
                     self,
                     max_prefetch=100,
-                )
+    )
                 # [BREAKTHROUGH-2]: Store DuckDB path in context for link predictor
                 self._ctx['duckdb_path'] = db_path
                 logger.info('[BREAKTHROUGH-2] SpeculativePrefetcher initialized with db_path=%s', db_path)
@@ -2516,7 +2516,7 @@ class FetchCoordinator(UniversalCoordinator):
             if _RUST_DNS is not None and _RUST_DNS_ENABLED:
                 dns_coro = safe_create_task(
                     asyncio.to_thread(_rust_dns_prefetch, list(raw_hosts))
-                )
+    )
             else:
                 dns_coro = safe_create_task(resolver.resolve_many(list(raw_hosts), timeout=5.0))
 
@@ -2660,7 +2660,7 @@ class FetchCoordinator(UniversalCoordinator):
                     policy="collect",
                     concurrency=10,
                     ctx="robots_prefetch",
-                )
+    )
                 for _item in domain_docs:
                     if isinstance(_item, Exception):
                         continue
@@ -2673,7 +2673,7 @@ class FetchCoordinator(UniversalCoordinator):
             policy="collect",
             concurrency=20,
             ctx="robots_check",
-        )
+    )
         filtered: list[str] = []
         total_delay: float = 0.0
         for _url, _result in zip(urls_to_fetch, robots_results.ok, strict=True):
@@ -2749,7 +2749,7 @@ class FetchCoordinator(UniversalCoordinator):
                 concurrency=min(len(tor_i2p_urls), 2),
                 policy="log",
                 ctx="fetch_coordinator.batch.tor_i2p",
-            )
+    )
             for _url, _res in zip(tor_i2p_urls, tor_i2p_results, strict=False):
                 url_to_result[_url] = self._strip_result_content(_res)
 
@@ -2761,7 +2761,7 @@ class FetchCoordinator(UniversalCoordinator):
                 concurrency=len(urls_to_fetch),
                 policy="log",
                 ctx="fetch_coordinator.batch",
-            )
+    )
             for _url, _res in zip(clearnet_urls, clearnet_results, strict=False):
                 url_to_result[_url] = self._strip_result_content(_res)
 
@@ -2926,7 +2926,7 @@ class FetchCoordinator(UniversalCoordinator):
             batch_elapsed_ms=round(batch_elapsed * 1000, 2),
             prefetch_count=prefetch_result.prefetch_count,
             prefetch_dns=prefetch_result.dns_prefetched,
-        )
+    )
 
     async def _check_dns_and_circuit(self, url: str, domain: str) -> tuple[bool, dict[str, Any], bool, str, float]:
         """Parallel DNS + circuit-breaker check (used in validation + retry loop).
@@ -2961,7 +2961,7 @@ class FetchCoordinator(UniversalCoordinator):
                     'DNS/circuit check failed, fail-closed: %s (%s)',
                     type(exc).__name__,
                     exc,
-                )
+    )
             # P0-3 SSRF fix: fail-CLOSED - block on DNS/validation errors
             dns_safe, dns_meta = (False, {'blocked_reason': 'dns_circuit_check_failed'})
             # Circuit breaker is permissive on failure (cb_allowed=True); circuit is secondary to DNS validation
@@ -3068,7 +3068,7 @@ class FetchCoordinator(UniversalCoordinator):
                 _pre_acquired_i2p_session=_dc.pre_acquired_i2p_session,
                 proxy=_dc.proxy,
                 _effective_max_bytes=_effective_max_bytes,  # E4 FIX: pass effective max_bytes
-            )
+    )
 
             # Phase 5: Post-processing
             return self._fetch_url_postprocess(result, url, _pf.host_name)
@@ -3135,7 +3135,7 @@ class FetchCoordinator(UniversalCoordinator):
             privacy_lane=_privacy_lane,
             quinn_viable=_quinn_viable,
             aimd_acquired=_aimd_acquired,
-        )
+    )
 
     async def _check_governor_early_exit(self, url: str) -> str | None:
         """F360-R: Governor io_only and can_afford checks. Returns skip reason or None."""
@@ -3183,7 +3183,7 @@ class FetchCoordinator(UniversalCoordinator):
         # DNS + circuit breaker check
         dns_safe, dns_meta, canonical_allowed, canonical_reason, canonical_retry_after = (
             await self._check_dns_and_circuit(url, host_name)
-        )
+    )
 
         # Handle DNS blocked case
         if not dns_safe:
@@ -3203,7 +3203,7 @@ class FetchCoordinator(UniversalCoordinator):
                 canonical_reason=canonical_reason,
                 canonical_retry_after=canonical_retry_after,
                 resolve=None,
-            )
+    )
 
         # Add to dedup
         async with self._dedup_lock:
@@ -3255,7 +3255,7 @@ class FetchCoordinator(UniversalCoordinator):
             proxy=_proxy,
             quinn_viable=quinn_viable,
             aimd_acquired=aimd_acquired,  # P1-6 CRITICAL FIX: pass through to cleanup
-        )
+    )
 
     def _compute_resolve_binding(
         self,
@@ -3363,7 +3363,7 @@ class FetchCoordinator(UniversalCoordinator):
                 url, attempt, max_retries, base_delay, url_transport, route_decision,
                 _host_name, _resolve, _quinn_viable, _pre_acquired_tor_session,
                 _pre_acquired_i2p_session, proxy, _effective_max_bytes,
-            )
+    )
         except asyncio.CancelledError:
             # P0-3 FIX: Re-raise CancelledError for proper cancellation propagation.
             # Do NOT suppress - blanket CancelledError handling prevents clean shutdown.
@@ -3411,7 +3411,7 @@ class FetchCoordinator(UniversalCoordinator):
                 url, attempt, url_transport, route_decision, host_name,
                 _resolve, _quinn_viable, _pre_acquired_tor_session,
                 _pre_acquired_i2p_session, proxy, _effective_max_bytes,
-            )
+    )
 
             # Check if we should retry
             should_retry, retry_reason = self._evaluate_retry_condition(result, attempt, max_retries)
@@ -3496,7 +3496,7 @@ class FetchCoordinator(UniversalCoordinator):
         return await self._fetch_with_curl(
             url=url, proxy=proxy, resolve=_resolve,
             _effective_max_bytes=_effective_max_bytes,
-        )
+    )
 
     async def _record_fetch_outcome(
         self, result: dict[str, Any] | None, url_transport: Any, host_name: str,
@@ -3646,7 +3646,7 @@ class FetchCoordinator(UniversalCoordinator):
                 concurrency=4,
                 policy="log",
                 ctx="fetch_coordinator.deep_research",
-            )
+    )
             # deep_results is list[Any] - unpack by position
             # Each position may be None if that particular search source failed
             ddgs_rows = deep_results[0] if len(deep_results) > 0 else None
@@ -4038,7 +4038,7 @@ class FetchCoordinator(UniversalCoordinator):
                 produced_count=produced,
                 accepted_count=accepted,
                 signal_value=signal,
-            )
+    )
         except Exception:  # noqa: BLE001 — F203G feedback is best-effort; never break sprint
             # M1 8GB safe: feedback recording failure is non-critical
             pass
@@ -4161,7 +4161,7 @@ class FetchCoordinator(UniversalCoordinator):
             rows = await duckdb_store.async_query_findings_by_text(
                 like_pattern=f'%{entity_id}%',
                 limit=50,
-            )
+    )
 
             findings = []
             for row in rows:
@@ -4201,7 +4201,7 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug(
                 '[META-015] Fetched %d original findings for %s (entropy=%.3f)',
                 len(findings), entity_id, entropy,
-            )
+    )
             return findings, entropy
 
         except Exception as e:
@@ -4479,7 +4479,7 @@ class FetchCoordinator(UniversalCoordinator):
                 timestamp=time.time(),
                 metadata=metadata,
                 contradiction_source_id=contradiction_source,
-            )
+    )
 
             await bridge.emit(alert)
 
@@ -4487,7 +4487,7 @@ class FetchCoordinator(UniversalCoordinator):
                 '[META-015] Emitted contradiction alert for %s: '
                 '%d contradictions, max_severity=%.2f, source=%s',
                 entity_id, len(contradictions), max_severity, contradiction_source,
-            )
+    )
 
         except Exception as e:
             logger.debug('[META-015] Failed to emit contradiction alert: %s', e)
@@ -4539,7 +4539,7 @@ class FetchCoordinator(UniversalCoordinator):
             max_hops=max_hops,
             timeout=timeout,
             reason=reason,
-        )
+    )
 
         start_time = time.monotonic()
         protocols_tried: list[str] = []
@@ -4558,7 +4558,7 @@ class FetchCoordinator(UniversalCoordinator):
                     protocols_tried.append(protocol)
                     protocol_evidence = await self._execute_micro_sprint_protocol(
                         plan.entity_id, protocol, plan.max_hops
-                    )
+    )
 
                     if protocol_evidence:
                         evidence_ids.extend(protocol_evidence)
@@ -4582,7 +4582,7 @@ class FetchCoordinator(UniversalCoordinator):
                 success = (
                     best_entropy >= _MIN_USEFUL_BYTE_ENTROPY
                     and best_entropy > plan.entropy
-                )
+    )
 
                 return MicroSprintResult(
                     entity_id=plan.entity_id,
@@ -4592,7 +4592,7 @@ class FetchCoordinator(UniversalCoordinator):
                     evidence_ids=tuple(evidence_ids),
                     duration_ms=duration_ms,
                     hops_explored=hops_explored,
-                )
+    )
 
         except TimeoutError:
             duration_ms = (time.monotonic() - start_time) * 1000.0
@@ -4605,7 +4605,7 @@ class FetchCoordinator(UniversalCoordinator):
                 duration_ms=duration_ms,
                 error='micro_sprint_timeout',
                 hops_explored=hops_explored,
-            )
+    )
         except Exception as e:
             duration_ms = (time.monotonic() - start_time) * 1000.0
             logger.warning('[UNIFIED-004] Micro-sprint failed for %s: %s', entity_id, e)
@@ -4618,7 +4618,7 @@ class FetchCoordinator(UniversalCoordinator):
                 duration_ms=duration_ms,
                 error=str(e),
                 hops_explored=hops_explored,
-            )
+    )
 
     # ---------------------------------------------------------------------------
     # ---------------------------------------------------------------------------
@@ -4674,7 +4674,7 @@ class FetchCoordinator(UniversalCoordinator):
                     try:
                         evidence = await self._evidence_sink.get_evidence(
                             evidence_id,
-                        )
+    )
                         if evidence and hasattr(evidence, 'payload_text'):
                             text = evidence.payload_text or ''
                             if text:
@@ -4779,7 +4779,7 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug(
                 '[UNIFIED-003/004] Pruned %d stale pending entities (remaining=%d)',
                 len(stale), len(pending_entities),
-            )
+    )
 
         return pending_entities
 
@@ -4805,7 +4805,7 @@ class FetchCoordinator(UniversalCoordinator):
         logger.info(
             '[UNIFIED-003/004] High entropy alert: entity=%s entropy=%.3f reason=%s',
             entity_id, entropy, reason,
-        )
+    )
 
         # Enqueue with backpressure
         request = {
@@ -4825,7 +4825,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._micro_sprint_queue.qsize(),
                 self._micro_sprint_queue.maxsize,
                 entity_id,
-            )
+    )
 
     async def _micro_sprint_worker_loop(self) -> None:
         """
@@ -4855,7 +4855,7 @@ class FetchCoordinator(UniversalCoordinator):
                 # Process the micro-sprint request
                 await self._process_micro_sprint_request(
                     request, _MAX_RETRY_ROUNDS, _RETRY_BACKOFF_BASE
-                )
+    )
 
             except asyncio.TimeoutError:
                 # Normal timeout, continue loop
@@ -4891,7 +4891,7 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug(
                 '[UNIFIED-004] All protocols exhausted for %s (tried=%s) — giving up',
                 entity_id, previously_tried,
-            )
+    )
             return
 
         # [NEXUS]-018-02: IGD abort check
@@ -4906,7 +4906,7 @@ class FetchCoordinator(UniversalCoordinator):
             max_hops=2,
             timeout=30.0,
             reason=reason,
-        )
+    )
 
         # [META]-015: Contradiction check
         await self._check_micro_sprint_contradictions(entity_id, result)
@@ -4921,7 +4921,7 @@ class FetchCoordinator(UniversalCoordinator):
         await self._requeue_micro_sprint_retry(
             entity_id, entropy, protocols, reason, retry_count, all_tried,
             untried_protocols, result, max_retry_rounds, backoff_base
-        )
+    )
 
     def _should_igd_abort(self, entity_id: str) -> bool:
         """
@@ -4956,7 +4956,7 @@ class FetchCoordinator(UniversalCoordinator):
         contradictions = self._detect_micro_sprint_contradictions(
             original_findings,
             list(result.evidence_ids),
-        )
+    )
         if contradictions:
             await self._emit_contradiction_alert(entity_id, contradictions, original_entropy)
 
@@ -4967,7 +4967,7 @@ class FetchCoordinator(UniversalCoordinator):
             'new_entropy=%.3f protocols=%s retries=%d',
             entity_id, result.new_entropy,
             result.protocols_tried, retry_count,
-        )
+    )
         # [NEXUS]-018-02: Feed micro-sprint success back to IGD policy
         try:
             if hasattr(self, '_orchestrator') and self._orchestrator is not None:
@@ -4988,7 +4988,7 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug(
                 '[UNIFIED-004] Micro-sprint exhausted: entity=%s tried=%s retries=%d',
                 entity_id, all_tried, retry_count,
-            )
+    )
             return
 
         # Some protocols were not attempted (timeout or early exit)
@@ -4998,7 +4998,7 @@ class FetchCoordinator(UniversalCoordinator):
         logger.info(
             '[UNIFIED-004] Micro-sprint retry queued: entity=%s retry=%d/%d backoff=%.1fs protocols=%s',
             entity_id, next_retry, max_retry_rounds, backoff_s, untried_protocols,
-        )
+    )
 
         retry_request = {
             'entity_id': entity_id,
@@ -5137,7 +5137,7 @@ class FetchCoordinator(UniversalCoordinator):
                         result.asn,
                         result.prefix or 'unknown',
                         result.org_name or 'unknown',
-                    )
+    )
                 else:
                     logger.debug('[UNIFIED-004] BGP no ASN found for %s', entity_id)
             else:

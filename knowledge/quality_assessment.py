@@ -389,7 +389,7 @@ class QualityAssessmentState:
             reason=decision.reason or "unknown",
             finding_id=(getattr(finding, "finding_id", "") or "")[:40],
             url_sample=url_sample,
-        )
+    )
         self._quality_rejection_ledger.append(record)
         if len(self._quality_rejection_ledger) > self._MAX_QUALITY_REJECTION_LEDGER:
             self._quality_rejection_ledger.pop(0)
@@ -701,7 +701,7 @@ class QualityAssessor:
                 batch_fn=lambda lst: _rust_backend.quality.batch_url_fingerprints(lst),
                 single_fn=lambda s: _rust_backend.quality.url_fingerprint(s),
                 py_fn=_compute_url_fingerprint,
-            )
+    )
             for j, idx in enumerate(url_indices):
                 url_fingerprints[idx] = batch_urls[j]
 
@@ -715,7 +715,7 @@ class QualityAssessor:
                 batch_fn=lambda lst: _rust_backend.quality.batch_normalize_quality_text(lst),
                 single_fn=_normalize_for_quality,
                 py_fn=_normalize_for_quality,
-            )
+    )
 
             # Batch entropy via Rust rayon pool (F265C refactor) + zero-copy (F266-ZC)
             entropies_batch = self._rust_batch_float(
@@ -723,7 +723,7 @@ class QualityAssessor:
                 batch_fn=lambda lst: _rust_backend.quality.batch_entropy(lst),
                 single_fn=_compute_entropy,
                 py_fn=_compute_entropy,
-            )
+    )
 
             # Batch dedup fingerprints via Rust rayon pool (F265C refactor) + zero-copy (F266-ZC)
             fps_batch = self._rust_batch_str(
@@ -731,7 +731,7 @@ class QualityAssessor:
                 batch_fn=lambda lst: _rust_backend.quality.batch_dedup_fingerprints(lst),
                 single_fn=_compute_dedup_fingerprint,
                 py_fn=_compute_dedup_fingerprint,
-            )
+    )
 
             for j, idx in enumerate(payload_indices):
                 entropies[idx] = entropies_batch[j]
@@ -748,7 +748,7 @@ class QualityAssessor:
             is_high_conf_ioc = (
                 text_for_embed is not None
                 and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
-            )
+    )
 
             # --- Phase 2: per-finding decision logic (CC = 5) ---
             results[idx] = self._assess_batch_item_phase2(
@@ -760,7 +760,7 @@ class QualityAssessor:
                 is_high_conf_ioc=is_high_conf_ioc,
                 text_for_embed=text_for_embed,
                 _logger=_batch_logger,
-            )
+    )
 
         assert None not in results, "assess_batch: 1:1 invariant violated"
         return results  # type: ignore[return-value]
@@ -863,7 +863,7 @@ class QualityAssessor:
         if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
             dup_result = self._apply_semantic_dedup_guard(
                 fp, text_for_embed, is_high_conf_ioc, is_feed_source, "short_string batch", _logger,
-            )
+    )
             if dup_result is not None:
                 return dup_result
             if self._lmdb_store_fn is not None:
@@ -878,13 +878,13 @@ class QualityAssessor:
             _logger.debug(
                 "[QUALITY] low_entropy rejected entropy=%.3f threshold=%.3f fp=%s",
                 entropy, _QUALITY_ENTROPY_THRESHOLD, fp[:16] if fp else "",
-            )
+    )
             return self._make_decision(False, "low_entropy_rejected", entropy, fp, False)
 
         # Semantic dedup guard (entropy path)
         dup_result = self._apply_semantic_dedup_guard(
             fp, text_for_embed, is_high_conf_ioc, is_feed_source, "entropy batch", _logger,
-        )
+    )
         if dup_result is not None:
             return dup_result
 
@@ -925,14 +925,14 @@ class QualityAssessor:
                 return None
             is_dup = _cache.check_and_cache(
                 text_for_embed, threshold=0.75,
-            )
+    )
             if is_dup:
                 self._state._quality_duplicate_count += 1
                 _logger.debug(
                     "[QUALITY] %s semantic_dup hit fp=%s",
                     path_label,
                     fp[:16] if fp else "",
-                )
+    )
                 return self._make_decision(False, "semantic_duplicate", 0.0, fp, True)
         except Exception as e:
             _logger.warning(f"Quality gate err ({path_label}): {e}")
@@ -955,7 +955,7 @@ class QualityAssessor:
             entropy=entropy,
             normalized_hash=fingerprint,
             duplicate=duplicate,
-        )
+    )
 
     def record_rejection(
         self,

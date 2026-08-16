@@ -59,12 +59,12 @@ class TestArrowIPCFormat:
                 payload_texts=["text1", "text2"],
                 claims_jsons=["[]", "[]"],
                 batch_size=2,
-            )
+    )
 
             assert result.startswith(ARROW_MAGIC_BYTES), (
                 f"Arrow IPC stream should start with {ARROW_MAGIC_BYTES!r}, "
                 f"got {result[:10]!r}"
-            )
+    )
         except ImportError:
             pytest.skip("rust_extensions.arrow_batch_builder not available")
 
@@ -88,7 +88,7 @@ class TestArrowIPCFormat:
                 payload_texts=["text1", "text2"],
                 claims_jsons=["[]", "[]"],
                 batch_size=2,
-            )
+    )
 
             # IPC stream has magic bytes at start and end
             assert len(result) >= 20, "IPC stream should have header and footer"
@@ -134,7 +134,7 @@ class TestPyArrowIntegration:
             payload_texts=["text1", "text2"],
             claims_jsons=["[]", "[]"],
             batch_size=2,
-        )
+    )
 
         # Parse with PyArrow (same as pa.ipc.open_stream)
         reader = pa.ipc.open_stream(result)
@@ -178,7 +178,7 @@ class TestArrowBatchBuilder:
             payload_texts=payload_texts,
             claims_jsons=claims_jsons,
             batch_size=10,
-        )
+    )
 
         assert len(result) > 0
 
@@ -205,7 +205,7 @@ class TestArrowBatchBuilder:
             payload_texts=["text \u00e0", "text \u00e1"],
             claims_jsons=["[]", "[]"],
             batch_size=2,
-        )
+    )
 
         assert len(result) > 0
 
@@ -231,7 +231,7 @@ class TestArrowBatchBuilder:
             payload_texts=["", "text2"],
             claims_jsons=["[]", "[]"],
             batch_size=2,
-        )
+    )
 
         assert len(result) > 0
 
@@ -264,7 +264,7 @@ class TestArrowMemoryEfficiency:
             payload_texts=[f"text_{i}" for i in range(n_records)],
             claims_jsons=["[]"] * n_records,
             batch_size=n_records,
-        )
+    )
 
         # Parse and verify
         reader = pa.ipc.open_stream(result)
@@ -275,7 +275,7 @@ class TestArrowMemoryEfficiency:
         overhead_per_record = len(result) / n_records
         assert overhead_per_record < 100, (
             f"Overhead per record too high: {overhead_per_record:.2f} bytes"
-        )
+    )
 
     @pytest.mark.skipif(
         sys.platform != "darwin",
@@ -306,7 +306,7 @@ class TestArrowMemoryEfficiency:
             payload_texts=[f"text_{i}" for i in range(n_records)],
             claims_jsons=["[]"] * n_records,
             batch_size=n_records,
-        )
+    )
 
         # Should use less than 10MB for 10k records
         size_mb = len(result) / (1024 * 1024)
@@ -345,7 +345,7 @@ class TestArrowDataIntegrity:
             payload_texts=["t1", "t2", "t3"],
             claims_jsons=["[]"] * 3,
             batch_size=3,
-        )
+    )
 
         # Parse
         reader = pa.ipc.open_stream(result)
@@ -389,7 +389,7 @@ class TestArrowNullHandling:
             payload_texts=["text1", "text2", "text3"],
             claims_jsons=["[]", "[]", "[]"],
             batch_size=3,
-        )
+    )
 
         # Parse
         reader = pa.ipc.open_stream(result)
@@ -425,7 +425,7 @@ class TestArrowSchemaCompatibility:
             payload_texts=["text1"],
             claims_jsons=["[]"],
             batch_size=1,
-        )
+    )
 
         reader = pa.ipc.open_stream(result)
         table = reader.read_all()

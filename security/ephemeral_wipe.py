@@ -500,7 +500,7 @@ def _ctypes_madvise_free_reusable(addr: int, length: int) -> bool:
             ctypes.c_void_p(addr),
             ctypes.c_size_t(length),
             advice,
-        )
+    )
         return result == 0
     except Exception:
         return False
@@ -545,7 +545,7 @@ def gc_collect_with_madvise(skip_gc: bool = False) -> float:
             if rss_gib > 5.0:
                 logger.debug(
                     f"[WIPE] RSS={rss_gib:.1f}GiB > 5.0GiB: skipping GC, running madvise only"
-                )
+    )
                 skip_gc = True
         except Exception:  # noqa: BLE001
             pass  # psutil unavailable — proceed with GC
@@ -600,7 +600,7 @@ def _ctypes_madvise_dontneed_heap() -> bool:
             ctypes.c_void_p(0),  # addr=0: whole address space (kernel filters to heap pages)
             ctypes.c_size_t(0),  # length=0: whole address space
             4,  # MADV_DONTNEED
-        )
+    )
         return result == 0
     except Exception:
         return False
@@ -695,7 +695,7 @@ class EphemeralStateAnnihilator:
 
             buffers, bytes_wiped = await asyncio.to_thread(
                 wipe_bytearrays_in_namespace, sys.modules
-            )
+    )
             result["buffers_wiped"] = buffers
             result["bytes_wiped"] = bytes_wiped
         except Exception as exc:
@@ -729,6 +729,6 @@ class EphemeralStateAnnihilator:
             f"[WIPE] annihilated={result['buffers_wiped']}_buffers="
             f"{bytes_kib:.1f}KiB munlock={result['munlock_count']} "
             f"gc2={result['gc_ms']:.0f}ms"
-        )
+    )
 
         return result

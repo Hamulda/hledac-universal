@@ -125,7 +125,7 @@ class DuckDBGraphAttachment:
         """Enrich findings with graph-derived context (aliases, relationships)."""
         return self._ensure().annotate_findings_with_graph_context(
             findings, max_hops=max_hops, max_annotations=max_annotations
-        )
+    )
 
     def get_analytics_graph_for_synthesis(self) -> Any:
         """Return analytics graph for synthesis layer."""
@@ -152,7 +152,7 @@ class DuckDBGraphAttachment:
             max_nodes=max_nodes,
             max_community_size=max_community_size,
             include_centrality=include_centrality,
-        )
+    )
 
     def get_top_entities_for_ghost_global(
         self, n: int = 100

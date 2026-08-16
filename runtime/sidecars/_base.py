@@ -87,7 +87,7 @@ class SchedulerBackedSidecarAdapter(BaseSidecarAdapter):
             self.scheduler_method_name,
             ctx.sprint_id,
             ctx.sprint_mode,
-        )
+    )
         method = getattr(scheduler, self.scheduler_method_name, None)
         if method is None:
             if not self._missing_logged:
@@ -97,7 +97,7 @@ class SchedulerBackedSidecarAdapter(BaseSidecarAdapter):
                     "%s: scheduler method %r not implemented (returning empty findings)",
                     self.sidecar_id,
                     self.scheduler_method_name,
-                )
+    )
                 self._missing_logged = True
             return []
         result = method()

@@ -141,7 +141,7 @@ class PerceptualHashGenerator:
                 logger.debug(
                     "pHash DCT unavailable: scipy.fftpack not installed. "
                     "Install with: pip install hledac-universal[ml]"
-                )
+    )
                 dct_low = pixels[:8, :8]
         avg = dct_low[1:, 1:].mean()
         bits = ''
@@ -319,7 +319,7 @@ class AdvancedSteganalysis:
             logger.debug(
                 "Chi-square test unavailable: scipy.stats not installed. "
                 "Install with: pip install hledac-universal[ml]"
-            )
+    )
             lsb = pixels[:, :, 0].flatten() & 1
             ratio = np.sum(lsb == 0) / len(lsb)
             return 1.0 - abs(ratio - 0.5) * 2

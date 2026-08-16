@@ -124,7 +124,7 @@ def _probe_subinterpreter_support() -> bool:
                 "[gateway] Subinterpreter roundtrip failed: %s — "
                 "likely missing --with-experimental-isolated-subinterpreters build flag",
                 exc,
-            )
+    )
             _SUBINTERPRETER_ENABLED = False
             return False
 
@@ -202,7 +202,7 @@ class ExecutionGateway:
             SharedWorkerPool,
             get_rust_pool,
             get_shared_pool,
-        )
+    )
 
         self._shared_pool = get_shared_pool()
         self._rust_available = False
@@ -300,7 +300,7 @@ class ExecutionGateway:
         """
         return await self.cpu_bound(
             fn, *args, timeout=timeout, hint=WorkloadHint.MLX_INFERENCE, **kwargs
-        )
+    )
 
     async def pure_python_cpu(
         self,
@@ -322,7 +322,7 @@ class ExecutionGateway:
         """
         return await self.cpu_bound(
             fn, *args, timeout=timeout, hint=WorkloadHint.PURE_PYTHON_CPU, **kwargs
-        )
+    )
 
     # ------------------------------------------------------------------
     # Internal routing
@@ -341,12 +341,12 @@ class ExecutionGateway:
             try:
                 return await self._rust_cpu_pool.submit(
                     fn, *args, timeout=timeout, **kwargs
-                )
+    )
             except Exception as exc:
                 logger.debug(
                     "[gateway] Rust cpu_pool failed: %s — falling back to SharedWorkerPool",
                     exc,
-                )
+    )
         # Fallback
         return await self._shared_pool.run(fn, *args, timeout=timeout, **kwargs)
 
@@ -366,7 +366,7 @@ class ExecutionGateway:
                 logger.debug(
                     "[gateway] Subinterpreter pool failed: %s — falling back to SharedWorkerPool",
                     exc,
-                )
+    )
         return await self._shared_pool.run(fn, *args, timeout=timeout, **kwargs)
 
     async def _via_subinterpreter(
@@ -396,7 +396,7 @@ class ExecutionGateway:
                 loop.run_in_executor(None, _run_in_subinterpreter),
                 timeout=timeout,
                 label="gateway_subinterpreter",
-            )
+    )
         return await loop.run_in_executor(None, _run_in_subinterpreter)
 
     # ------------------------------------------------------------------

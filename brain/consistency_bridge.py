@@ -47,7 +47,7 @@ from _core import aclose
 _ENABLED = (
     os.environ.get("HLEDAC_ENABLE_CONSISTENCY_VERIFIER", "1").lower()
     in ("1", "true", "yes", "on")
-)
+    )
 
 # Bounds (M1 8GB safe)
 MAX_FINDINGS_PER_CHECK: int = 500
@@ -147,7 +147,7 @@ class PropositionalContradictionAlert:
             metadata={
                 "resolution_hint": contradiction.get("resolution_hint", ""),
             },
-        )
+    )
 
     # Typo compatibility - both spellings work
     @property
@@ -266,7 +266,7 @@ class PropositionalConsistencyBridge:
                 consistency_score=raw_result.get("consistency_score", 1.0),
                 facts_processed=raw_result.get("facts_processed", 0),
                 contradictions_found=raw_result.get("contradictions_found", 0),
-            )
+    )
 
             # Generate alerts for severe contradictions
             alerts: list[PropositionalContradictionAlert] = []
@@ -279,7 +279,7 @@ class PropositionalConsistencyBridge:
 
                     alert = PropositionalContradictionAlert.from_contradiction(
                         contradiction, score
-                    )
+    )
                     alerts.append(alert)
 
             # Cap alerts at 20
@@ -305,7 +305,7 @@ class PropositionalConsistencyBridge:
                 len(result.alerts),
                 result.check_duration_ms,
                 result.consistency_score,
-            )
+    )
 
             return result
 
@@ -346,7 +346,7 @@ class PropositionalConsistencyBridge:
                         "consistency_score": alert.consistency_score,
                         "resolution_hint": alert.metadata.get("resolution_hint", ""),
                     },
-                )
+    )
                 await bridge.emit(entropy_alert)
 
         except Exception as e:

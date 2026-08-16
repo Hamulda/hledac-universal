@@ -88,7 +88,7 @@ class TestExtractIocsFromTextsBatch:
                 "support@corp.org",
                 "192.168.1.1",
             ]
-        )
+    )
         assert isinstance(result, list)
         assert len(result) == 3
         for sublist in result:
@@ -206,7 +206,7 @@ class TestProcessHtmlPayloadBatch:
         from hledac.universal.fetching.public_fetcher import (
             _batch_sync_process_html,
             process_html_payload_batch,
-        )
+    )
 
         submitted_fn = None
 

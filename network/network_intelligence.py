@@ -27,7 +27,6 @@ import logging
 from hledac.universal.utils.asyncx import safe_create_task  # ISSUE-15: asyncio.gather used directly for ALL_COMPLETED
 import time
 from collections import deque
-from dataclasses import dataclass
 import msgspec
 from _core import aclose
 logger = logging.getLogger(__name__)
@@ -86,7 +85,7 @@ class NetworkIntelAdapter:
                 # ISSUE-15: asyncio.wait(ALL_COMPLETED) → asyncio.gather (return_exceptions preserves all results)
                 results: list[Exception | list[dict]] = await asyncio.gather(
                     dns_task, fp_task, bgp_task, return_exceptions=True
-                )
+    )
                 dns_result, fp_result, bgp_result = results
                 if isinstance(dns_result, Exception):
                     errors.append(f'dns:{dns_result}')

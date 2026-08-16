@@ -147,7 +147,7 @@ class AsyncParquetStreamingReader:
                     pf: Any = await loop.run_in_executor(
                         None,
                         lambda fp=file_path: pq.ParquetFile(fp),
-                    )
+    )
 
                     # Get metadata for row group iteration
                     metadata = pf.metadata
@@ -160,7 +160,7 @@ class AsyncParquetStreamingReader:
                             lambda: pf.read_row_group(rg_idx, columns=columns).to_batches(
                                 batch_size
                             )[0],
-                        )
+    )
                         yield batch
 
                 except Exception as e:
@@ -194,7 +194,7 @@ class AsyncParquetStreamingReader:
                 table = await loop.run_in_executor(
                     None,
                     lambda: pq.read_table(path, columns=columns),
-                )
+    )
                 return table
             except Exception as e:
                 logger.error("[PARQUET-READ] Error reading table %s: %s", path, e)
@@ -328,7 +328,7 @@ class ParquetExporter:
         self._executor = ThreadPoolExecutor(
             max_workers=_MAX_CONCURRENT_WRITES,
             thread_name_prefix="parquet-writer",
-        )
+    )
         self._duckdb_conn: Any = None
         self._pl: Any = None
         self._pa: Any = None
@@ -428,7 +428,7 @@ class ParquetExporter:
                     provenance_json VARCHAR,
                     payload_text VARCHAR,
                     claims_json VARCHAR  -- MODERN-20: Added for 8-column schema
-                )
+    )
             """)
 
             # Bulk insert pres Arrow (zero-copy)
@@ -448,7 +448,7 @@ class ParquetExporter:
                 batch = self._pa.record_batch(
                     [arr_id, arr_query, arr_st, arr_conf, arr_ts, arr_prov, arr_payload, arr_claims],
                     names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text", "claims_json"],  # MODERN-20: Added
-                )
+    )
                 # pa.Table required by DuckDB.register — data is immediately available
                 arrow_table = self._pa.Table.from_batches([batch])
                 conn.register("tmp_findings", arrow_table)  # type: ignore[attr-defined]
@@ -460,7 +460,7 @@ class ParquetExporter:
                     conn.execute(
                         "INSERT INTO tmp_findings VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         row,
-                    )
+    )
 
             # COPY TO Parquet
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -607,7 +607,7 @@ class ParquetExporter:
                 timestamps.append(f.ts or 0.0)
                 provenance_jsons.append(
                     orjson.dumps(list(f.provenance)).decode("utf-8") if f.provenance else "[]"
-                )
+    )
                 payloads.append(f.payload_text or "")
                 # MODERN-20: claims_json extraction (default empty array if not available)
                 claims_jsons.append(getattr(f, "claims_json", None) or "[]")
@@ -626,7 +626,7 @@ class ParquetExporter:
             batch = self._pa.record_batch(
                 [arr_id, arr_query, arr_st, arr_conf, arr_ts, arr_prov, arr_payload, arr_claims],
                 names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text", "claims_json"],  # MODERN-20: Added
-            )
+    )
 
             # PyArrow RecordBatch → Polars DataFrame (zero-copy)
             df = self._pl.from_arrow(batch)
@@ -652,7 +652,7 @@ class ParquetExporter:
                 compression=comp,  # type: ignore[arg-type]
                 row_group_size=_ROW_GROUP_SIZE,
                 use_pyarrow=True,
-            )
+    )
 
             return output_path
 
@@ -828,7 +828,7 @@ async def export_findings_parquet(
             output_dir=output_dir,
             filename_base=filename_base,
             compression=compression,
-        )
+    )
     finally:
         await exporter.aclose()
 
@@ -872,7 +872,7 @@ def export_parquet_to_path(
                 timestamps.append(f.ts or 0.0)
                 provenance_jsons.append(
                     orjson.dumps(list(f.provenance)).decode("utf-8") if f.provenance else "[]"
-                )
+    )
                 payloads.append(f.payload_text or "")
                 # MODERN-20: claims_json extraction (default empty array if not available)
                 claims_jsons.append(getattr(f, "claims_json", None) or "[]")
@@ -889,7 +889,7 @@ def export_parquet_to_path(
             batch = exporter._pa.record_batch(
                 [arr_id, arr_query, arr_st, arr_conf, arr_ts, arr_prov, arr_payload, arr_claims],
                 names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text", "claims_json"],  # MODERN-20: Added
-            )
+    )
 
             # PyArrow RecordBatch → Polars DataFrame (zero-copy)
             df: object = exporter._pl.from_arrow(batch)
@@ -917,7 +917,7 @@ def export_parquet_to_path(
                 compression=comp,  # type: ignore[arg-type]
                 row_group_size=_ROW_GROUP_SIZE,
                 use_pyarrow=True,
-            )
+    )
 
             return output_path
 

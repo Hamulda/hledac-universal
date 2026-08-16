@@ -108,7 +108,7 @@ def _check_and_warn_hibernation() -> None:
             "all RAM including RAM disk pages will be written to %s.  "
             "Consider running: sudo pmset standby 0  (requires sudo; restores on next boot)",
             "/var/vm/sleepimage",
-        )
+    )
 
 def _vault_atexit_cleanup() -> None:
     """
@@ -206,7 +206,7 @@ class RamDiskVault:
                 logger.error(
                     f'RAM disk size limit exceeded: {self.size_mb}MB requested, '
                     f'currently allocated: {_total_ramdisk_mb}MB, max: {MAX_TOTAL_RAMDISK_MB}MB'
-                )
+    )
                 return None
         try:
             block_count = self.size_mb * 1024 * 1024 // self._block_size

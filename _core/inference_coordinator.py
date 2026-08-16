@@ -105,7 +105,7 @@ class InferenceBackend(str, Enum):
             logger.warning(
                 "[IC] Unknown HLEDAC_INFERENCE_BACKEND=%r, defaulting to mlx_inproc",
                 raw,
-            )
+    )
             return cls.MLX_INPROC
 
 
@@ -212,14 +212,14 @@ class MLXInProcBackend(IInferenceBackend):
                 adapter_path=request.adapter_path,
                 logits_processors=request.logits_processors,
                 prompt_tokens=request.prompt_tokens,
-            )
+    )
             latency_ms = (time.monotonic() - t0) * 1000
             return InferenceResponse(
                 text=text,
                 tokens_generated=len(text.split()),  # rough estimate
                 latency_ms=latency_ms,
                 backend=InferenceBackend.MLX_INPROC,
-            )
+    )
         except Exception as exc:
             raise InferenceError(
                 f"mlx_inproc generate failed: {exc}",
@@ -297,14 +297,14 @@ class MlxcelBackend(IInferenceBackend):
                 system_msg=request.system_msg,
                 thinking=request.thinking,
                 adapter_path=request.adapter_path,
-            )
+    )
             latency_ms = (time.monotonic() - t0) * 1000
             return InferenceResponse(
                 text=result.text,
                 tokens_generated=result.tokens_generated,
                 latency_ms=latency_ms,
                 backend=InferenceBackend.MLXCEL,
-            )
+    )
         except Exception as exc:
             raise InferenceError(
                 f"mlxcel generate failed: {exc}",
@@ -388,14 +388,14 @@ class CoreMLBackend(IInferenceBackend):
             result = await client.predict(
                 model="default",
                 inputs={"prompt": request.prompt},
-            )
+    )
             latency_ms = (time.monotonic() - t0) * 1000
             return InferenceResponse(
                 text=result.text if hasattr(result, "text") else str(result),
                 tokens_generated=0,
                 latency_ms=latency_ms,
                 backend=InferenceBackend.COREML,
-            )
+    )
         except Exception as exc:
             raise InferenceError(
                 f"coreml generate failed: {exc}",
@@ -413,7 +413,7 @@ class CoreMLBackend(IInferenceBackend):
             result = await client.predict(
                 model="default",
                 inputs={"prompt": request.prompt},
-            )
+    )
             text = result.text if hasattr(result, "text") else str(result)
             yield Token(text=text, done=False, backend=InferenceBackend.COREML)
             yield Token(text="", done=True, backend=InferenceBackend.COREML)
@@ -487,7 +487,7 @@ class InferenceCoordinator:
         logger.info(
             "[IC] InferenceCoordinator initialized — default_backend=%s",
             self._default_backend.value,
-        )
+    )
 
     def _resolve_backend(self, request: InferenceRequest) -> IInferenceBackend:
         """Resolve which backend to use for a request."""
@@ -498,13 +498,13 @@ class InferenceCoordinator:
             logger.warning(
                 "[IC] Backend %s not available, falling back to mlx_inproc",
                 backend.value,
-            )
+    )
             be = self._backends.get(InferenceBackend.MLX_INPROC)
             if be is None:
                 raise InferenceError(
                     f"No fallback backend available",
                     backend=InferenceBackend.MLXCEL,
-                )
+    )
         return be
 
     async def generate(self, request: InferenceRequest) -> InferenceResponse:

@@ -28,7 +28,6 @@ import asyncio
 import logging
 import re
 import time as _time
-from dataclasses import dataclass
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
@@ -178,7 +177,7 @@ class ResearchSessionMemory:
             source_patterns_json=source_patterns_json,
             unexplored_angles_json=unexplored_json,
             temporal_anomalies_json="[]",
-        )
+    )
         self._episode_count += 1
         return session_id
 
@@ -273,7 +272,7 @@ class ResearchSessionMemory:
                 confidence=r["confidence"] or 0.0,
                 ts=r["ts"],
                 finding_id=r["finding_id"],
-            )
+    )
             for r in rows
         ]
         return EntityHistory(
@@ -283,7 +282,7 @@ class ResearchSessionMemory:
             first_seen_ts=min(o.ts for o in observations),
             last_seen_ts=max(o.ts for o in observations),
             activity_trend="stable",
-        )
+    )
 
     async def get_next_sprint_hints(self, query: str, current_sprint_id: str) -> dict[str, Any]:
         angles = await self.get_unexplored_angles(query, current_sprint_id)

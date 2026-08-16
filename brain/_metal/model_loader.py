@@ -85,7 +85,7 @@ class MetalModelLoader:
         mlx_lm = _get_mlx_loader()
         self._model, self._tokenizer = await asyncio.to_thread(
             mlx_lm.load, self.model_path
-        )
+    )
 
         # Apply half precision if enabled
         if self._half_precision and os.getenv('HLEDAC_HALF_PRECISION', '1') != '0':
@@ -96,7 +96,7 @@ class MetalModelLoader:
                 import logging
                 logging.getLogger(__name__).warning(
                     '[MetalModelLoader] Could not set float16 dtype: %s', e
-                )
+    )
 
         # Cache the model
         if self._cache is not None:
@@ -144,7 +144,7 @@ class ModelSwapManager:
         self._loaders[slot] = MetalModelLoader(
             model_path=model_path,
             cache=self._cache,
-        )
+    )
 
     async def load_slot(self, slot: str) -> tuple[Any, Any] | None:
         """

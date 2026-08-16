@@ -245,14 +245,14 @@ class BoundedStageQueue(Generic[T_out]):
                 new_max,
                 new_max,
                 dropped_by_shrink,
-            )
+    )
         else:
             logger.debug(
                 "BoundedStageQueue[%s]: UMA=%s, maxsize grew to %d",
                 self.stage_name,
                 state,
                 new_max,
-            )
+    )
 
     async def put(self, item: T_out) -> bool:
         """Vloží item do fronty.
@@ -277,7 +277,7 @@ class BoundedStageQueue(Generic[T_out]):
                     "BoundedStageQueue[%s]: dropped item (queue full, size=%d)",
                     self.stage_name,
                     self.maxsize,
-                )
+    )
                 return False
 
     async def get(self) -> T_out:

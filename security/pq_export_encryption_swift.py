@@ -27,11 +27,7 @@ from pathlib import Path
 from typing import Any
 
 # Types from parent module — needed for msgspec.Struct field annotations (evaluated at class def time)
-
-
-
-
-
+from .pq_export_encryption import (
     compute_aad_hash,
     Decryptability,
     ExportEncryptionEnvelope,
@@ -42,8 +38,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 HELPER_MISSING = 'HELPER_MISSING'
-
-from _core import acloseHELPER_NOT_EXECUTABLE = 'HELPER_NOT_EXECUTABLE'
+HELPER_NOT_EXECUTABLE = 'HELPER_NOT_EXECUTABLE'
 HELPER_TIMEOUT = 'HELPER_TIMEOUT'
 HELPER_BAD_JSON = 'HELPER_BAD_JSON'
 HELPER_NONZERO_EXIT = 'HELPER_NONZERO_EXIT'

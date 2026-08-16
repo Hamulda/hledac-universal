@@ -216,7 +216,7 @@ class UTXOGraph:
                 logger.warning(
                     f"UTXO graph: address count ({len(addr_set)}) exceeds MAX_UTXO_NODES "
                     f"({MAX_UTXO_NODES}), truncating"
-                )
+    )
                 break
 
         return addr_set, valid_txs
@@ -238,7 +238,7 @@ class UTXOGraph:
                     node_type="address",
                     value_satoshis=value,
                     metadata={"address": addr},
-                )
+    )
             )
             self._address_to_id[addr] = node_id_counter[addr_node_id]
             self._id_to_address[node_id_counter[addr_node_id]] = addr
@@ -274,7 +274,7 @@ class UTXOGraph:
                         node_type="tx",
                         timestamp=tx_data.get("time", tx_data.get("block_time", 0)),
                         metadata={"txid": txid},
-                    )
+    )
                 )
             self._tx_to_id[txid] = node_id_counter[tx_node_id]
             self._id_to_tx[node_id_counter[tx_node_id]] = txid
@@ -341,7 +341,7 @@ class UTXOGraph:
                             target_id=f"tx:{txid}",
                             value_satoshis=int(inp.get("value", 0)),
                             is_coinbase=is_coinbase,
-                        )
+    )
                     )
 
             # Output edges: tx -> address
@@ -354,7 +354,7 @@ class UTXOGraph:
                             target_id=f"addr:{addr}",
                             value_satoshis=int(out.get("value", 0)),
                             is_coinbase=is_coinbase,
-                        )
+    )
                     )
 
         return edges
@@ -408,7 +408,7 @@ class UTXOGraph:
                 n=len(addr_to_pid),
                 edges=projection_edges,
                 directed=False,
-            )
+    )
         except Exception as e:
             logger.error(f"Failed to build projection graph: {e}")
             return None
@@ -456,7 +456,7 @@ class UTXOGraph:
                 n=len(nodes),
                 edges=edge_list,
                 directed=True,
-            )
+    )
             # Attach vertex attributes
             self._graph.vs["node_id"] = [n.node_id for n in nodes]
             self._graph.vs["node_type"] = [n.node_type for n in nodes]
@@ -517,7 +517,7 @@ class UTXOGraph:
         logger.info(
             f"UTXO graph: {len(nodes)} nodes ({self._tx_counter} tx, "
             f"{len(self._address_to_id)} unique addresses)"
-        )
+    )
 
         # Build edges and convert to igraph format
         edges = self._build_graph_edges(valid_txs)
@@ -531,7 +531,7 @@ class UTXOGraph:
         logger.info(
             f"UTXO graph built: {self._graph.vcount()} nodes, "
             f"{self._graph.ecount()} edges in {elapsed:.1f}ms"
-        )
+    )
 
         return True
 
@@ -607,7 +607,7 @@ class UTXOGraph:
             confidence=confidence,
             heuristic="+".join(heuristics) if heuristics else "none",
             metadata={"in_degree": in_deg, "out_degree": out_deg, "total_degree": deg},
-        )
+    )
 
     def _detect_change_addresses(self) -> list[ChangeAddressResult]:
         """
@@ -655,7 +655,7 @@ class UTXOGraph:
         logger.info(
             f"Change address detection: {sum(1 for r in results if r.is_change)}/{len(results)} "
             f"addresses classified as change"
-        )
+    )
         return results
 
     # ------------------------------------------------------------------
@@ -737,7 +737,7 @@ class UTXOGraph:
                         "shared_tx_count": len(txids),
                         "component_index": comp_idx,
                     },
-                )
+    )
             )
         clusters.sort(key=lambda c: len(c.addresses), reverse=True)
         return clusters
@@ -788,7 +788,7 @@ class UTXOGraph:
         logger.info(
             f"UTXO clustering: {len(clusters)} clusters found "
             f"({sum(len(c.addresses) for c in clusters)} addresses) in {elapsed:.1f}ms"
-        )
+    )
 
     def _cluster_by_connected_components_impl(self) -> list[UTXOCluster]:
         start_time = time.monotonic()
@@ -906,7 +906,7 @@ class UTXOGraph:
                                 "large_value_btc": large_val / 100_000_000.0,
                                 "small_value_btc": small_val / 100_000_000.0,
                             },
-                        )
+    )
                     )
 
             processed_txs.add(txid)
@@ -948,7 +948,7 @@ class UTXOGraph:
                 change_addresses=[],
                 processing_time_ms=(time.monotonic() - start_time) * 1000,
                 metadata={"error": "igraph not available"},
-            )
+    )
 
         # Build graph
         success = self._build_utxo_graph(transactions)
@@ -960,7 +960,7 @@ class UTXOGraph:
                 change_addresses=[],
                 processing_time_ms=(time.monotonic() - start_time) * 1000,
                 metadata={"error": "graph construction failed"},
-            )
+    )
 
         # Detect change addresses
         change_results: list[ChangeAddressResult] = []
@@ -987,7 +987,7 @@ class UTXOGraph:
                 largest_community_size = max(
                     (sum(1 for m in membership.membership if m == c))
                     for c in communities_set
-                )
+    )
             except Exception as e:
                 logger.debug(f"Community detection skipped: {e}")
 
@@ -1006,7 +1006,7 @@ class UTXOGraph:
                 "unique_addresses": len(self._address_to_id),
                 "algorithm": "igraph_c_core",
             },
-        )
+    )
 
     # ------------------------------------------------------------------
     # Convenience: cluster addresses via graph traversal (API-free)

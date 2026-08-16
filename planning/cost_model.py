@@ -198,7 +198,7 @@ class AdaptiveCostModel:
         try:
             return await asyncio.to_thread(
                 self._predict_impl, task_type, params, system_state
-            )
+    )
         except Exception:
             # Fallback to sync on error
             return self._predict_impl(task_type, params, system_state)
@@ -264,7 +264,7 @@ class AdaptiveCostModel:
         # Use the existing Mamba SSM + ridge baseline to predict cost
         time_cost, _ram_cost, _net_cost, _value, uncertainty = self.predict(
             'other', params, sys_state
-        )
+    )
 
         # Per-action time budget: how much time each remaining action gets
         per_action_budget_s = self._sprint_remaining_s / max(self._sprint_remaining_actions, 1)

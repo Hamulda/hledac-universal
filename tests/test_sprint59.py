@@ -142,7 +142,7 @@ class TestPrefetchOracle:
                 {"url": "http://example.com/1", "score": 0.9},
                 {"url": "http://example.com/2", "score": 0.8},
             ]
-        )
+    )
         if mx is not None:
             engine.get_entity_embedding = MagicMock(return_value=mx.random.normal((64,)))
         return engine
@@ -188,7 +188,7 @@ class TestPrefetchOracle:
             bandit_weight=0.2,
             lambda_waste=0.01,
             lambda_prior=1.0,
-        )
+    )
         return oracle
 
     # ========= Testy Stage A =========

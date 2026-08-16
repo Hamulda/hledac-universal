@@ -14,11 +14,7 @@ import logging
 import pytest
 from unittest.mock import MagicMock
 
-
-
-
-
-
+from utils.exception_policy import (
     ExceptionPolicy,
     HOT_PATH,
     COLD_PATH,
@@ -31,7 +27,6 @@ from unittest.mock import MagicMock
 class TestExceptionPolicyHandle:
     """Unit tests for ExceptionPolicy.handle()."""
 
-from _core import aclose
     def test_handle_logs_exception_with_context(self, caplog: pytest.LogCaptureFixture) -> None:
         """handle() logs the exception with context at WARNING level by default."""
         caplog.set_level(logging.WARNING)

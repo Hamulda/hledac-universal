@@ -220,7 +220,7 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
                     mlx_threads=0,   # Disable MLX at emergency
                     graph_threads=0,  # Disable Graph at emergency
                     io_threads=1,     # Minimal I/O
-                )
+    )
             case "critical":
                 return cls(
                     max_workers=2,
@@ -232,7 +232,7 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
                     mlx_threads=1,   # Reduce MLX
                     graph_threads=0,  # Disable Graph
                     io_threads=1,
-                )
+    )
             case "warn":
                 return cls(
                     max_workers=3,
@@ -244,7 +244,7 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
                     mlx_threads=2,
                     graph_threads=1,
                     io_threads=2,
-                )
+    )
             case "soft_warn":
                 return cls(
                     max_workers=4,
@@ -256,7 +256,7 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
                     mlx_threads=2,
                     graph_threads=1,
                     io_threads=2,
-                )
+    )
             case "ok":
                 return cls(
                     max_workers=6,
@@ -268,7 +268,7 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
                     mlx_threads=2,
                     graph_threads=1,
                     io_threads=2,
-                )
+    )
             case _:
                 return cls(
                     max_workers=6,
@@ -280,7 +280,7 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
                     mlx_threads=2,
                     graph_threads=1,
                     io_threads=2,
-                )
+    )
 
 
 try:
@@ -310,7 +310,7 @@ import time as _time_module
 
 _thread_local_locks: _contextvars.ContextVar[dict[str, _threading.Lock] | None] = _contextvars.ContextVar(
     "_thread_local_locks", default=None
-)
+    )
 
 
 def _get_key_lock(key: str) -> _threading.Lock:
@@ -509,7 +509,7 @@ def _read_thermal_state_sync() -> dict[str, Any]:
             capture_output=True,
             text=True,
             timeout=0.5,  # Fast timeout — thermal read should be instant
-        )
+    )
 
         if result.returncode == 0 and result.stdout.strip():
             thermal_level = int(result.stdout.strip())
@@ -669,7 +669,7 @@ from hledac.universal.utils.uma_budget import (
     UmaBudget,
     MISSION_PEAK_RSS_GIB,
     ORCHESTRATOR_GIB,
-)
+    )
 
 try:
     from hledac.universal.config import _rg_float
@@ -740,7 +740,7 @@ def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
         return (
             "diagnostic",
             f"swap={swap_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint",
-        )
+    )
     else:
         return ("hard_block", f"swap={swap_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB — restart required")
 
@@ -1361,7 +1361,7 @@ class M1ThermalMonitor:
                 ctypes.byref(size),
                 None,
                 0,
-            )
+    )
             if ret == 0:
                 return value.value
         except Exception:  # noqa: BLE001
@@ -1389,7 +1389,7 @@ class M1ThermalMonitor:
                 capture_output=True,
                 text=True,
                 timeout=1.0,
-            )
+    )
             if result.returncode == 0:
                 return float(result.stdout.strip())
         except Exception:  # noqa: BLE001
@@ -1573,7 +1573,7 @@ class M1ThermalMonitor:
         smc_zones = self._read_smc_zones()
         is_throttled, headroom = self._detect_throttling(
             cpu_temp, gpu_temp, cpu_freq, thermal_level
-        )
+    )
 
         status = M1ThermalStatus(
             cpu_temperature_c=cpu_temp,
@@ -1585,7 +1585,7 @@ class M1ThermalMonitor:
             # ISSUE-014: Nová pole
             smc_zones=smc_zones,
             thermal_level=thermal_level,
-        )
+    )
 
         self._last_reading = status
         self._last_read_time = now
@@ -1737,7 +1737,7 @@ class M1ResourceGovernor:
                     fetch_limit_cap=1,
                     reason="UMA emergency: near-OOM, all inference suspended",
                 ),
-            )
+    )
 
         # BATTERY: MLX suspended, I/O only
         # BATTERY: On battery with I/O-only → pause MLX, keep sidecars active.
@@ -1759,7 +1759,7 @@ class M1ResourceGovernor:
                     fetch_limit_cap=max(1, int(fetch_limit * max(power_factor, 0.3))),
                     reason=f"Battery at {power_status.get('battery_level', '?')}%, MLX suspended",
                 ),
-            )
+    )
 
         # [FINAL]-019-03: When io_only is True but we didn't match BATTERY
         # (e.g., UMA-critical pressure on AC), mlx_inference/embeddings/whisper
@@ -1786,7 +1786,7 @@ class M1ResourceGovernor:
                     reason="Governor CRITICAL/EMERGENCY: degraded mode active"
                            + (", io_only active" if io_only else ""),
                 ),
-            )
+    )
 
         # WINDUP: Sprint entering wind-down — reduce sidecars, still OK for MLX
         if self._sprint_windup_mode:
@@ -1805,7 +1805,7 @@ class M1ResourceGovernor:
                     reason="Sprint wind-up: sidecars suspended"
                            + (", io_only active" if io_only else ""),
                 ),
-            )
+    )
 
         # THERMAL: Thermal throttling — reduce batch, shorter generations
         if thermal_throttled and thermal_headroom < 1.0:
@@ -1824,7 +1824,7 @@ class M1ResourceGovernor:
                     reason=f"Thermal throttling: headroom={thermal_headroom:.0%}, batch reduced"
                            + (", io_only active" if io_only else ""),
                 ),
-            )
+    )
 
         # FULL: All capabilities enabled (subject to io_only gate)
         return (
@@ -1841,7 +1841,7 @@ class M1ResourceGovernor:
                 fetch_limit_cap=None,
                 reason="Normal operation" + (", io_only active" if io_only else ""),
             ),
-        )
+    )
 
     def set_degraded_mode(self, enabled: bool, reason: str = "") -> None:
         """
@@ -1916,7 +1916,7 @@ class M1ResourceGovernor:
             capability=capability,
             ack_callback=ack_callback,
             deadline_s=deadline_s,
-        )
+    )
     
     async def unsubscribe_capability(self, capability: str) -> None:
         """[NEW-M13]: Unsubscribe a capability from QoS changes."""
@@ -1949,7 +1949,7 @@ class M1ResourceGovernor:
                 self._BATCH_SCALE_FACTOR,
                 int(self._DEFAULT_MAX_TOKENS * self._MAX_TOKENS_MILD),
                 self._TEMP_REDUCTION_MILD,
-            )
+    )
         else:
             # Severe throttling — quadratic reduction + aggressive generation caps
             return (
@@ -1957,7 +1957,7 @@ class M1ResourceGovernor:
                 self._BATCH_SCALE_FACTOR ** 2,
                 int(self._DEFAULT_MAX_TOKENS * self._MAX_TOKENS_SEVERE),
                 self._TEMP_REDUCTION_SEVERE,
-            )
+    )
 
     @classmethod
     async def _ensure_decision_lock(cls) -> asyncio.Lock:
@@ -1996,16 +1996,16 @@ class M1ResourceGovernor:
             io_only_valid = (
                 M1ResourceGovernor._cached_decision is not None
                 and now - M1ResourceGovernor._cached_io_only_timestamp < M1ResourceGovernor.IO_ONLY_TTL_S
-            )
+    )
             fetch_limit_valid = (
                 M1ResourceGovernor._cached_decision is not None
                 and now - M1ResourceGovernor._cached_fetch_limit_timestamp < M1ResourceGovernor.FETCH_LIMIT_TTL_S
-            )
+    )
             block_model_load_valid = (
                 M1ResourceGovernor._cached_decision is not None
                 and now - M1ResourceGovernor._cached_block_model_load_timestamp
                 < M1ResourceGovernor.BLOCK_MODEL_LOAD_TTL_S
-            )
+    )
             if io_only_valid and fetch_limit_valid and block_model_load_valid:
                 return M1ResourceGovernor._cached_decision
             decision = await self._evaluate_impl()
@@ -2044,7 +2044,7 @@ class M1ResourceGovernor:
                 power_status={},
                 io_only=False,
                 fetch_limit=preset.fetch_limit,
-            )
+    )
             return GovernorDecision(
                 uma_state=UMAState.OK,
                 io_only=False,
@@ -2059,7 +2059,7 @@ class M1ResourceGovernor:
                 qos_level=qos_level,
                 qos_profile=qos_profile,
                 degradation_level=QoSLevel(qos_level),
-            )
+    )
         preset = ConcurrencyPreset.from_state(uma.state)
         now = time.monotonic()
         memory_ratio = uma.system_used_gib / max(uma.system_used_gib + uma.system_available_gib, 1.0)
@@ -2123,7 +2123,7 @@ class M1ResourceGovernor:
             # power constraints are evaluated (battery affects the level).
             qos_level="_pending",
             qos_profile=QoSProfile(),
-        )
+    )
         return self._adjust_for_power(uma, base_decision)
 
     def _adjust_for_power(self, uma: UMAStatus, base_decision: GovernorDecision) -> GovernorDecision:
@@ -2150,7 +2150,7 @@ class M1ResourceGovernor:
                 power_status={},
                 io_only=base_decision.io_only,
                 fetch_limit=base_decision.fetch_limit,
-            )
+    )
             return GovernorDecision(
                 uma_state=base_decision.uma_state,
                 io_only=base_decision.io_only,
@@ -2168,7 +2168,7 @@ class M1ResourceGovernor:
                 qos_level=qos_level,
                 qos_profile=qos_profile,
                 degradation_level=QoSLevel(qos_level),
-            )
+    )
 
         battery_level = uma.battery_level
         if battery_level is not None and battery_level < 20:
@@ -2196,7 +2196,7 @@ class M1ResourceGovernor:
             power_status=power_status,
             io_only=base_decision.io_only or (power_factor < 0.6),
             fetch_limit=adjusted_fetch,
-        )
+    )
 
         return GovernorDecision(
             uma_state=base_decision.uma_state,
@@ -2220,7 +2220,7 @@ class M1ResourceGovernor:
             qos_level=qos_level,
             qos_profile=qos_profile,
             degradation_level=QoSLevel(qos_level),
-        )
+    )
 
     async def apply_decision(self, decision: GovernorDecision) -> None:
         """
@@ -2275,17 +2275,17 @@ class M1ResourceGovernor:
                         thermal_headroom=decision.thermal_headroom,
                     ),
                     timeout=_METAL_RECONFIGURE_TIMEOUT_S,
-                )
+    )
                 if not success:
                     logger.warning(
                         f"[ResourceGovernor] Metal cache reconfigure failed: "
                         f"state={decision.uma_state}, thermal={decision.thermal_headroom:.2f}"
-                    )
+    )
             except asyncio.TimeoutError:
                 logger.error(
                     f"[ResourceGovernor] Metal cache reconfigure timeout after "
                     f"{_METAL_RECONFIGURE_TIMEOUT_S}s — possible deadlock"
-                )
+    )
             except Exception as e:
                 logger.debug(f"[ResourceGovernor] Metal cache reconfigure error: {e}")
 
@@ -2300,7 +2300,7 @@ class M1ResourceGovernor:
         _should_reconfigure = (
             decision.thermal_headroom < 1.0
             or decision.uma_state in (UMAState.WARN, UMAState.CRITICAL, UMAState.EMERGENCY)
-        )
+    )
         if _should_reconfigure:
             try:
                 await _sync_metal_reconfigure()
@@ -2325,7 +2325,7 @@ class M1ResourceGovernor:
             await safe_wait_for(
                 scheduler.on_pressure_change(decision.uma_state),
                 timeout=5.0,
-            )
+    )
         except asyncio.TimeoutError:
             logger.warning("[ResourceGovernor] GlobalPeakCoScheduler pressure update timeout")
         except Exception:  # noqa: BLE001
@@ -2348,14 +2348,14 @@ class M1ResourceGovernor:
             ack_results = await registry.emit_qos_change(
                 decision.qos_level,
                 decision.qos_profile
-            )
+    )
             # Log which subsystems need acknowledgment
             pending = [cap for cap, ack_received in ack_results.items() if not ack_received]
             if pending:
                 logger.info(
                     f"[QoS-Sub] Pending acks from {len(pending)} subsystems: {pending} "
                     f"(qos_level={decision.qos_level})"
-                )
+    )
         except Exception:  # noqa: BLE001
             pass
 
@@ -2451,7 +2451,7 @@ class M1ResourceGovernor:
                     "malloc_zone_pressure_relief returned %d (errno=%s)",
                     result,
                     errno.errorcode.get(ctypes.get_errno(), "unknown"),
-                )
+    )
         except Exception:  # noqa: BLE001
             pass
 
@@ -2493,10 +2493,10 @@ class M1ResourceGovernor:
             if est_mb > 50:
                 return M1ResourceGovernor.SidecarAdmission(
                     allowed=False, reason=f"{uma.state}: {sidecar_name} est={est_mb}MB blocked"
-                )
+    )
             return M1ResourceGovernor.SidecarAdmission(
                 allowed=True, reason=f"{uma.state}: {sidecar_name} est={est_mb}MB low-cost-allowed"
-            )
+    )
         return M1ResourceGovernor.SidecarAdmission(allowed=True, reason=f"{uma.state}: {sidecar_name} admitted")
 
 
@@ -2539,7 +2539,7 @@ class ResourceExhaustedError(RuntimeError):
         super().__init__(
             f"UMAGuard: cannot reserve {requested_mb:.0f} MB "
             f"(available={available_mb:.0f}, limit={hard_limit_mb:.0f}, reason={reason})"
-        )
+    )
 
 
 class ReservationInfo(msgspec.Struct, frozen=True, gc=False):
@@ -2674,7 +2674,7 @@ class AsyncUMAGuard:
                 # Log and continue (fail-soft for non-critical background tasks)
                 logger.warning(
                     "[AsyncUMAGuard] update_hard_limit called without running event loop"
-                )
+    )
 
     async def _notify_all_waiters(self) -> None:
         """Notify all waiters to re-check their requests."""
@@ -2694,7 +2694,7 @@ class AsyncUMAGuard:
                 "uma_guard",
                 success=True,
                 reason=f"hard_limit={new_limit:.0f}MB state={uma_state}"
-            )
+    )
         except Exception:  # noqa: BLE001
             pass  # Fail-soft: don't block the guard on ack failure
 
@@ -2751,7 +2751,7 @@ class AsyncUMAGuard:
                     available_mb=self.available_mb,
                     hard_limit_mb=self._hard_limit_mb,
                     reason="exceeds_hard_limit",
-                )
+    )
 
             # Wait loop: block until budget is available or timeout
             while self._current_allocated_mb + estimated_mb > self._hard_limit_mb:
@@ -2762,7 +2762,7 @@ class AsyncUMAGuard:
                 heapq.heappush(
                     self._wait_queue,
                     (priority_value, sequence, estimated_mb, waiter_event),
-                )
+    )
 
                 try:
                     # Wait for notification or timeout
@@ -2774,11 +2774,11 @@ class AsyncUMAGuard:
                                 available_mb=self.available_mb,
                                 hard_limit_mb=self._hard_limit_mb,
                                 reason="timeout",
-                            )
+    )
                         await safe_wait_for(
                             self._condition.wait(),
                             timeout=remaining_timeout,
-                        )
+    )
                     else:
                         await self._condition.wait()
                 except asyncio.TimeoutError:
@@ -2794,7 +2794,7 @@ class AsyncUMAGuard:
                         available_mb=self.available_mb,
                         hard_limit_mb=self._hard_limit_mb,
                         reason="timeout",
-                    )
+    )
                 except asyncio.CancelledError:
                     # Remove ourselves from queue
                     self._wait_queue = [
@@ -2827,7 +2827,7 @@ class AsyncUMAGuard:
                 wait_time_s=wait_time_s,
                 priority=priority_value,
                 queue_depth=len(self._wait_queue),
-            )
+    )
 
         try:
             yield info
@@ -2850,7 +2850,7 @@ class AsyncUMAGuard:
             self._total_wait_time_s / self._total_reservations
             if self._total_reservations > 0
             else 0.0
-        )
+    )
         return {
             "current_allocated_mb": self._current_allocated_mb,
             "hard_limit_mb": self._hard_limit_mb,
@@ -2910,7 +2910,7 @@ class ResourceGovernor:
             "_priority_factor",
             "high_water",
             "_thermal_monitor",
-        )
+    )
     )
 
     def __init__(self, memory_high_water_mb: float = 5632, thermal_threshold: float = 82.0):
@@ -2954,7 +2954,7 @@ class ResourceGovernor:
             from hledac.universal._core.peak_load_coordinator import (
                 get_peak_coordinator,
                 TaskPriority as PeakTaskPriority,
-            )
+    )
             coordinator = get_peak_coordinator()
             if coordinator is None:
                 return True, False
@@ -2972,13 +2972,13 @@ class ResourceGovernor:
                 logger.debug(
                     f"[UNIFIED-001] can_afford_sync: emergency mode, "
                     f"rejecting {priority} priority"
-                )
+    )
                 return False, True
             if snapshot.high_water_active and priority == Priority.LOW:
                 logger.debug(
                     f"[UNIFIED-001] can_afford_sync: high water mode, "
                     f"rejecting LOW priority (utilization: {snapshot.utilization_fraction:.1%})"
-                )
+    )
                 return False, True
             return True, False
         except (ImportError, AttributeError):
@@ -3029,7 +3029,7 @@ class ResourceGovernor:
             logger.warning(
                 f"GPU thermal throttled: cpu={thermal_status.cpu_temperature_c}°C, "
                 f"gpu={thermal_status.gpu_temperature_c}°C, headroom={thermal_status.thermal_headroom:.2f}"
-            )
+    )
             return False
         return True
 
@@ -3242,7 +3242,7 @@ async def _get_memory_pressure_status_async() -> str:
             "memory_pressure",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-        )
+    )
         try:
             async with asyncio.timeout(2.0):
                 stdout, stderr = await proc.communicate()
@@ -3585,7 +3585,7 @@ class UMAAlarmDispatcher:
             [_dispatch_one(cb, logger) for cb in callbacks],
             policy="log",
             ctx="resource_governor:648",
-        )
+    )
 
 
 from collections import deque
@@ -3702,7 +3702,7 @@ class AdaptiveMPCController:
                     safe_headroom_gib=safe_headroom,
                     control_input=1.0,
                     predicted_state=current_state,
-                )
+    )
                 _MPC_HISTORY.append((now, current_memory_gib, 0.0, 0.0, 1.0))
                 return (1.0, metrics)
             raw_dt = now - self._last_t
@@ -3740,7 +3740,7 @@ class AdaptiveMPCController:
                 safe_headroom_gib=safe_headroom,
                 control_input=control,
                 predicted_state=predicted_state,
-            )
+    )
             return (control, metrics)
 
     def reset(self) -> None:
@@ -3842,7 +3842,7 @@ def get_lane_ram_budget(lane_id: str) -> int:
 # Set once per evaluation cycle in apply_decision().
 _qos_signal: _contextvars.ContextVar[QoSProfile] = _contextvars.ContextVar(
     "_qos_signal", default=QoSProfile()
-)
+    )
 
 
 def get_qos_signal() -> QoSProfile:
@@ -3978,7 +3978,7 @@ class QoSSubscriptionRegistry:
                 ack_callback=ack_callback,
                 deadline_s=deadline_s,
                 cancel_fn=cancel_fn,
-            )
+    )
             self._subscriptions[capability] = sub
             self._health_states[capability] = SubsystemHealth.UNKNOWN
             logger.debug(f"[QoS-Sub] Registered {capability} (deadline={deadline_s}s, has_cancel={cancel_fn is not None})")
@@ -4023,18 +4023,18 @@ class QoSSubscriptionRegistry:
                         deadline=now + deadline_s,
                         subscribed_at=now,
                         cancel_fn=sub.cancel_fn if sub else None,
-                    )
+    )
                     self._pending_acks[cap] = pending
                     self._health_states[cap] = SubsystemHealth.PENDING
                     logger.info(
                         f"[QoS-Sub] Emitted RESTRICTIVE to {cap}: "
                         f"level={qos_level}, deadline={deadline_s}s"
-                    )
+    )
                     # Schedule force-cancel if no ack received
                     safe_create_task(
                         self._force_cancel_if_no_ack(cap, deadline_s),
                         name=f"resource_governor:force_cancel:{cap}",
-                    )
+    )
                     results[cap] = False
                 else:
                     # NON-RESTRICTIVE or ALLOWED: mark healthy
@@ -4083,7 +4083,7 @@ class QoSSubscriptionRegistry:
             
             self._health_states[capability] = (
                 SubsystemHealth.HEALTHY if success else SubsystemHealth.FAILED
-            )
+    )
             
             # Call the subscriber's ack callback
             sub = self._subscriptions.get(capability)
@@ -4095,7 +4095,7 @@ class QoSSubscriptionRegistry:
             
             logger.info(
                 f"[QoS-Sub] Ack from {capability}: success={success}, reason={reason}"
-            )
+    )
             return True
     
     async def _force_cancel_if_no_ack(self, capability: str, deadline_s: float) -> None:
@@ -4129,11 +4129,11 @@ class QoSSubscriptionRegistry:
                     pending.cancel_fn()
                     logger.warning(
                         f"[QoS-Sub] FORCE-CANCEL {capability}: called cancel_fn callback"
-                    )
+    )
                 except Exception as e:
                     logger.error(
                         f"[QoS-Sub] FORCE-CANCEL {capability}: cancel_fn raised {type(e).__name__}: {e}"
-                    )
+    )
             
             # 2. Mark as FAILED
             self._pending_acks.pop(capability, None)
@@ -4149,7 +4149,7 @@ class QoSSubscriptionRegistry:
             
             logger.error(
                 f"[QoS-Sub] FORCE-CANCEL {capability}: no ack within {deadline_s}s, subsystem stopped"
-            )
+    )
             
             # Emit alert metric
             try:
@@ -4157,7 +4157,7 @@ class QoSSubscriptionRegistry:
                 get_metrics_registry().increment_counter(
                     "qos_force_cancel_total",
                     tags={"capability": capability}
-                )
+    )
             except Exception:
                 pass
     
@@ -4199,7 +4199,7 @@ class QoSSubscriptionRegistry:
                     results[cap] = SubsystemHealth.FAILED
                     logger.warning(
                         f"[QoS-Sub] {cap} ack overdue by {now - pending.deadline:.1f}s"
-                    )
+    )
                     continue
                 
                 # Check 2: Restrictive QoS without acknowledgment
@@ -4209,7 +4209,7 @@ class QoSSubscriptionRegistry:
                     logger.warning(
                         f"[QoS-Sub] {cap} DRIFTED: no ack for restrictive QoS "
                         f"(level={self._last_qos_level})"
-                    )
+    )
                     continue
                 
                 # Check 3: Pending ack (waiting for compliance)

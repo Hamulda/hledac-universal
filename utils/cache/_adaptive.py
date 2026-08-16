@@ -311,7 +311,7 @@ class IntelligentCache:
         self._background_tasks: set[asyncio.Task] = set()
         self._persistence_path: Path | None = (
             Path(self.config.persistence_path) if self.config.persistence_path else None
-        )
+    )
         self._warm_keys: list[str] | None = self.config.warm_keys
         self._warm_loader: Callable | None = self.config.warm_loader
 
@@ -421,7 +421,7 @@ class IntelligentCache:
                 created_at=now,
                 expires_at=now + (ttl or self.config.default_ttl),
                 last_accessed=now
-            )
+    )
             self._cache[key] = entry
             self._access_order[key] = None
             self._frequency[key] = 0
@@ -633,7 +633,7 @@ class MemoryOptimizedURLSet:
             logger.warning(
                 f'Memory limit reached ({self.max_memory_mb}MB), '
                 f'cannot add more URLs (current: {len(self.urls)})'
-            )
+    )
             return False
         self.urls.add(url)
         self._memory_usage += estimated_size

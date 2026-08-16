@@ -269,7 +269,7 @@ class AsyncLRUCache(Generic[T, U]):
         return (
             f"AsyncLRUCache(maxsize={self._maxsize}, "
             f"len={len(self._cache)}, locks={len(self._locks)})"
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +326,7 @@ def async_cached(
                 f"async_cached can only decorate async def functions. "
                 f"Got sync function: {func_name}. "
                 f"Use functools.lru_cache for sync functions."
-            )
+    )
 
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> T:

@@ -66,7 +66,7 @@ import importlib.util
 _serialization_spec = importlib.util.spec_from_file_location(
     "serialization",
     str(Path(__file__).parent.parent / "utils" / "serialization.py")
-)
+    )
 _serialization_mod = importlib.util.module_from_spec(_serialization_spec)
 _serialization_spec.loader.exec_module(_s_mod := _serialization_mod)
 _safe_dataclass_to_dict = _s_mod._safe_dataclass_to_dict
@@ -567,7 +567,7 @@ def test_no_unsafe_asdict_in_measurement_files() -> None:
         if matches:
             failures.append(
                 f"{rel_path}: contains {len(matches)} unsafe dataclasses.asdict() call(s)"
-            )
+    )
 
     if failures:
         _FAILED.append("FAIL: unsafe asdict() found:\n" + "\n".join(failures))

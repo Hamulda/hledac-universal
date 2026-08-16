@@ -61,7 +61,7 @@ RETRYABLE_ERROR_PATTERNS: tuple[str, ...] = (
     'curl error',
     'server disconnected',
     'handshake failure',
-)
+    )
 
 # Crypto-safe jitter — reused across retries (F350M-R)
 _JITTER_RNG = secrets.SystemRandom()
@@ -298,4 +298,4 @@ retry_decorator = retry(
     before_sleep=_tenacity_before_sleep,
     after=_tenacity_after,
     reraise=True,
-)
+    )

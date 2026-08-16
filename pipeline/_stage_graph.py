@@ -134,11 +134,11 @@ async def _get_cpu_pool() -> ThreadPoolExecutor:
                 _CPU_POOL = ThreadPoolExecutor(
                     max_workers=cpu_count,
                     thread_name_prefix="stage-cpu-pool",
-                )
+    )
                 logger.debug(
                     "[ISSUE-05] CPU pool initialized with %d workers (M1 8GB safe)",
                     cpu_count,
-                )
+    )
     return _CPU_POOL
 
 
@@ -316,7 +316,7 @@ class ParallelStageExecutor:
                     "[ISSUE-05] ParallelStageExecutor: cycle detected, "
                     "falling back to sequential for remaining: %s",
                     remaining,
-                )
+    )
                 groups.append(sorted(remaining))
                 break
 
@@ -330,7 +330,7 @@ class ParallelStageExecutor:
         logger.debug(
             "[ISSUE-05] Parallel groups: %s",
             [[c.name for c in self._configs if c.name in g] for g in groups],
-        )
+    )
         return groups
 
     async def run(
@@ -378,14 +378,14 @@ class ParallelStageExecutor:
                     stage_input = self._get_stage_input(config, completed_results)
                     group_coros.append(
                         self._run_stage(config, stage_input, f"group-{group_idx}")
-                    )
+    )
                     group_names_filtered.append(name)
 
                 # Execute group concurrently
                 group_results = await parallel_ok(
                     *group_coros,
                     label=f"parallel-group-{group_idx}",
-                )
+    )
 
                 # Match results to names (order preserved)
                 for name, result in zip(group_names_filtered, group_results):
@@ -470,7 +470,7 @@ class ParallelStageExecutor:
                 items_out=items_out,
                 execution_time_ms=dt_ms,
                 parallel_group=parallel_group,
-            )
+    )
 
         except Exception as exc:
             dt_ms = (time.monotonic() - t0) * 1000
@@ -478,7 +478,7 @@ class ParallelStageExecutor:
                 "[ISSUE-05] ParallelStageExecutor: stage '%s' failed: %s",
                 stage_name,
                 exc,
-            )
+    )
             return StageResult(
                 ok=False,
                 stage_name=stage_name,
@@ -489,7 +489,7 @@ class ParallelStageExecutor:
                 items_out=0,
                 execution_time_ms=dt_ms,
                 parallel_group=parallel_group,
-            )
+    )
 
     async def _run_stage_cpu_bound(
         self,
@@ -553,7 +553,7 @@ class BackpressureQueue(Generic[T]):
                 "[ISSUE-05] BackpressureQueue[%s]: dropped item (full, size=%d)",
                 self._stage_name,
                 self._maxsize,
-            )
+    )
             return False
 
     async def get(self) -> T:
@@ -650,7 +650,7 @@ class StageOrchestrator:
                 stage=stage,
                 level=_get_stage_level(name),
                 depends_on=self._infer_dependencies(name, stages),
-            )
+    )
             for name, stage in stages
         ]
 
@@ -771,7 +771,7 @@ class StageOrchestrator:
         executor = ParallelStageExecutor(
             self._configs,
             backpressure_maxsize=256,
-        )
+    )
         results = await executor.run(initial_input)
 
         # ISSUE-12: Update stats using frozen-compatible helper
@@ -783,7 +783,7 @@ class StageOrchestrator:
                 items_in_delta=result.items_in,
                 items_out_delta=result.items_out,
                 errors_delta=1 if not result.ok else 0,
-            )
+    )
 
         # ISSUE-12: Wire stage timing to metrics registry for OtelBridge correlation
         self._record_stage_timings(results)
@@ -812,7 +812,7 @@ class StageOrchestrator:
                     time_ms_delta=dt_ms,
                     items_in_delta=items_in,
                     items_out_delta=items_out,
-                )
+    )
 
                 results.append(StageResult(
                     ok=True,
@@ -836,11 +836,11 @@ class StageOrchestrator:
                     stage_name,
                     time_ms_delta=dt_ms,
                     errors_delta=1,
-                )
+    )
 
                 logger.exception(
                     f"StageOrchestrator: stage '{stage_name}' failed: {exc}"
-                )
+    )
 
                 results.append(StageResult(
                     ok=False,
@@ -905,7 +905,7 @@ class StageOrchestrator:
                         time_ms_delta=dt_ms,
                         items_in_delta=items_in,
                         items_out_delta=items_out,
-                    )
+    )
 
                     results.append(StageResult(
                         ok=True,
@@ -929,11 +929,11 @@ class StageOrchestrator:
                         stage_name,
                         time_ms_delta=dt_ms,
                         errors_delta=1,
-                    )
+    )
 
                     logger.exception(
                         f"StageOrchestrator: stage '{stage_name}' failed: {exc}"
-                    )
+    )
 
                     results.append(StageResult(
                         ok=False,
@@ -977,7 +977,7 @@ class StageOrchestrator:
             items_in_total=old_stats.items_in_total + items_in_delta,
             items_out_total=old_stats.items_out_total + items_out_delta,
             errors=old_stats.errors + errors_delta,
-        )
+    )
 
     # ── ISSUE-12: Wire stage stats to metrics registry ──────────────────────
 
@@ -1000,7 +1000,7 @@ class StageOrchestrator:
                     items_in=result.items_in,
                     items_out=result.items_out,
                     error=not result.ok,
-                )
+    )
 
             # Record pipeline-level stats
             total_latency = sum(r.execution_time_ms for r in results)
@@ -1068,7 +1068,7 @@ def topological_sort(
         # Cycle detected — return original order
         logger.warning(
             "StageOrchestrator: topological sort found cycle, using original order"
-        )
+    )
         return stages
 
     return [(name, name_to_stage[name]) for name in sorted_names]

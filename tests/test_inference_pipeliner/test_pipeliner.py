@@ -80,7 +80,7 @@ class TestPendingRequest(unittest.TestCase):
                     system_msg="test system",
                     thinking=True,
                     submitted_at=123456.0,
-                )
+    )
                 self.assertEqual(req.prompt, "test prompt")
                 self.assertEqual(req.temperature, 0.1)
                 self.assertEqual(req.max_tokens, 50)

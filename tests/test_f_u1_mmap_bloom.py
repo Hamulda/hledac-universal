@@ -64,7 +64,7 @@ pytestmark = pytest.mark.skipif(
         f"hledac_rust_extensions.MmapBloomFilter not available "
         f"({_RUST_IMPORT_ERROR or 'extension not built'})"
     ),
-)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +226,7 @@ class TestMmapBloomFilterAdapter:
             path=str(tmp_path / "factory.bin"),
             est_elements=500,
             false_positive_rate=0.01,
-        )
+    )
         assert bf is not None
         bf.add("hello")
         assert "hello" in bf
@@ -236,13 +236,13 @@ class TestMmapBloomFilterAdapter:
         from hledac.universal.tools.url_dedup import (  # type: ignore[import-not-found]
             DeduplicationStrategy,
             MmapBloomFilterAdapter,
-        )
+    )
 
         bf = MmapBloomFilterAdapter(
             path=str(tmp_path / "proto.bin"),
             capacity=100,
             fp_rate=0.01,
-        )
+    )
         assert isinstance(bf, DeduplicationStrategy)
         bf.add("x")
         assert ("x" in bf) is True
@@ -253,12 +253,12 @@ class TestMmapBloomFilterAdapter:
         from hledac.universal.tools.url_dedup import (  # type: ignore[import-not-found]
             create_mmap_bloom_filter,
             dedupe_url_list,
-        )
+    )
 
         bf = create_mmap_bloom_filter(
             path=str(tmp_path / "f_a5.bin"),
             est_elements=1000,
-        )
+    )
         urls = [
             "https://example.com/a",
             "https://example.com/a",  # dupe within input
@@ -294,7 +294,7 @@ class TestMmapBloomFilterAdapter:
             path=str(tmp_path / "fail.bin"),
             capacity=10,
             fp_rate=0.01,
-        )
+    )
 
         class _RaisingFilter:
             """Stand-in for the Rust filter whose methods always raise."""
@@ -335,7 +335,7 @@ class TestMmapBloomFilterAdapter:
             path=str(tmp_path / "sync.bin"),
             capacity=100,
             fp_rate=0.01,
-        )
+    )
         bf.add("a")
         # sync() returns bool, must not raise.
         result = bf.sync()
@@ -348,7 +348,7 @@ class TestMmapBloomFilterAdapter:
             path=str(tmp_path / "reset.bin"),
             capacity=100,
             fp_rate=0.01,
-        )
+    )
         bf.add("a")
         bf.add("b")
         assert len(bf) == 2

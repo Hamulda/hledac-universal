@@ -113,7 +113,7 @@ class _RustFeedDominanceGuard:
         d = self._ext.compute_feed_dominance(
             total_accepted, feed_accepted, nonfeed_accepted,
             self._threshold, self._min_nonfeed,
-        )
+    )
         ratio = d["feed_dominance_ratio"]
         guard_triggered = ratio >= self._threshold and nonfeed_accepted < self._min_nonfeed
         block_early_exit = self._strict and guard_triggered
@@ -125,7 +125,7 @@ class _RustFeedDominanceGuard:
             guard_triggered=guard_triggered,
             block_early_exit=block_early_exit,
             reason=d["reason"],
-        )
+    )
 
     def compute_simple(self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int) -> _FeedDominanceResult:
         return self.compute(total_accepted, feed_accepted, nonfeed_accepted)
@@ -240,7 +240,7 @@ class PythonFeedDominanceGuard:
                 guard_triggered=False,
                 block_early_exit=False,
                 reason="zero findings",
-            )
+    )
 
         ratio = feed_accepted / total_accepted
         cls = _feed_dominance_ratio_class(ratio)
@@ -260,7 +260,7 @@ class PythonFeedDominanceGuard:
             guard_triggered=guard_triggered,
             block_early_exit=block_early_exit,
             reason=reason,
-        )
+    )
 
     def compute_simple(self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int) -> PythonFeedDominanceGuardResult:
         return self.compute(total_accepted, feed_accepted, nonfeed_accepted)

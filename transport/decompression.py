@@ -126,7 +126,7 @@ def decode_response_body(body: bytes, content_encoding: str | None) -> bytes:
         logger.warning(
             f"decode_response_body: body {len(body)} bytes exceeds cap "
             f"{MAX_DECODE_BODY_BYTES}, returning original"
-        )
+    )
         return body
 
     codings = [c.strip() for c in content_encoding.split(",") if c.strip()]
@@ -142,12 +142,12 @@ def decode_response_body(body: bytes, content_encoding: str | None) -> bytes:
                     f"server sent Content-Encoding: br but brotli is not installed "
                     f"(install with: uv pip install '.[osint-compression]'); "
                     f"returning body unchanged ({len(current)} bytes)"
-                )
+    )
             else:
                 logger.warning(
                     f"decode_response_body: failed to decode layer {i} "
                     f"({coding!r}), returning partial result"
-                )
+    )
             return current
         current = decoded
     return current

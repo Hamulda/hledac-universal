@@ -55,7 +55,7 @@ class TestMallocZonePressureRelief:
             "malloc_zone_pressure_relief",
             _boom,
             raising=False,
-        )
+    )
         result = memory_cycle.malloc_zone_pressure_relief()
         assert result == 0  # fail-soft
 
@@ -122,7 +122,7 @@ class TestPressureReliefLoop:
         # At least one tick ran (the loop hits the syscall on entry).
         assert runs_after >= runs_before + 1, (
             f"expected at least 1 tick, got {runs_after - runs_before}"
-        )
+    )
 
     @pytest.mark.asyncio
     async def test_min_interval_enforced(self) -> None:

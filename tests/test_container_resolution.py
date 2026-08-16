@@ -12,11 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-
-
-
-
-
+from _core.container import (
     ServiceContainer,
     get_global_container,
     reset_global_container,
@@ -26,7 +22,6 @@ import pytest
 class TestServiceContainer:
     """Unit tests for ServiceContainer."""
 
-from _core import aclose
     def setup_method(self) -> None:
         reset_global_container()
         self.container = ServiceContainer()

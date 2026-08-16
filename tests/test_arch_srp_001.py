@@ -58,7 +58,7 @@ class TestBrainCoordinator:
         coordinator = BrainCoordinator(
             llm_engine=mock_llm,
             prompt_builder=mock_prompt,
-        )
+    )
 
         assert coordinator._llm is mock_llm
         assert coordinator._prompt is mock_prompt
@@ -75,7 +75,7 @@ class TestBrainCoordinator:
         coordinator = BrainCoordinator(
             llm_engine=mock_llm,
             prompt_builder=mock_prompt,
-        )
+    )
 
         result = coordinator._default_system()
         assert isinstance(result, str)

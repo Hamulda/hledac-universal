@@ -38,7 +38,7 @@ findings = await harvester.harvest(
     keyword="ransomware",
     protocols=["ipfs", "tor", "i2p", "bt_dht"],
     duration_s=120,
-)
+    )
 
 # Individual protocols
 bt_findings = await harvester.dht_crawl("malware", duration_s=60)
@@ -141,7 +141,7 @@ class P2PHarvester:
             logger.warning(
                 "[P2P] Rust p2p_harvest module not available. "
                 "Set HLEDAC_ENABLE_P2P_HARVEST=1 or compile with --features p2p_harvest"
-            )
+    )
 
     @property
     def is_available(self) -> bool:
@@ -210,7 +210,7 @@ class P2PHarvester:
                     protocols=protocols,
                     duration_s=duration_s,
                     max_results=max_results,
-                )
+    )
                 return self._convert_to_canonical_findings(findings, keyword)
             except Exception as e:
                 logger.warning(f"[P2P] Rust harvest failed: {e}, falling back to Python")
@@ -224,7 +224,7 @@ class P2PHarvester:
                     protocols=protocols,
                     duration_s=duration_s,
                     max_results=max_results,
-                )
+    )
                 return self._convert_to_canonical_findings(findings, keyword)
             except Exception as e:
                 logger.warning(f"[P2P] Bridge harvest failed: {e}, falling back to Python")
@@ -254,7 +254,7 @@ class P2PHarvester:
             protocols=["bt_dht"],
             duration_s=duration_s,
             max_results=max_results,
-        )
+    )
 
     async def ipfs_crawl(
         self,
@@ -278,7 +278,7 @@ class P2PHarvester:
             protocols=["ipfs"],
             duration_s=duration_s,
             max_results=max_results,
-        )
+    )
 
     async def tor_scrape(
         self,
@@ -302,7 +302,7 @@ class P2PHarvester:
             protocols=["tor"],
             duration_s=duration_s,
             max_results=max_results,
-        )
+    )
 
     async def i2p_resolve(
         self,
@@ -330,7 +330,7 @@ class P2PHarvester:
                 findings = await self._rust_module.i2p_leaseset_resolve_async(
                     b32_addr=b32_addr,
                     duration_s=duration_s,
-                )
+    )
                 return self._convert_to_canonical_findings(findings, b32_addr)
             except Exception as e:
                 logger.warning(f"[P2P] I2P resolve failed: {e}")
@@ -369,7 +369,7 @@ class P2PHarvester:
                     ts=float(raw.get("timestamp", time.time())),
                     provenance=(f"p2p:{raw.get('protocol', 'unknown')}",),
                     payload_text=raw.get("payload", ""),
-                )
+    )
                 findings.append(finding)
             except Exception as e:
                 logger.debug(f"[P2P] Finding conversion error: {e}")
@@ -408,7 +408,7 @@ class P2PHarvester:
                     duration_s=duration_s,
                     max_results=max_results,
                     harvest_metadata=False,
-                )
+    )
                 import time
                 for r in results:
                     finding = CanonicalFinding(
@@ -419,7 +419,7 @@ class P2PHarvester:
                         ts=time.time(),
                         provenance=("bt_dht:python_fallback",),
                         payload_text=str(r),
-                    )
+    )
                     findings.append(finding)
             except Exception as e:
                 logger.warning(f"[P2P] Python DHT fallback failed: {e}")

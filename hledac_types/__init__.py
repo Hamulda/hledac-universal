@@ -10,11 +10,7 @@ Usage (current):
 Usage (after migration):
     from hledac.universal.types import ResearchMode, AgentMetrics, ...
 """
-
-
-
-
-
+from hledac.universal.project_types import (
     # Enums
     ActionResultType,
     ActionType,
@@ -56,8 +52,7 @@ Usage (after migration):
     AgentManagerConfig,
     CoordinationConfig,
     CommunicationConfig,
-
-from _core import aclose    DeepResearchConfig,
+    DeepResearchConfig,
     GhostConfig,
     MemoryConfig,
     ModelConfig,

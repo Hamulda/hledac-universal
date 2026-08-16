@@ -252,7 +252,7 @@ class AsyncLogHandler:
         self._started = True
         self._thread = threading.Thread(
             target=self._flush_loop, daemon=True, name="AsyncLogHandler-flush"
-        )
+    )
         self._thread.start()
 
     def _flush_loop(self) -> None:
@@ -325,7 +325,7 @@ async def configure_async_logging() -> None:
                 context_class=dict,
                 logger_factory=sl.stdlib.LoggerFactory(),
                 cache_logger_on_first_use=True,
-            )
+    )
         except Exception:  # noqa: BLE001
             pass
 
@@ -384,7 +384,7 @@ def _json_renderer_async(
             try:
                 safe_create_task(
                     AsyncLogHandler._instance.emit(line), name="log:emit"
-                )
+    )
                 return ""  # structlog requires non-None return
             except RuntimeError:  # noqa: BLE001
                 # No event loop - fall through to sync write
@@ -395,7 +395,7 @@ def _json_renderer_async(
             sys.stderr
             if _method.upper() in ("ERROR", "CRITICAL", "WARNING")
             else sys.stdout
-        )
+    )
         out.write(line + "\n")
         return ""  # structlog requires non-None return
     except Exception:

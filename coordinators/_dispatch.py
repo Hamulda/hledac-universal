@@ -27,7 +27,7 @@ Usage:
                 decision=decision,
             ),
             execute_fn=self._execute_decision,
-        )
+    )
 """
 from __future__ import annotations
 
@@ -125,7 +125,7 @@ async def execute_dispatch(
             execution_time=time.time() - ctx.start_time,
             success=is_success,
             metadata=extra_meta,
-        )
+    )
     except Exception as e:
         operation_result = OperationResult(
             operation_id=operation_id,
@@ -134,7 +134,7 @@ async def execute_dispatch(
             execution_time=time.time() - ctx.start_time,
             success=False,
             error_message=str(e),
-        )
+    )
     finally:
         tracker.untrack_operation(operation_id)
 

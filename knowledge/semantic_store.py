@@ -213,7 +213,7 @@ class SemanticStore:
                     "[SEMSTORE] CoreMLEmbedder loaded (ANE path=%s, backend=%s)",
                     _COREML_ANE_AVAILABLE,
                     getattr(self._coreml_embedder, '_backend', None) or "hash",
-                )
+    )
             except Exception as e:
                 logger.warning("[SEMSTORE] CoreMLEmbedder load failed: %s", e)
                 self._coreml_embedder = None
@@ -258,7 +258,7 @@ class SemanticStore:
                         "[SEMSTORE] ANN backend changed from '%s' to '%s'. "
                         "Invalidating semantic store to prevent orphaned vectors.",
                         stored_backend, resolved_backend
-                    )
+    )
                     # F2 FIX COMPLETE: Delete BOTH sqlite-vec .db files AND LanceDB directory
                     # sqlite-vec stores at: self._db_path.parent / "semantic_vec.db"
                     # LanceDB stores at: self._db_path (directory with .lance data)
@@ -309,7 +309,7 @@ class SemanticStore:
                 assert self._table is not None
                 logger.info(
                     f"SemanticStore: LanceDB table open: {self._table.count_rows()} rows"
-                )
+    )
                 _table_opened = True
             else:
                 self._table = None
@@ -323,7 +323,7 @@ class SemanticStore:
                 assert self._table_multilingual is not None
                 logger.info(
                     f"SemanticStore: Multilingual table open: {self._table_multilingual.count_rows()} rows"
-                )
+    )
             else:
                 self._table_multilingual = None
         except Exception:
@@ -345,7 +345,7 @@ class SemanticStore:
                     f"finding_id TEXT PRIMARY KEY, text TEXT, source_type TEXT, "
                     f"finding_id_idx TEXT, ts REAL, ioc_types TEXT, "
                     f"embedding float[{self._embed_dim}])"
-                )
+    )
                 logger.info(f"[SEMSTORE] sqlite-vec active: {vec_db_path}")
             except Exception as e:
                 logger.warning("[SEMSTORE] sqlite-vec failed: %s", e)
@@ -364,7 +364,7 @@ class SemanticStore:
                     f"finding_id TEXT PRIMARY KEY, text TEXT, source_type TEXT, "
                     f"finding_id_idx TEXT, ts REAL, ioc_types TEXT, language TEXT, "
                     f"embedding float[{self._embed_dim}])"
-                )
+    )
                 logger.info(f"[SEMSTORE] sqlite-vec multilingual active: {vec_db_path}")
             except Exception as e:
                 logger.warning("[SEMSTORE] sqlite-vec multilingual failed: %s", e)
@@ -376,7 +376,7 @@ class SemanticStore:
             f"coreml_ane={_COREML_ANE_AVAILABLE}, "
             f"vec_backend={'lancedb' if self._table else 'sqlite-vec' if self._vec_db else 'memory'}, "
             f"multilingual_enabled={self._multilingual_enabled}"
-        )
+    )
 
     async def _initialize_multilingual(self) -> None:
         """SWARM-002: Initialize multilingual components (BGE-M3 + language detection)."""
@@ -390,14 +390,14 @@ class SemanticStore:
                 use_fasttext=True,
                 use_langdetect=True,
                 confidence_threshold=0.7
-            )
+    )
             logger.info('[SEMSTORE] Language detector initialized')
 
             # Initialize BGE-M3 embedder (lazy load)
             self._bge_m3_embedder = get_bge_m3_embedder(
                 mrl_target_dim=self._embed_dim,  # 256d for USEARCH compatibility
                 lazy_load=True
-            )
+    )
 
             self._multilingual_enabled = True
             logger.info('[SEMSTORE] BGE-M3 embedder initialized (multilingual enabled)')
@@ -441,7 +441,7 @@ class SemanticStore:
             logger.warning(
                 f"[SEMSTORE] Buffer overflow: dropping oldest finding "
                 f"(drops_since_start={self._buffer_overflow_drops}, max={_MAX_PENDING})"
-            )
+    )
             self._pending_texts.popleft()
             self._pending_meta.popleft()
             self._pending_languages.popleft()
@@ -468,7 +468,7 @@ class SemanticStore:
                 "ioc_types": ",".join(ioc_types) if ioc_types else "",
                 "language": lang_result.language if lang_result else "en",
             }
-        )
+    )
         self._pending_languages.append(lang_result)
 
     # -------------------------------------------------------------------------
@@ -530,7 +530,7 @@ class SemanticStore:
             meta[emb_idx]["ts"],
             meta[emb_idx]["ioc_types"],
             emb.tolist(),
-        )
+    )
 
     def _build_sqlite_vec_multilingual_row(self, emb_idx: int, texts: list[str], meta: list[dict], emb: np.ndarray, lang: str) -> tuple:
         """Build a sqlite-vec row tuple for multilingual embedding."""
@@ -543,7 +543,7 @@ class SemanticStore:
             meta[emb_idx]["ioc_types"],
             lang,
             emb.tolist(),
-        )
+    )
 
     async def flush(self) -> dict[str, int | dict]:
         """
@@ -574,7 +574,7 @@ class SemanticStore:
         logger.debug(
             f"[SEMSTORE] Language split: {len(english_texts)} English, "
             f"{len(multilingual_texts)} multilingual"
-        )
+    )
 
         # Embed texts
         embeddings_english = await self._embed_english(english_texts) if english_texts else None
@@ -586,7 +586,7 @@ class SemanticStore:
         if embeddings_english is not None:
             english_count = self._write_english_embeddings(
                 embeddings_english, english_indices, texts, meta,
-            )
+    )
             if english_count < len(english_indices):
                 english_errors['partial_write'] = len(english_indices) - english_count
 
@@ -596,7 +596,7 @@ class SemanticStore:
         if embeddings_multilingual is not None:
             multilingual_count = self._write_multilingual_embeddings(
                 embeddings_multilingual, multilingual_indices, multilingual_langs, texts, meta,
-            )
+    )
             if multilingual_count < len(multilingual_indices):
                 multilingual_errors['partial_write'] = len(multilingual_indices) - multilingual_count
 
@@ -636,7 +636,7 @@ class SemanticStore:
         # SAFE-2.4: Validate embeddings before writing
         safe_embeddings, failed_indices = self._safe_validate_embeddings_batch(
             embeddings_english, texts
-        )
+    )
         if safe_embeddings is None:
             return 0
 
@@ -663,7 +663,7 @@ class SemanticStore:
                     f"(finding_id, text, source_type, finding_id_idx, ts, ioc_types, embedding) "
                     f"VALUES (?, ?, ?, ?, ?, ?, ?)",
                     rows,
-                )
+    )
                 self._vec_db.commit()
                 logger.debug("[SEMSTORE] English sqlite-vec upserted %d records", len(rows))
                 return len(rows)
@@ -690,7 +690,7 @@ class SemanticStore:
         # SAFE-2.4: Validate embeddings before writing
         safe_embeddings, failed_indices = self._safe_validate_embeddings_batch(
             embeddings_multilingual, texts
-        )
+    )
         if safe_embeddings is None:
             return 0
 
@@ -698,7 +698,7 @@ class SemanticStore:
             records = [
                 self._build_lance_multilingual_record(
                     safe_embeddings[i], multilingual_indices[i], texts, meta, multilingual_langs[i],
-                )
+    )
                 for i in range(len(multilingual_indices))
             ]
             try:
@@ -712,7 +712,7 @@ class SemanticStore:
             rows = [
                 self._build_sqlite_vec_multilingual_row(
                     multilingual_indices[i], texts, meta, safe_embeddings[i], multilingual_langs[i],
-                )
+    )
                 for i in range(len(multilingual_indices))
             ]
             try:
@@ -721,7 +721,7 @@ class SemanticStore:
                     f"(finding_id, text, source_type, finding_id_idx, ts, ioc_types, language, embedding) "
                     f"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
-                )
+    )
                 self._vec_db_multilingual.commit()
                 logger.debug("[SEMSTORE] Multilingual sqlite-vec upserted %d records", len(rows))
                 return len(rows)
@@ -745,12 +745,12 @@ class SemanticStore:
 
                 embeddings = await loop.run_in_executor(
                     None, lambda: batch_encode(mlx_mgr, texts)
-                )
+    )
                 # Ensure 256d dimension (truncate or pad)
                 embeddings = self._ensure_dim(embeddings, self._embed_dim)
                 logger.debug(
                     "[SEMSTORE] English batch embed via MLXEmbeddingManager: %d texts", len(texts)
-                )
+    )
                 return embeddings
             except Exception as e:
                 logger.warning("[SEMSTORE] MLXEmbeddingManager embed failed: %s", e)
@@ -761,11 +761,11 @@ class SemanticStore:
             try:
                 embeddings = await loop.run_in_executor(
                     None, lambda: self._coreml_embedder.embed(texts, batch_size=64)  # type: ignore[union-attr]
-                )
+    )
                 embeddings = self._ensure_dim(embeddings, self._embed_dim)
                 logger.debug(
                     "[SEMSTORE] English batch embed via CoreMLEmbedder: %d texts", len(texts)
-                )
+    )
                 return embeddings
             except Exception as e:
                 logger.warning("[SEMSTORE] CoreMLEmbedder embed failed: %s", e)
@@ -786,7 +786,7 @@ class SemanticStore:
             # BGE-M3 embed_batch is async, so we need to run it directly
             embeddings = await self._bge_m3_embedder.embed_batch(
                 texts, truncate_to=self._embed_dim
-            )
+    )
             logger.debug("[SEMSTORE] Multilingual batch embed via BGE-M3: %d texts", len(texts))
             return embeddings
 
@@ -857,7 +857,7 @@ class SemanticStore:
             logger.warning(
                 "[SAFE-2.4] Embedding dim %d outside valid range [%d, %d]",
                 current_dim, min_dim, max_dim
-            )
+    )
             self._embed_validation_stats['dimension_errors'] += 1
             return None
         
@@ -929,14 +929,14 @@ class SemanticStore:
             logger.error(
                 "[SAFE-4] Validation output length mismatch: input=%d, output=%d",
                 len(embeddings), len(validated)
-            )
+    )
             return None, failed_indices
 
         if failed_indices:
             logger.warning(
                 "[SAFE-2.4] %d/%d embeddings failed validation",
                 len(failed_indices), len(embeddings)
-            )
+    )
 
         return np.array(validated, dtype=np.float32), failed_indices
 
@@ -1063,7 +1063,7 @@ class SemanticStore:
 
                 result = await loop.run_in_executor(
                     None, lambda: single_encode(mlx_mgr, query)
-                )
+    )
                 return self._ensure_dim(result, self._embed_dim)[0]
             except Exception:  # noqa: BLE001
                 pass
@@ -1072,7 +1072,7 @@ class SemanticStore:
             try:
                 emb = await loop.run_in_executor(
                     None, lambda: self._coreml_embedder.embed([query], batch_size=1)  # type: ignore[union-attr]
-                )
+    )
                 return self._ensure_dim(emb, self._embed_dim)[0]
             except Exception:  # noqa: BLE001
                 pass
@@ -1103,7 +1103,7 @@ class SemanticStore:
                     _qv.metric("cosine")
                     .limit(top_k)
                     .to_list()
-                )
+    )
                 # FIX-4: Transform results before validation
                 transformed = [
                     {
@@ -1162,7 +1162,7 @@ class SemanticStore:
                     _qv.metric("cosine")
                     .limit(top_k)
                     .to_list()
-                )
+    )
                 transformed = [
                     {
                         "text": r["text"],

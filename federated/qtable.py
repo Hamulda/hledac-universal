@@ -223,7 +223,7 @@ class RustFederatedQTable:
             self._rust: Any = None
             self._python: FederatedQTable = FederatedQTable(
                 alpha=alpha, gamma=gamma, max_entries=max_entries
-            )
+    )
         self._alpha: float = float(alpha)
         self._gamma: float = float(gamma)
         self._max_entries: int = max_entries

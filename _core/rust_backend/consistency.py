@@ -145,7 +145,7 @@ class _RustConsistencyDomain:
             rust_fn=rust_call,
             findings=findings,
             max_findings=max_findings,
-        )
+    )
 
         # Circuit breaker returns the final result (Rust, Python fallback, or No-op)
         if result.success and result.value is not None:
@@ -155,7 +155,7 @@ class _RustConsistencyDomain:
         logger.warning(
             f"[CONSISTENCY] FFI circuit breaker returned None "
             f"(path={result.path}, error={result.error}), using Python fallback"
-        )
+    )
         return _python_check_consistency(findings, max_findings)
 
     def _check_direct(
@@ -166,7 +166,7 @@ class _RustConsistencyDomain:
             findings_json = _json.dumps(findings).encode("utf-8")
             result_bytes = self._ext.check_finding_consistency(
                 findings_json, max_findings
-            )
+    )
             return _json.loads(result_bytes.decode("utf-8"))
         except Exception as e:
             logger.debug(f"[CONSISTENCY] Rust check_finding_consistency failed: {e}")

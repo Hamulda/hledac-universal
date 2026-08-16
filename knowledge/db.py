@@ -297,7 +297,7 @@ class UnifiedDatabaseFacade:
                 level       VARCHAR,
                 hash        VARCHAR,
                 PRIMARY KEY (id)
-            )
+    )
         """)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp
@@ -317,7 +317,7 @@ class UnifiedDatabaseFacade:
                 last_seen   DOUBLE,
                 count       INTEGER,
                 metadata    JSON
-            )
+    )
         """)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_temporal_signals_last_seen
@@ -333,7 +333,7 @@ class UnifiedDatabaseFacade:
                 domain      VARCHAR PRIMARY KEY,
                 subdomains  JSON,
                 fetched_at  DOUBLE
-            )
+    )
         """)
         logger.info("[DB] ct_cache table initialized")
 
@@ -349,7 +349,7 @@ class UnifiedDatabaseFacade:
                 metadata     JSON,
                 extracted_at DOUBLE,
                 PRIMARY KEY (file_hash, mod_time, file_size)
-            )
+    )
         """)
         logger.info("[DB] forensics_metadata table initialized")
 
@@ -388,7 +388,7 @@ class UnifiedDatabaseFacade:
                     columns=columns,
                     row_count=len(raw_rows),
                     duration_ms=(time.monotonic() - start) * 1000,
-                )
+    )
             except Exception as e:
                 logger.warning(f"[DB] Rust query failed, falling back: {e}")
 
@@ -407,7 +407,7 @@ class UnifiedDatabaseFacade:
             columns=columns,
             row_count=len(rows),
             duration_ms=(time.monotonic() - start) * 1000,
-        )
+    )
 
     # --------------------------------------------------------------------------
     # LMDB operations

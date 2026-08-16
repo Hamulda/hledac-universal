@@ -39,7 +39,7 @@ class ResearchLayer:
         exploration = await research.deep_explore(
             "https://example.com/paper",
             strategy=ExplorationStrategy.CITATION_FOLLOWING
-        )
+    )
     """
     __slots__ = tuple(('_actions_executed', '_depth_levels_reached', '_depth_maximizer', '_explorations', '_ghost_director', '_ghost_director_shared', '_hunter', '_missions', '_missions_completed', 'config'))
 

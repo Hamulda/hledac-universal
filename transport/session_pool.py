@@ -60,7 +60,7 @@ from ._tcp_keepalive import (
     KEEPALIVE_IDLE_S,
     KEEPALIVE_INTERVAL_S,
     KEEPALIVE_MAX_PROBES,
-)
+    )
 
 if TYPE_CHECKING:
     import httpx
@@ -158,7 +158,7 @@ def _patch_socket_keepalive(sock: socket.socket) -> None:
 
         logging.getLogger("hledac.universal.transport.session_pool").debug(
             f"[ISSUE-P6-001] Could not patch socket keep-alive options: {e}"
-        )
+    )
 
 
 # =============================================================================
@@ -384,13 +384,13 @@ async def httpx_client() -> httpx.AsyncClient:
                 max_connections=preset.max_connections,
                 max_keepalive_connections=preset.max_keepalive,
                 keepalive_expiry=preset.keepalive_expiry,
-            )
+    )
             timeout = httpx.Timeout(
                 connect=_CONNECT_TIMEOUT_S,
                 read=20.0,
                 write=10.0,
                 pool=10.0,
-            )
+    )
             _httpx_client = httpx.AsyncClient(
                 limits=limits,
                 http2=True,
@@ -398,11 +398,11 @@ async def httpx_client() -> httpx.AsyncClient:
                 follow_redirects=True,
                 cookies=None,
                 trust_env=False,
-            )
+    )
             logger.debug(
                 f"[SessionPool] httpx.AsyncClient created (HTTP/2, "
                 f"max_conn={preset.max_connections}, max_keep={preset.max_keepalive})"
-            )
+    )
 
             # M1 FIX: Track session pool FDs via ResourceLedger
             # Session pool consumes file descriptors for each connection in the pool
@@ -416,7 +416,7 @@ async def httpx_client() -> httpx.AsyncClient:
                             ResourceType.FILE_DESCRIPTOR,
                             handle=f"session_pool:httpx:{i}",
                             owner="session_pool",
-                        )
+    )
                 except Exception:  # noqa: BLE001
                     pass  # Fail-safe: don't block client creation
 
@@ -437,7 +437,7 @@ async def httpx_client() -> httpx.AsyncClient:
                 safe_create_task(
                     _probe_http2_negotiation(_httpx_client),
                     name="session_pool:http2_probe",
-                )
+    )
             except Exception:  # noqa: BLE001
                 pass  # Fail-safe: don't block client creation
 
@@ -476,7 +476,7 @@ async def probe_http2_at_startup() -> bool:
             timeout=httpx.Timeout(connect=3.0, read=3.0),
             limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
             trust_env=False,
-        )
+    )
         result = await _probe_http2_negotiation(client)
         return result if _http2_negotiated is not None else None
     except Exception as e:
@@ -588,18 +588,18 @@ async def httpx_socks_client(
                 max_connections=socks_max_conn,
                 max_keepalive_connections=socks_max_keep,
                 keepalive_expiry=preset.keepalive_expiry,
-            )
+    )
             timeout = httpx.Timeout(
                 connect=_CONNECT_TIMEOUT_S,
                 read=20.0,
                 write=10.0,
                 pool=10.0,
-            )
+    )
             # ISSUE-080: Pass rdns to httpx-socks for remote DNS resolution
             transport = httpx_socks.AsyncProxyTransport.from_url(
                 proxy_url,
                 rdns=rdns,
-            )
+    )
             _httpx_socks_clients[cache_key] = httpx.AsyncClient(
                 limits=limits,
                 http2=False,  # SOCKS5 tunnel doesn't support HTTP/2 ALPN negotiation
@@ -607,7 +607,7 @@ async def httpx_socks_client(
                 follow_redirects=True,
                 transport=transport,
                 trust_env=False,
-            )
+    )
             # ISSUE-P6-001: Patch TCP keep-alive on existing SOCKS5 pooled sockets.
             # SOCKS5 tunnels are long-lived; keep-alive ensures dead Tor/I2P
             # connections are detected before TIME_WAIT exhausts the port pool.
@@ -618,7 +618,7 @@ async def httpx_socks_client(
             logger.debug(
                 f"[SessionPool] httpx-socks client created for {proxy_url} "
                 f"(rdns={rdns}, max_conn={socks_max_conn})"
-            )
+    )
             _record_pool_metrics()
         return _httpx_socks_clients[cache_key]
 

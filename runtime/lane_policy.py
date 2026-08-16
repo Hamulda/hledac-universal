@@ -248,18 +248,13 @@ _DEFAULT_SOURCE_TIER_MAP: dict[str, SourceTier] = {
 # ── Re-export FeedDominanceBudget from canonical location ─────────────────────
 # Canonical definition lives in runtime/acquisition/budget.py (msgspec.Struct, fail-safe)
 # This re-export keeps lane_policy.py as the unified entry point for lane policies
-
-
-
-
-
+from hledac.universal.runtime.acquisition.budget import (
     FeedDominanceBudget,
 )
 
 
 # ── Re-exports for convenience ────────────────────────────────────────────────
 
-from _core import aclose
 __all__ = [
     # Protocol
     'LanePolicy',

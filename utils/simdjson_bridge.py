@@ -46,7 +46,7 @@ def _ensure_rust_bindings() -> None:
         from hledac.universal.rust_extensions import (
             json_pointer_extract as _jpe,
             json_pointer_extract_multi as _jpem,
-        )
+    )
         _json_pointer_extract = _jpe
         _json_pointer_extract_multi = _jpem
     except ImportError:  # noqa: BLE001

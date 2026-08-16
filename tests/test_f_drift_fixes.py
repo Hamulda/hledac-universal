@@ -63,7 +63,7 @@ class TestImportSmoke:
         # at lines 666/714/722/730 for subprocess.run calls).
         assert "subprocess" in dir(ghost_layer), (
             "subprocess must remain importable (used by ghost_layer.run_system_command)"
-        )
+    )
 
     def test_rendering_imports_without_syntax_error(self):
         """rendering/__init__.py must import cleanly (full namespace)."""
@@ -150,7 +150,7 @@ class TestAsyncioCoroutineDrift:
                         offenders.append((py_file, node.lineno, "asyncio.coroutine() call"))
         assert not offenders, "Production code uses asyncio.coroutine() (removed in 3.11):\n" + "\n".join(
             f"  {p.relative_to(REPO_ROOT)}:{ln} {why}" for p, ln, why in offenders
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +232,7 @@ class TestSubprocessInParensDrift:
         assert not offenders, (
             "Drift pattern detected — import stmt inside 'from ... import (...)' parens:\n"
             + "\n".join(f"  {p.relative_to(REPO_ROOT)}:{ln} {snippet}" for p, ln, snippet in offenders)
-        )
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -176,7 +176,7 @@ async def _fetch_sitemapindex(domain: str, timeout_s: float) -> tuple[list[str] 
             async_fetch_public_text(sitemapindex_url, timeout_s=fetch_timeout, max_bytes=2 * 1024 * 1024),
             timeout=fetch_timeout + 2.0,
             label='wayback_sitemapindex_fetch',
-        )
+    )
     except TimeoutError:
         elapsed = time.monotonic() - start
         return (None, elapsed, _make_empty_result(elapsed, 'sitemapindex_timeout'))
@@ -219,7 +219,7 @@ async def _fetch_sitemaps(sitemap_urls: list[str], per_sitemap_timeout: float, r
                     async_fetch_public_text(url, timeout_s=per_sitemap_timeout, max_bytes=2 * 1024 * 1024),
                     timeout=per_sitemap_timeout + 2.0,
                     label='wayback_sitemap_fetch',
-                )
+    )
                 if sm_result.status_code == 200 and sm_result.text:
                     sm_bytes = sm_result.text.encode('utf-8')
                     return (url, _parse_sitemap_xml(sm_bytes)[:_MAX_URLS_PER_SITEMAP])
@@ -235,7 +235,7 @@ async def _fetch_sitemaps(sitemap_urls: list[str], per_sitemap_timeout: float, r
             parallel_ok(*fetch_tasks, label='wayback_sitemap'),
             timeout=remaining_timeout,
             label='wayback_sitemap_gather',
-        )
+    )
     except TimeoutError:
         elapsed = time.monotonic() - start
         return ([], elapsed)

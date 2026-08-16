@@ -124,7 +124,7 @@ class _LinkPredictorDomain:
                     min_jaccard=min_jaccard,
                     max_candidates=max_candidates,
                     cross_type_only=cross_type_only,
-                )
+    )
                 return [
                     {
                         'src_id': e.src_id,
@@ -141,7 +141,7 @@ class _LinkPredictorDomain:
             cb_result = self._ffi_cb.call_or_fallback(
                 FFI_MODULE_LINK_PREDICTOR, rust_call,
                 db_path, min_adamic_adar, min_jaccard, max_candidates, cross_type_only
-            )
+    )
             if cb_result.success:
                 return cb_result.value  # type: ignore[return-value]
             return _python_link_predict(db_path, min_adamic_adar, min_jaccard, max_candidates, cross_type_only)
@@ -153,7 +153,7 @@ class _LinkPredictorDomain:
                 min_jaccard=min_jaccard,
                 max_candidates=max_candidates,
                 cross_type_only=cross_type_only,
-            )
+    )
             return [
                 {
                     'src_id': e.src_id,
@@ -200,7 +200,7 @@ class _LinkPredictorDomain:
                 top_k=top_k,
                 min_adamic_adar=min_adamic_adar,
                 min_jaccard=min_jaccard,
-            )
+    )
             return [
                 {
                     'src_id': e.src_id,

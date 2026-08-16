@@ -103,7 +103,7 @@ class ArtiBridge:
             raise RuntimeError(
                 "ArtiNode not available. Compile with --features embedded_tor "
                 "or set HLEDAC_ENABLE_EMBEDDED_TOR=1"
-            )
+    )
 
         self._node: "ArtiNode" | None = _ArtiNode(data_dir)  # type: ignore
         self._is_running: bool = False

@@ -143,7 +143,7 @@ def _get_rust_native_db() -> Any | None:
                 MongoDumper=MongoDumper,
                 RedisDumper=RedisDumper,
                 ElasticsearchDumper=ElasticsearchDumper,
-            )
+    )
             logger.debug("Rust native_db classes loaded — MongoDB/Redis extraction available")
         else:
             missing = []
@@ -153,7 +153,7 @@ def _get_rust_native_db() -> Any | None:
             logger.debug(
                 "Rust native_db classes missing: %s (compile with --features native_db)",
                 ", ".join(missing),
-            )
+    )
             _native_db_module = None
     except ImportError:
         logger.debug("hledac_rust_extensions not available (compile with --features native_db)")
@@ -187,7 +187,7 @@ async def _es_extract(host: str, port: int = 9200) -> NativeExtractionResult | N
                 success=False,
                 error=f"HTTP {resp.status_code}",
                 auth_required=(resp.status_code in (401, 403)),
-            )
+    )
 
         indices_data: list[dict[str, Any]] = resp.json()
         indices = [
@@ -201,7 +201,7 @@ async def _es_extract(host: str, port: int = 9200) -> NativeExtractionResult | N
                 host=host, port=port, service="elasticsearch",
                 success=True, indices=[], es_documents=[],
                 auth_required=False,
-            )
+    )
 
         # Phase 2: Sample documents from each index (bounded)
         documents: list[dict[str, Any]] = []
@@ -219,7 +219,7 @@ async def _es_extract(host: str, port: int = 9200) -> NativeExtractionResult | N
                             "size": size_per_index,
                             "_source": True,
                         },
-                    )
+    )
                 if r.status_code == 200:
                     hits = r.json().get("hits", {}).get("hits", [])
                     for hit in hits:
@@ -236,13 +236,13 @@ async def _es_extract(host: str, port: int = 9200) -> NativeExtractionResult | N
             indices=indices,
             es_documents=documents,
             auth_required=False,
-        )
+    )
 
     except asyncio.TimeoutError:
         return NativeExtractionResult(
             host=host, port=port, service="elasticsearch",
             success=False, error="timeout",
-        )
+    )
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -272,7 +272,7 @@ async def _mongo_extract(host: str, port: int = 27017) -> NativeExtractionResult
             port,
             _DEFAULT_DOC_LIMIT,
             _READ_TIMEOUT_S,
-        )
+    )
 
         databases: list[str] = []
         collections: dict[str, list[str]] = {}
@@ -303,7 +303,7 @@ async def _mongo_extract(host: str, port: int = 27017) -> NativeExtractionResult
         auth_required = any(
             "auth" in e.lower() or "unauthorized" in e.lower()
             for e in errors
-        )
+    )
 
         return NativeExtractionResult(
             host=host, port=port, service="mongodb",
@@ -313,7 +313,7 @@ async def _mongo_extract(host: str, port: int = 27017) -> NativeExtractionResult
             collections=collections if collections else None,
             sample_documents=documents if documents else None,
             auth_required=auth_required if errors else False,
-        )
+    )
 
     except asyncio.CancelledError:
         raise
@@ -322,7 +322,7 @@ async def _mongo_extract(host: str, port: int = 27017) -> NativeExtractionResult
         return NativeExtractionResult(
             host=host, port=port, service="mongodb",
             success=False, error=str(e),
-        )
+    )
 
 
 # ── Redis Extraction (Rust native_db) ───────────────────────────────────────
@@ -343,7 +343,7 @@ async def _redis_extract(host: str, port: int = 6379) -> NativeExtractionResult 
         # Phase 1: Get server INFO
         info_raw: str = await asyncio.to_thread(
             dumper.get_info, host, port, _READ_TIMEOUT_S,
-        )
+    )
         info: dict[str, str] = {}
         for line in info_raw.split("\n"):
             line = line.strip()
@@ -354,18 +354,18 @@ async def _redis_extract(host: str, port: int = 6379) -> NativeExtractionResult 
         # Phase 2: Check auth requirement
         auth_required: bool = await asyncio.to_thread(
             dumper.check_auth, host, port, _READ_TIMEOUT_S,
-        )
+    )
         if auth_required:
             return NativeExtractionResult(
                 host=host, port=port, service="redis",
                 success=False, auth_required=True,
                 redis_info=info, error="Authentication required",
-            )
+    )
 
         # Phase 3: Dump keys with types and values
         entries = await asyncio.to_thread(
             dumper.dump_all, host, port, _DEFAULT_KEY_LIMIT, _READ_TIMEOUT_S,
-        )
+    )
 
         keys: list[str] = []
         for entry in entries:
@@ -379,7 +379,7 @@ async def _redis_extract(host: str, port: int = 6379) -> NativeExtractionResult 
             key_count=len(keys),
             redis_info=info,
             auth_required=False,
-        )
+    )
 
     except asyncio.CancelledError:
         raise
@@ -388,7 +388,7 @@ async def _redis_extract(host: str, port: int = 6379) -> NativeExtractionResult 
         return NativeExtractionResult(
             host=host, port=port, service="redis",
             success=False, error=str(e),
-        )
+    )
 
 
 # ── Unified Extraction Entry Points ─────────────────────────────────────────
@@ -455,7 +455,7 @@ async def extract_from_exposed(
         return NativeExtractionResult(
             host=host, port=actual_port, service=service,
             success=False, error="extraction timeout",
-        )
+    )
     except asyncio.CancelledError:
         raise
     except Exception as e:

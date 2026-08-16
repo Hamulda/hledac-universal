@@ -16,11 +16,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-
-
-
-
-
+from hledac.universal.recon.lane import (
     BTC_ADDRESS_PATTERN,
     BaseIntelligenceLane,
     ETH_ADDRESS_PATTERN,
@@ -37,7 +33,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-from _core import aclose
 
 class BlockchainAnalyzerLane(BaseIntelligenceLane):
     """

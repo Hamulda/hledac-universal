@@ -20,7 +20,7 @@ from hledac.universal._core.rust_backend.ioc_stream import (
     get_ioc_scanner,
     get_scanner_stats,
     scan_bytes_with_ioc_scanner,
-)
+    )
 from hledac.universal.pipeline._soa_types import MatchedBatch, ScoredBatch
 from hledac.universal.utils.asyncx import parallel_ok
 from _core import aclose
@@ -102,11 +102,11 @@ class MatchStage:
         simd_results = await _simd_scan_batch(
             texts=usable_texts,
             concurrency=self._match_concurrency,
-        )
+    )
         match_results = await _match_batch(
             texts=usable_texts,
             concurrency=self._match_concurrency,
-        )
+    )
 
         # Build result arrays (all URLs, not just usable)
         matched_pattern_counts = [0] * len(input_batch.urls)
@@ -161,7 +161,7 @@ class MatchStage:
             matched_pattern_counts=matched_pattern_counts,
             matched_pattern_labels=matched_pattern_labels,
             errors=errors,
-        )
+    )
 
         return batch, telemetry
 
@@ -171,7 +171,7 @@ class MatchStage:
             matched_pattern_counts=[],
             matched_pattern_labels=[],
             errors=[],
-        )
+    )
 
 
 async def _match_batch(
@@ -214,7 +214,7 @@ def _sync_match_text(text: str, idx: int) -> dict[str, Any]:
         from hledac.universal.pipeline.live_public_pipeline import (
             _SYNC_MATCH_TEXT,
             _ensure_patched,
-        )
+    )
 
         _ensure_patched()
 

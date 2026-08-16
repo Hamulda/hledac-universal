@@ -207,10 +207,10 @@ from hledac.universal.fetching.curl_cffi_fetch import (
     fetch_via_i2p_curl_cffi,
     _CurlCffiResponseAdapter,
     _CurlCffiGetContextManager,
-)
+    )
 from hledac.universal.transport.base import (
     fetch_via_tor_curl_cffi,
-)
+    )
 from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available as _runtime_is_curl_cffi_available
 from hledac.universal.transport.decompression import build_accept_encoding_header
 from hledac.universal.transport.session_pool import httpx_socks_client
@@ -224,14 +224,14 @@ from tenacity import (
     retry,
     retry_if_exception_type,
     RetryCallState as _TenacityRetryCallState,
-)
+    )
 
 # Layer imports (lightweight utilities)
 from hledac.universal.layers.ua_rotator import (
     build_randomized_headers as _canonical_build_randomized_headers,
     get_random_accept_language as _canonical_get_random_accept_language,
     get_random_ua as _canonical_get_random_ua,
-)
+    )
 
 # Body hash store (lightweight singleton)
 from hledac.universal.fetching._body_hash import body_hash_store as _body_hash_store
@@ -570,7 +570,7 @@ def get_webkit_transport_stats() -> dict[str, int]:
         from hledac.universal.transport.curl_cffi_fetch import (
             get_webkit_transport_telemetry,
             HLEDAC_H2_WEBKIT_PRESET,
-        )
+    )
         telemetry = get_webkit_transport_telemetry()
         return {
             "macos_webkit_count": telemetry["webkit_count"],
@@ -592,7 +592,7 @@ def _reset_webkit_transport_telemetry() -> None:
     try:
         from hledac.universal.transport.curl_cffi_fetch import (
             _reset_webkit_transport_telemetry as _reset_wt,
-        )
+    )
         _reset_wt()
     except ImportError:  # noqa: BLE001
         pass
@@ -1049,11 +1049,11 @@ async def close_public_fetcher_sessions_async() -> dict:
     if _tor_attempted and _SESSION_MGR._tor_session_locally_created:
         _close_tor_coro = asyncio.create_task(
             _SESSION_MGR._session_aclose(_SESSION_MGR._tor_session)
-        )
+    )
     if _i2p_attempted and _SESSION_MGR._i2p_session_locally_created:
         _close_i2p_coro = asyncio.create_task(
             _SESSION_MGR._session_aclose(_SESSION_MGR._i2p_session)
-        )
+    )
     _tasks = [t for t in (_close_tor_coro, _close_i2p_coro) if t is not None]
     if _tasks:
         # F3XX: parallel close via parallel(policy="collect") — preserves which task failed
@@ -1393,7 +1393,7 @@ _retry_decorator = retry(
     before_sleep=_tenacity_before_sleep,
     after=_tenacity_after,
     reraise=True,
-)
+    )
 
 
 
@@ -1419,7 +1419,7 @@ _RETRYABLE_ERROR_PATTERNS: tuple[str, ...] = (
     'curl error',
     'server disconnected',
     'handshake failure',
-)
+    )
 
 
 # PHYSICS-11: TTFB (Time-To-First-Byte) kill switch default — 1.5 s is
@@ -1508,14 +1508,14 @@ async def _fetch_core(
                         headers=headers,
                     ),
                     timeout=max(ttfb_timeout_s, race_timeout),
-                )
+    )
             else:
                 raw = await fetch_via_race(
                     url=url,
                     timeout_s=race_timeout,
                     max_bytes=max_bytes,
                     headers=headers,
-                )
+    )
         except asyncio.TimeoutError:
             raise asyncio.TimeoutError(
                 f"race_ttfb_timeout:{url}:{ttfb_timeout_s or race_timeout:.1f}s"
@@ -1527,7 +1527,7 @@ async def _fetch_core(
         from hledac.universal.transport.unified_transport import (
             POLICY_CLEARNET_H2,
             fetch_via_unified_with_race_fallback,
-        )
+    )
 
         _policy = policy if policy is not None else POLICY_CLEARNET_H2
 
@@ -1547,7 +1547,7 @@ async def _fetch_core(
                         max_bytes=max_bytes,
                     ),
                     timeout=ttfb_timeout_s,
-                )
+    )
             except asyncio.TimeoutError:
                 raise asyncio.TimeoutError(
                     f"ttfb_timeout:{url}:{ttfb_timeout_s:.1f}s"
@@ -1559,7 +1559,7 @@ async def _fetch_core(
                 headers=headers,
                 timeout_s=timeout_s,
                 max_bytes=max_bytes,
-            )
+    )
 
     status_code = raw.get('status_code', 0)
     transport_error = raw.get('error')
@@ -1572,7 +1572,7 @@ async def _fetch_core(
             status_code=status_code,
             message=f'HTTP {status_code} from {url}',
             is_timeout=False,
-        )
+    )
 
     # Retryable transport errors → raise for tenacity
     if transport_error:
@@ -1583,7 +1583,7 @@ async def _fetch_core(
                 status_code=0,
                 message=f'transport error: {transport_error}',
                 is_timeout=is_timeout,
-            )
+    )
         # Non-retryable transport error → return as failed FetchResult
         return FetchResult(
             url=url,
@@ -1596,7 +1596,7 @@ async def _fetch_core(
             elapsed_ms=raw.get('elapsed_ms', 0.0),
             error=transport_error,
             failure_stage=raw.get('failure_stage') or 'transport',
-        )
+    )
 
     # Non-retryable HTTP errors (4xx except 429, other 5xx)
     fetch_error = None
@@ -1698,14 +1698,14 @@ async def async_fetch_public_text(
             elapsed_ms=0.0,
             error='blitz_host_dead',
             failure_stage='blitz_dead_host',
-        )
+    )
     try:
         return await _fetch_core_retryable(
             url=url,
             timeout_s=timeout_s,
             max_bytes=max_bytes,
             ttfb_timeout_s=ttfb_timeout_s,
-        )
+    )
     except (_RetryableStatus, TimeoutError):
         # All retries exhausted — return error result
         # PHYSICS-12 / BLITZ-15: In blitz mode only, mark the host as dead for the
@@ -1728,7 +1728,7 @@ async def async_fetch_public_text(
             elapsed_ms=0.0,
             error='retry_exhausted',
             failure_stage='retry_loop',
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1823,7 +1823,7 @@ _ANTI_BOT_HEADERS: tuple[tuple[str, str], ...] = (
     ("x-amz-cf-pop", "cloudfront"),
     ("x-sucuri-id", "sucuri"),
     ("x-cdn", "cdn"),
-)
+    )
 _ANTI_BOT_BODY_SUBSTRINGS: tuple[tuple[str, str], ...] = (
     ("challenges.cloudflare.com", "cloudflare"),
     ("cloudflare-challenge", "cloudflare"),
@@ -1833,7 +1833,7 @@ _ANTI_BOT_BODY_SUBSTRINGS: tuple[tuple[str, str], ...] = (
     ("perimeterx", "perimeterx"),
     ("imperva", "imperva"),
     ("incapsula", "imperva"),
-)
+    )
 
 
 def _detect_anti_bot_type(result: Any) -> str:
@@ -1878,17 +1878,17 @@ async def _fetch_one(url: str, idx: int, *, _timeout_s: float, _max_bytes: int, 
             timeout_s=_timeout_s,
             max_bytes=_max_bytes,
             ttfb_timeout_s=_ttfb_timeout_s,
-        )
+    )
         # Detect and handle HTML tarpits
         _should_return, result = await _detect_and_handle_tarpits(
             result, url, _domain, _rep_service
-        )
+    )
         if _should_return:
             return idx, result
         # Detect cognitive (LLM-generated) tarpits
         _is_cognitive, result = await _detect_cognitive_tarpit(
             result, _domain, _rep_service
-        )
+    )
         if _is_cognitive:
             return idx, result
         # Record fetch outcome in reputation, route, and anti-bot services
@@ -1906,7 +1906,7 @@ async def _fetch_one(url: str, idx: int, *, _timeout_s: float, _max_bytes: int, 
             elapsed_ms=0.0,
             error=f'batch_exception:{type(_e).__name__}:{_e}',
             failure_stage='batch_dispatch',
-        )
+    )
 
 async def async_fetch_public_text_batch(
     urls: list[str],
@@ -2013,13 +2013,13 @@ async def async_fetch_public_text_batch(
                         elapsed_ms=0.0,
                         error='tarpit_detected:url_pattern',
                         failure_stage='tarpit',
-                    )
+    )
                 _result = await _fetch_core_retryable(
                     url=_url,
                     timeout_s=_timeout_s,
                     max_bytes=_max_bytes,
                     ttfb_timeout_s=_ttfb_timeout_s,
-                )
+    )
                 return _idx, _result
             except Exception as _e:  # noqa: BLE001 — fail-safe
                 return _idx, FetchResult(
@@ -2033,14 +2033,14 @@ async def async_fetch_public_text_batch(
                     elapsed_ms=0.0,
                     error=f'batch_retry_exception:{type(_e).__name__}:{_e}',
                     failure_stage='batch_retry_dispatch',
-                )
+    )
 
         _retry_result = await parallel(
             [asyncio.create_task(_retry_one(x, _timeout_s=timeout_s, _max_bytes=max_bytes, _ttfb_timeout_s=ttfb_timeout_s)) for x in retryable_urls],
             concurrency=_retry_concurrency,
             taskgroup=True,
             policy="collect",
-        )
+    )
         # Merge retry results: only overwrite if retry succeeded (error=None or non-retryable)
         for idx, retry_fr in _retry_result.ok:
             # Only accept if retry improved the result (non-empty text or non-retryable error)
@@ -2076,7 +2076,7 @@ async def _check_prefetch_conditions(url: str, timeout_s: float, max_bytes: int,
                 logger.debug(
                     '\n[DOMAIN_REPUTATION] Skipping known tarpit domain: %s (score=%.2f)',
                     _domain, _rep.tarpit_score,
-                )
+    )
                 return FetchResult(
                     url=url,
                     final_url=url,
@@ -2088,7 +2088,7 @@ async def _check_prefetch_conditions(url: str, timeout_s: float, max_bytes: int,
                     elapsed_ms=0.0,
                     error=f'tarpit_detected:reputation_score={_rep.tarpit_score:.2f}',
                     failure_stage='tarpit',
-                )
+    )
         except Exception:  # noqa: BLE001 — fail-safe; reputation check non-critical
             pass
     # BLITZ-15: Skip fetch if host is marked dead for sprint duration
@@ -2104,7 +2104,7 @@ async def _check_prefetch_conditions(url: str, timeout_s: float, max_bytes: int,
             elapsed_ms=0.0,
             error='blitz_host_dead',
             failure_stage='blitz_dead_host',
-        )
+    )
     # Pre-scan URL for known tarpit/honeypot path patterns — no HTTP request needed
     if _is_tarpit_url(url):
         return FetchResult(
@@ -2118,7 +2118,7 @@ async def _check_prefetch_conditions(url: str, timeout_s: float, max_bytes: int,
             elapsed_ms=0.0,
             error='tarpit_detected:url_pattern',
             failure_stage='tarpit',
-        )
+    )
     return None
 
 
@@ -2148,7 +2148,7 @@ async def _detect_and_handle_tarpits(
                             domain,
                             tarpit_score=tarpit_result.tarpit_score,
                             anti_bot_type=_anti_bot,
-                        )
+    )
                     except Exception:  # noqa: BLE001 — fail-safe; non-critical
                         pass
                 return True, FetchResult(
@@ -2164,7 +2164,7 @@ async def _detect_and_handle_tarpits(
                     failure_stage='tarpit',
                     selected_transport=result.selected_transport,
                     http_version=result.http_version,
-                )
+    )
         except Exception:  # noqa: BLE001 — best-effort; tarpit detection failure is non-fatal
             pass
     return False, result
@@ -2186,7 +2186,7 @@ async def _detect_cognitive_tarpit(
             if len(_plain_text) >= 200:
                 from hledac.universal.brain.adversarial.cognitive_tarpit import (
                     cognitive_tarpit_score as _ct_score,
-                )
+    )
                 _ct_verdict = _ct_score(_plain_text)
                 if _ct_verdict.is_cognitive_tarpit:
                     _ct_score_val = _ct_verdict.cognitive_tarpit_score
@@ -2203,7 +2203,7 @@ async def _detect_cognitive_tarpit(
                         _ct_verdict.perplexity_score,
                         _ct_verdict.reasons,
                         _ct_verdict.analysis_ms,
-                    )
+    )
                     # Record cognitive tarpit in domain reputation (score=1.0)
                     try:
                         _anti_bot = _detect_anti_bot_type(result)
@@ -2211,7 +2211,7 @@ async def _detect_cognitive_tarpit(
                             domain,
                             tarpit_score=1.0,
                             anti_bot_type=_anti_bot,
-                        )
+    )
                     except Exception:  # noqa: BLE001 — fail-safe
                         pass
                     return True, FetchResult(
@@ -2227,7 +2227,7 @@ async def _detect_cognitive_tarpit(
                         failure_stage='cognitive_tarpit',
                         selected_transport=result.selected_transport,
                         http_version=result.http_version,
-                    )
+    )
         except Exception:  # noqa: BLE001 — fail-soft; cognitive detection is best-effort
             pass
     return False, result
@@ -2245,7 +2245,7 @@ async def _record_reputation_success(
             await rep_service.record_success(
                 domain,
                 anti_bot_type=_anti_bot,
-            )
+    )
         except Exception:  # noqa: BLE001 — fail-safe; non-critical
             pass
 
@@ -2264,7 +2264,7 @@ async def _record_route_outcome(
                     transport=result.selected_transport or '',
                     latency_ms=result.elapsed_ms,
                     body_bytes=result.fetched_bytes,
-                )
+    )
             except Exception:  # noqa: BLE001 — fail-safe; non-critical
                 pass
     elif domain and result.error:
@@ -2275,7 +2275,7 @@ async def _record_route_outcome(
                     domain,
                     transport=result.selected_transport or '',
                     latency_ms=result.elapsed_ms,
-                )
+    )
             except Exception:  # noqa: BLE001 — fail-safe; non-critical
                 pass
 
@@ -2295,7 +2295,7 @@ async def _record_anti_bot_observations(
                         domain,
                         waf_type=_anti_bot,
                         challenge_type='403' if result.status_code == 403 else '429' if result.status_code == 429 else '',
-                    )
+    )
                 elif result and not result.error:
                     await _ab_svc.observe_bypass(domain)
             except Exception:  # noqa: BLE001 — fail-safe; non-critical
@@ -2392,7 +2392,7 @@ def _batch_sync_process_html(items: list[tuple[str, str]]) -> list[tuple[str, li
         texts: list[str] = _rust_backend.html.batch_extract_html_text(htmls)
         links_batch: list[list[str]] = _rust_backend.html.batch_extract_links(
             list(zip(htmls, base_urls, strict=True))
-        )
+    )
         titles_batch: list[str | None] = _rust_backend.html.batch_extract_titles(htmls)
         emails_batch: list[list[str]] = _rust_backend.html.batch_extract_emails(htmls)
         return [
@@ -2403,7 +2403,7 @@ def _batch_sync_process_html(items: list[tuple[str, str]]) -> list[tuple[str, li
                     'title': titles_batch[i] if i < len(titles_batch) and titles_batch[i] is not None else '',
                     'emails': emails_batch[i] if i < len(emails_batch) else [],
                 },
-            )
+    )
             for i in range(len(items))
         ]
     except Exception:  # noqa: BLE001 — best-effort; Rust batch extraction failure, fallback to serial

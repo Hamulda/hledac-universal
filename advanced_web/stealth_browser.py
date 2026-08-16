@@ -77,10 +77,10 @@ async def _fetch_with_curl_cffi_async(url: str, user_agent: str, impersonate: st
     try:
         from hledac.universal.transport.curl_cffi_fetch import (
             async_get_curl_cffi_session_for_host,
-        )
+    )
         ok, session, _used_profile, _host = await async_get_curl_cffi_session_for_host(
             url, impersonate,
-        )
+    )
         if not ok or session is None:
             return None
         response = await session.get(
@@ -88,7 +88,7 @@ async def _fetch_with_curl_cffi_async(url: str, user_agent: str, impersonate: st
             headers={'User-Agent': user_agent},
             timeout=timeout,
             allow_redirects=True,
-        )
+    )
         return (response.status_code, response.text)
     except OSError as e:
         logger.debug(f'curl_cffi fetch failed for {url}: {e}')

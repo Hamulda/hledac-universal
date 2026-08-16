@@ -47,11 +47,11 @@ _REASON_NONE = "no_hydration_found"
 _RE_BODY_TAGS: re.Pattern = re.compile(
     r"<(?:p|article|main|section|div[^>]*|ul|ol|dl|table|blockquote|h[2-6])[^>]*>",
     re.IGNORECASE,
-)
+    )
 _RE_SKIP_TAGS: re.Pattern = re.compile(
     r"<script[^>]*>|<style[^>]*>|<noscript[^>]*>|<svg[^>]*>|<canvas[^>]*>",
     re.IGNORECASE,
-)
+    )
 # Reserved for future telemetry (not currently emitted by extract_static_hydration):
 # _REASON_PARSE_ERROR = "parse_error"
 # _REASON_MAX_BYTES = "max_bytes_exceeded"
@@ -101,81 +101,81 @@ class HydrationExtractionResult(msgspec.Struct, gc=False):
 _RE_NEXT_DATA: re.Pattern[str] = re.compile(
     r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*type=["\']application/json["\'][^>]*>(.*?)</script>',
     re.DOTALL | re.IGNORECASE,
-)
+    )
 
 # Nuxt __NUXT_DATA__ (SSR rendered)
 _RE_NUXT_DATA: re.Pattern[str] = re.compile(
     r'<script[^>]*>(?:window\.)?__NUXT_DATA__\s*=\s*(\[.*?\]);?\s*</script>',
     re.DOTALL | re.IGNORECASE,
-)
+    )
 
 # Nuxt window.__NUXT__
 _RE_NUXT_GLOBAL: re.Pattern[str] = re.compile(
     r'<script[^>]*>window\.__NUXT__\s*=\s*(\{.*?\});?\s*</script>',
     re.DOTALL | re.IGNORECASE,
-)
+    )
 
 # Generic hydration
 _RE_INITIAL_STATE: re.Pattern[str] = re.compile(
     r'<script[^>]*>(?:window\.)?__INITIAL_STATE__\s*=\s*(\{.*?\});?\s*</script>',
     re.DOTALL | re.IGNORECASE,
-)
+    )
 _RE_PRELOADED_STATE: re.Pattern[str] = re.compile(
     r'<script[^>]*>(?:window\.)?__PRELOADED_STATE__\s*=\s*(\{.*?\});?\s*</script>',
     re.DOTALL | re.IGNORECASE,
-)
+    )
 _RE_APOLLO_STATE: re.Pattern[str] = re.compile(
     r'<script[^>]*>(?:window\.)?__APOLLO_STATE__\s*=\s*(\{.*?\});?\s*</script>',
     re.DOTALL | re.IGNORECASE,
-)
+    )
 
 # JSON-LD
 _RE_JSON_LD: re.Pattern[str] = re.compile(
     r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
     re.DOTALL | re.IGNORECASE,
-)
+    )
 
 # Metadata
 _RE_CANONICAL: re.Pattern[str] = re.compile(
     r'<link[^>]+rel=["\'][^"\']*canonical[^"\']*["\'][^>]+href=["\']([^"\']+)["\']',
     re.IGNORECASE,
-)
+    )
 _RE_RSS: re.Pattern[str] = re.compile(
     r'<link[^>]+rel=["\'][^"\']*alternate[^"\']*["\'][^>]+type=["\']application/rss\+xml["\'][^>]+href=["\']([^"\']+)["\']',
     re.IGNORECASE,
-)
+    )
 _RE_ATOM: re.Pattern[str] = re.compile(
     r'<link[^>]+rel=["\'][^"\']*alternate[^"\']*["\'][^>]+type=["\']application/atom\+xml["\'][^>]+href=["\']([^"\']+)["\']',
     re.IGNORECASE,
-)
+    )
 _RE_OG_TITLE: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-)
+    )
 _RE_OG_DESC: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-)
+    )
 _RE_META_DESC: re.Pattern[str] = re.compile(
     r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-)
+    )
 _RE_TITLE_TAG: re.Pattern[str] = re.compile(
     r'<title[^>]*>(.*?)</title>',
     re.DOTALL | re.IGNORECASE,
-)
+    )
 _RE_OG_IMAGE: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-)
+    )
 _RE_OG_URL: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-)
+    )
 _RE_ARTICLE_PUBLISHED: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']article:published_time["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-)
+    )
 
 # ---------------------------------------------------------------------------
 # Content types that signal rich data
@@ -224,7 +224,7 @@ def _safe_json_parse(raw: str) -> dict | None:
 _CONTENT_FIELDS: tuple[str, ...] = (
     "props", "pageProps", "serverData", "data", "body", "content",
     "text", "html", "result", "articleBody", "description", "headline",
-)
+    )
 
 
 def _is_valid_text(text: str) -> bool:
@@ -510,7 +510,7 @@ _TITLE_HANDLERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (("serverData", "title"), ("serverData", "title")),
     (("data", "title"), ("data", "title")),
     (("ROOT_QUERY", "title"), ("ROOT_QUERY", "title")),
-)
+    )
 
 
 def _extract_title_from_parsed(parsed) -> str:
@@ -691,7 +691,7 @@ def _build_hydration_result(
             reason=_REASON_NONE,
             hydration_score=0.0,
             quality_signals=(),
-        )
+    )
 
     # Sufficiency check
     sufficient, reason = _is_sufficient(info, html)
@@ -761,7 +761,7 @@ def extract_static_hydration(
             text="",
             metadata={},
             reason=_REASON_NONE,
-        )
+    )
 
     # Bounds: truncate oversized input (M1 8GB safe: single pass)
     input_truncated = len(html) > max_bytes

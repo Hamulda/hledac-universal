@@ -104,7 +104,7 @@ _RE_SCRIPT_STYLE_LEGACY = re.compile(
     r"<script[^>]*>.*?</script>|<style[^>]*>.*?</style>|"
     r"<noscript[^>]*>.*?</noscript>",
     re.DOTALL | re.IGNORECASE,
-)
+    )
 _RE_TAG_LEGACY = re.compile(r"<[^>]+>")
 _RE_WS_LEGACY = re.compile(r"\s+")
 

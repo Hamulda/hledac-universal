@@ -26,8 +26,8 @@ from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING
 
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
-from core import aclose
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -153,7 +153,7 @@ class LocalCaptchaSolver:
         model = AutoModelForVision2Seq.from_pretrained(
             self._config.model_name,
             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        )
+    )
         # No GPU on M1 — use float32
         if hasattr(torch, 'mps') and torch.backends.mps.is_available():
             model = model.to("mps")
@@ -243,7 +243,7 @@ class LocalCaptchaSolver:
                     generated_ids = model.generate(
                         **inputs,
                         max_new_tokens=50,
-                    )
+    )
                 return processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
             return await asyncio.to_thread(_run)

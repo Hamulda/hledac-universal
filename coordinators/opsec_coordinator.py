@@ -98,7 +98,7 @@ class OpsECCoordinator(UniversalCoordinator):
             name='opsec_coordinator',
             max_concurrent=max_concurrent,
             memory_aware=True,
-        )
+    )
         self._stealth_engine: Any | None = None
         self._stealth_available = False
         self._stealth_mode_active = False
@@ -150,7 +150,7 @@ class OpsECCoordinator(UniversalCoordinator):
                     result_summary=result.summary,
                     success=result.success,
                     metadata={'operation_type': result.operation_type},
-                )
+    )
             else:
                 raise RuntimeError('No OPSEC backends available')
         else:
@@ -170,7 +170,7 @@ class OpsECCoordinator(UniversalCoordinator):
             operation_type=context,
             confidence_threshold=decision.confidence,
             security_level=security_level.value,
-        )
+    )
         self._stealth_activations += 1
         self._stealth_mode_active = stealth_result.get('active', False)
         return SecurityResult(
@@ -181,7 +181,7 @@ class OpsECCoordinator(UniversalCoordinator):
             execution_time=time.time() - start_time,
             measures_activated=stealth_result.get('measures_activated', 0),
             result_data=stealth_result,
-        )
+    )
 
     # ─── Privacy / VPN ────────────────────────────────────────────────────────
 
@@ -198,7 +198,7 @@ class OpsECCoordinator(UniversalCoordinator):
                 PrivacyLevel,
                 VPNConfig,
                 VPNDriver,
-            )
+    )
             if not server:
                 servers = VPNDriver.PROVIDERS.get(provider, {}).get('servers', [])
                 if servers:
@@ -209,7 +209,7 @@ class OpsECCoordinator(UniversalCoordinator):
             config = VPNConfig(
                 provider=provider, server=server, protocol=protocol,
                 dns_leak_protection=True, kill_switch=True,
-            )
+    )
             driver = VPNDriver(config)
             success = await driver.connect()
             if success:
@@ -268,7 +268,7 @@ class OpsECCoordinator(UniversalCoordinator):
             from hledac.universal.privacy_protection.anonymous_communication import (
                 EmailConfig,
                 TorMailer,
-            )
+    )
             mailer = TorMailer(use_tor=use_tor)
             config = EmailConfig(
                 smtp_server='127.0.0.1' if use_tor else 'smtp.protonmail.com',
@@ -277,11 +277,11 @@ class OpsECCoordinator(UniversalCoordinator):
                 password='',
                 use_tls=not use_tor,
                 use_tor=use_tor,
-            )
+    )
             success = await mailer.send_email(
                 config=config, to_address=to_address, subject=subject, body=body,
                 encrypt=encrypt, recipient_key=recipient_key,
-            )
+    )
             return {
                 'success': success, 'provider': provider, 'tor_used': use_tor,
                 'encrypted': encrypt, 'recipient': to_address,
@@ -330,7 +330,7 @@ class OpsECCoordinator(UniversalCoordinator):
         try:
             from hledac.universal.privacy_protection.anonymous_communication import (
                 SecureChannelManager,
-            )
+    )
             manager = SecureChannelManager()
             channel = manager.create_channel(participant_ids, channel_name)
             if channel:
@@ -533,7 +533,7 @@ class OpsECCoordinator(UniversalCoordinator):
                     # Import proxy URLs from canonical transport module
                     from hledac.universal.transport.curl_cffi_fetch import (
                         _TOR_CURL_PROXY, _I2P_CURL_PROXY,
-                    )
+    )
                     if host.endswith('.onion') or host.endswith('.b32.i2p'):
                         return {"http": _TOR_CURL_PROXY, "https": _TOR_CURL_PROXY}
                     elif host.endswith('.i2p'):
@@ -546,7 +546,7 @@ class OpsECCoordinator(UniversalCoordinator):
                 # Use canonical fetch_via_curl_cffi_cached for GET requests
                 from hledac.universal.fetching.curl_cffi_fetch import (
                     fetch_via_curl_cffi_cached,
-                )
+    )
                 fetch_kwargs = {
                     'url': url,
                     'headers': headers,
@@ -580,7 +580,7 @@ class OpsECCoordinator(UniversalCoordinator):
                 # This still goes through the canonical layer but without caching
                 from hledac.universal.fetching.curl_cffi_fetch import (
                     fetch_via_curl_cffi_with_caps_check,
-                )
+    )
                 fetch_kwargs = {
                     'url': url,
                     'headers': headers,
@@ -632,7 +632,7 @@ class OpsECCoordinator(UniversalCoordinator):
             async with semaphore:
                 return await self.stealth_request_with_jitter(
                     url, min_delay=jitter_range[0], max_delay=jitter_range[1],
-                )
+    )
 
         tasks = [fetch_with_limit(url) for url in urls]
         _sec_result = await parallel(tasks, policy='log', ctx='opsec_coordinator')

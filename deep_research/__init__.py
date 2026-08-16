@@ -16,11 +16,7 @@ from .path_discovery import (
     SequentialPathPattern,
     ShadowWalkerAlgorithm,
 )
-
-
-
-
-
+from .utils import (
     Harvester,
     LinkCheckResult,
     LinkRotDetector,
@@ -37,8 +33,7 @@ from .path_discovery import (
 __all__ = [
     # Path Discovery
     "ShadowWalkerAlgorithm",
-
-from _core import aclose    "PathPatternAnalyzer",
+    "PathPatternAnalyzer",
     "DatePathPattern",
     "SequentialPathPattern",
     "FilePathPattern",

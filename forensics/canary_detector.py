@@ -92,7 +92,7 @@ class CanaryTokenDetector:
         self._web_beacon_pattern = re.compile(
             r'<img[^>]+src=["\']([^"\']*?(?:token|tracker|beacon|track|pixel|canary)[^"\']*)["\']',
             re.IGNORECASE | re.MULTILINE
-        )
+    )
 
         # DNS callback URLs: http://[32-char-hex].dns.[domain] patterns
         # Common canary token services use DNS callbacks for exfiltration
@@ -100,14 +100,14 @@ class CanaryTokenDetector:
         self._dns_callback_pattern = re.compile(
             r'https?://([a-z0-9]{20,64})\.(?:dns\.)?(?:canarytokens?|canary\.token|callback|track)\.[a-z.]+',
             re.IGNORECASE
-        )
+    )
 
         # UUIDs: Standard UUID format used as unique tracking identifiers
         # Matches: 550e8400-e29b-41d4-a716-446655440000
         self._uuid_pattern = re.compile(
             r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b',
             re.IGNORECASE
-        )
+    )
 
         # Random hex strings: 32+ char hex strings (MD5-like) used for tracking
         # Matches: abc123def456... (32-64 hex chars)
@@ -115,28 +115,28 @@ class CanaryTokenDetector:
         self._hex_id_pattern = re.compile(
             r'\b[0-9a-f]{32,64}\b',
             re.IGNORECASE
-        )
+    )
 
         # Tracking pixels: 1x1 images with suspicious URLs
         # Matches: width="1" height="1" or width:1px height:1px with external src
         self._tracking_pixel_pattern = re.compile(
             r'<img[^>]+(?:width=["\']?1["\']?|height=["\']?1["\']?)[^>]+src=["\']([^"\']+)["\']',
             re.IGNORECASE | re.MULTILINE
-        )
+    )
 
         # Hidden iframes: iframes with zero dimensions or hidden styling
         # Matches: <iframe width="0" height="0" style="display:none" src="...">
         self._iframe_pattern = re.compile(
             r'<iframe[^>]+(?:width=["\']?0["\']?|height=["\']?0["\']?|display:\s*none|visibility:\s*hidden)[^>]+src=["\']([^"\']+)["\']',
             re.IGNORECASE | re.MULTILINE
-        )
+    )
 
         # External resource loads: script/link tags loading from suspicious domains
         # Matches: <script src="https://tracker.com/...">, <link href="...canary...">
         self._external_resource_pattern = re.compile(
             r'<(?:script|link)[^>]+(?:src|href)=["\']([^"\']*?(?:token|tracker|beacon|canary)[^"\']*)["\']',
             re.IGNORECASE | re.MULTILINE
-        )
+    )
 
     def scan(self, content: str) -> CanaryDetection:
         """Scan content for canary tokens and tracking beacons.
@@ -172,7 +172,7 @@ class CanaryTokenDetector:
             tracking_pixels +
             hidden_iframes +
             external_resources
-        )
+    )
 
         # Deduplicate while preserving order
         seen = set()
@@ -186,13 +186,13 @@ class CanaryTokenDetector:
         severity = self._assess_severity(
             web_beacons, dns_callbacks, unique_ids,
             tracking_pixels, hidden_iframes, external_resources
-        )
+    )
 
         if detected:
             logger.warning(
                 f"[CANARY] Detected {len(unique_tokens)} canary token(s) "
                 f"(severity: {severity})"
-            )
+    )
 
         return CanaryDetection(
             detected=detected,
@@ -202,7 +202,7 @@ class CanaryTokenDetector:
             unique_identifiers=unique_ids,
             tracking_pixels=tracking_pixels,
             severity=severity,
-        )
+    )
 
     def _detect_web_beacons(self, html: str) -> list[str]:
         """Detect web beacons (tracking pixels) in HTML content.
@@ -396,7 +396,7 @@ class CanaryTokenDetector:
             len(tracking_pixels) +
             len(hidden_iframes) +
             len(external_resources)
-        )
+    )
 
         if total_active >= 3:
             return 'critical'

@@ -82,7 +82,7 @@ class LIFNeuron:
     def forward(self, input_current: float, dt: float = 0.01) -> float:
         self.potential = (
             self.potential * (1 - dt / self.tau) + input_current * dt
-        )
+    )
         if self.potential > self.threshold:
             spike = self.potential
             self.potential = 0.0
@@ -117,7 +117,7 @@ class SpikePriorityNetwork:
     def get_spike_count(self) -> int:
         return sum(
             1 for n in self.neurons if n.potential == 0 and n.last_spike > 0
-        )
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -146,7 +146,7 @@ class MLXSpikeNetwork:
             "_potentials",
             "_taus",
             "_thresholds",
-        )
+    )
     )
 
     def __init__(
@@ -160,7 +160,7 @@ class MLXSpikeNetwork:
         self._n_neurons = n_neurons
         self._ane_model_path: Path | None = (
             Path(ane_model_path) if ane_model_path else None
-        )
+    )
         self._ane_model: Any = None
         self._benchmarked = False
         self._fallback_mode = False
@@ -173,7 +173,7 @@ class MLXSpikeNetwork:
         _mlx = _mx_arrays()
         self._thresholds = _mlx.array(
             [0.5 + i * 0.1 for i in range(n_neurons)]
-        )
+    )
         self._taus = _mlx.array([0.05 + i * 0.02 for i in range(n_neurons)])
         self._potentials = _mlx.zeros(n_neurons)
 
@@ -189,7 +189,7 @@ class MLXSpikeNetwork:
             _ct = _ct_models()
             self._ane_model = _ct.models.MLModel(
                 str(self._ane_model_path)
-            )
+    )
             # ANE lives on Neural Engine, not GPU — clean Metal cache
             if MLX_AVAILABLE:
                 try:
@@ -258,18 +258,18 @@ class MLXSpikeNetwork:
 
         self._potentials = (
             self._potentials * (1 - dt / self._taus) + inputs * dt
-        )
+    )
 
         spikes = _mlx.where(
             self._potentials > self._thresholds,
             self._potentials,
             _mlx.zeros(self._n_neurons),
-        )
+    )
         self._potentials = _mlx.where(
             spikes > 0,
             _mlx.zeros(self._n_neurons),
             self._potentials,
-        )
+    )
 
         return list(spikes)
 

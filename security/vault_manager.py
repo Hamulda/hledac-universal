@@ -83,7 +83,7 @@ def _check_cryptokit() -> bool:
                 capture_output=True,
                 text=True,
                 timeout=5,
-            )
+    )
 
         # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
         # Avoids M1 Metal crash vector when called from async context.
@@ -127,14 +127,14 @@ def _check_zip_ratio(info: zipfile.ZipInfo, max_ratio: int, max_extract_mb: int)
         raise zipfile.BadZipFile(
             f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
             f"(limit {max_extract_mb:.0f}MB per member)"
-        )
+    )
     if cs > 0 and fs > 0:
         ratio = fs / cs
         if ratio > max_ratio:
             raise zipfile.BadZipFile(
                 f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
                 f"from {cs / 1024:.1f}KB (ratio {ratio:.0f}x, limit {max_ratio}x)"
-            )
+    )
 
 
 def ratio_limited_open(
@@ -509,7 +509,7 @@ class LootManager:
                 raise zipfile.BadZipFile(
                     f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
                     f"(limit {LootManager.MAX_EXTRACT_PER_MEMBER / 1024 / 1024:.0f}MB)"
-                )
+    )
 
             # Check 2: compression ratio cap.
             # compress_size=0 is a valid empty file; treat as ratio=0.
@@ -519,7 +519,7 @@ class LootManager:
                     raise zipfile.BadZipFile(
                         f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
                         f"from {cs / 1024:.1f}KB (ratio {ratio:.0f}x, limit {LootManager.MAX_DECOMPRESS_RATIO}x)"
-                    )
+    )
 
         # Second pass: path-traversal and zip-slip checks (still before extractall).
         for member in zf.namelist():

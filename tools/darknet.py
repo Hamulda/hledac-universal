@@ -79,7 +79,7 @@ class DarknetConnector:
                 timeout=httpx.Timeout(30.0),
                 limits=limits,
                 trust_env=False,
-            )
+    )
         return self._tor_client
 
     async def fetch_via_tor(self, url: str) -> bytes | None:
@@ -111,7 +111,7 @@ class DarknetConnector:
                 timeout=httpx.Timeout(30.0),
                 limits=limits,
                 trust_env=False,
-            )
+    )
         return self._i2p_client
 
     async def fetch_via_i2p(self, url: str) -> bytes | None:

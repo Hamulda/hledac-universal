@@ -234,7 +234,7 @@ class AbsenceMiningEngine:
                 total_checked=0,
                 confidence_adjustments={},
                 should_trigger_refetch=False,
-            )
+    )
 
         store = duckdb_store or self._duckdb_store
         absences: list[AbsenceFinding] = []
@@ -251,7 +251,7 @@ class AbsenceMiningEngine:
             if len(entities_to_check) > self._MAX_CHECKS_PER_SPRINT:
                 entities_to_check = dict(
                     list(entities_to_check.items())[: self._MAX_CHECKS_PER_SPRINT]
-                )
+    )
 
             # Parallel absence checks bounded by semaphore
             tasks = [
@@ -277,7 +277,7 @@ class AbsenceMiningEngine:
             # Graph topology absence check
             graph_absences = await self._check_graph_topology(
                 report, store
-            )
+    )
             absences.extend(graph_absences)
             for a in graph_absences:
                 if a.severity > 0.3:
@@ -288,7 +288,7 @@ class AbsenceMiningEngine:
             # Emit entropy alerts for high-severity absences
             should_refetch = await self._emit_absence_alerts(
                 absences, report, store
-            )
+    )
 
             self._checked_this_sprint.clear()
             self._checked_this_sprint.update(entities_to_check.keys())
@@ -299,7 +299,7 @@ class AbsenceMiningEngine:
                 total_checked=checked,
                 confidence_adjustments=adjustments,
                 should_trigger_refetch=should_refetch,
-            )
+    )
 
         except Exception as e:
             logger.warning("[ABSENCE] Exception during absence mining: %s", e)
@@ -309,7 +309,7 @@ class AbsenceMiningEngine:
                 total_checked=checked,
                 confidence_adjustments=adjustments,
                 should_trigger_refetch=False,
-            )
+    )
 
     def apply_confidence_adjustment(
         self,
@@ -348,7 +348,7 @@ class AbsenceMiningEngine:
             max(0.0, min(1.0, adjusted)),
             avg_severity,
             len(adjustments),
-        )
+    )
 
         return max(0.0, min(1.0, adjusted))
 
@@ -375,7 +375,7 @@ class AbsenceMiningEngine:
                 result = await safe_wait_for(
                     self._do_entity_check(entity),
                     timeout=self._CHECK_TIMEOUT_S,
-                )
+    )
             self._checked_this_sprint.add(entity_key)
             return result
         except asyncio.TimeoutError:
@@ -495,7 +495,7 @@ class AbsenceMiningEngine:
             try:
                 results = await self._duckdb_store.async_query_findings_by_text(
                     onion, limit=1,
-                )
+    )
                 if results and len(results) > 0:
                     return (None, 0.0)
             except Exception:  # noqa: BLE001
@@ -522,7 +522,7 @@ class AbsenceMiningEngine:
             try:
                 results = await self._duckdb_store.async_query_findings_by_text(
                     cve, limit=3,
-                )
+    )
                 if results and len(results) >= 2:
                     return (None, 0.0)
             except Exception:  # noqa: BLE001
@@ -563,7 +563,7 @@ class AbsenceMiningEngine:
             if self._duckdb_store:
                 results = await self._duckdb_store.async_query_findings_by_text(
                     domain, limit=1,
-                )
+    )
                 if results and len(results) > 0:
                     self._cache.set(cache_key, True)
                     return None
@@ -598,7 +598,7 @@ class AbsenceMiningEngine:
                 "https://crt.sh/",
                 params={"q": domain, "output": "json"},
                 timeout=5.0,
-            )
+    )
             if resp.status_code == 200:
                 data = resp.json()
                 return isinstance(data, list) and len(data) > 0
@@ -628,7 +628,7 @@ class AbsenceMiningEngine:
             if self._duckdb_store:
                 results = await self._duckdb_store.async_query_findings_by_text(
                     domain, limit=1,
-                )
+    )
                 if results and len(results) > 0:
                     # Check source_type for PDNS
                     for r in results:
@@ -677,7 +677,7 @@ class AbsenceMiningEngine:
             if self._duckdb_store:
                 results = await self._duckdb_store.async_query_findings_by_text(
                     domain, limit=1,
-                )
+    )
                 if results and len(results) > 0:
                     for r in results:
                         src = r.get('source_type', '')
@@ -724,7 +724,7 @@ class AbsenceMiningEngine:
             if self._duckdb_store:
                 results = await self._duckdb_store.async_query_findings_by_text(
                     ip, limit=1,
-                )
+    )
                 if results and len(results) > 0:
                     self._cache.set(cache_key, True)
                     return None
@@ -765,7 +765,7 @@ class AbsenceMiningEngine:
             if self._duckdb_store:
                 results = await self._duckdb_store.async_query_findings_by_text(
                     ip, limit=1,
-                )
+    )
                 if results and len(results) > 0:
                     self._cache.set(cache_key, True)
                     return None
@@ -793,7 +793,7 @@ class AbsenceMiningEngine:
             prefix = hash_val[:16] if len(hash_val) >= 16 else hash_val
             results = await self._duckdb_store.async_query_findings_by_text(
                 prefix, limit=1,
-            )
+    )
             return bool(results and len(results) > 0)
         except Exception:
             return False
@@ -832,7 +832,7 @@ class AbsenceMiningEngine:
                     # Check cooccurrence table for relationships
                     results = await store.async_query_findings_by_text(
                         entity_value, limit=2,
-                    )
+    )
                     edge_count = len(results) if results else 0
 
                     if edge_count < 2:
@@ -840,7 +840,7 @@ class AbsenceMiningEngine:
                             (e.ioc_type for e in (report.ioc_entities or [])
                              if e.value == entity_value),
                             "unknown"
-                        )
+    )
                         absences.append(AbsenceFinding(
                             entity_value=entity_value,
                             absence_type=AbsenceType.GRAPH_FRAGMENT,
@@ -880,7 +880,7 @@ class AbsenceMiningEngine:
             # Dynamic import to avoid circular dependency
             from hledac.universal.brain.uncertainty_quant import (
                 EntropyAlert, get_entropy_bridge,
-            )
+    )
 
             bridge = get_entropy_bridge()
             if bridge is None:
@@ -908,7 +908,7 @@ class AbsenceMiningEngine:
                         "source": "absence_mining",
                         "reason": f"structural_absence:{absence.absence_type.value}",
                     },
-                )
+    )
                 bridge.emit(alert)
                 emitted += 1
 
@@ -916,7 +916,7 @@ class AbsenceMiningEngine:
                 logger.info(
                     "[ABSENCE] Emitted %d EntropyAlerts for high-severity absences",
                     emitted,
-                )
+    )
             return emitted > 0
 
         except ImportError:

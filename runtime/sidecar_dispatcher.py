@@ -212,7 +212,7 @@ class SidecarDispatcher:
             active_target_sidecars_skipped=stats.get('at_skipped', 0),
             third_party_provider_sidecars_attempted=stats.get('tpp_attempted', 0),
             third_party_provider_sidecars_skipped=stats.get('tpp_skipped', 0),
-        )
+    )
 
     def _make_empty_outcome(self, source_branch: str, sprint_id: str) -> DispatchOutcome:
         """Create empty outcome for no findings."""

@@ -48,7 +48,7 @@ async def cancel_all_tasks(loop: asyncio.AbstractEventLoop, timeout_s: float = 5
         await asyncio.wait_for(
             asyncio.gather(*tasks, return_exceptions=True),
             timeout=timeout_s
-        )
+    )
     except (asyncio.TimeoutError, asyncio.CancelledError):
         pass
     

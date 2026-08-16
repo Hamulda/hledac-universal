@@ -17,7 +17,7 @@ from .plugin_manager import (
     PluginType,
     create_plugin_manager,
     load_all_plugins,
-)
+    )
 from .system_monitor import SystemMonitor, SystemState
 from _core import aclose
 

@@ -90,12 +90,12 @@ class BuildStage:
                 matched_batch.matched_pattern_counts[i]
                 if i < len(matched_batch.matched_pattern_counts)
                 else 0
-            )
+    )
             pattern_labels = (
                 matched_batch.matched_pattern_labels[i]
                 if i < len(matched_batch.matched_pattern_labels)
                 else []
-            )
+    )
             error = matched_batch.errors[i] if i < len(matched_batch.errors) else None
 
             # Skip pages with no matches or errors
@@ -143,7 +143,7 @@ class BuildStage:
             payloads=payloads,
             raw_payloads=raw_payloads,
             matched_pattern_labels=matched_pattern_labels,
-        )
+    )
 
         return batch, telemetry
 
@@ -160,7 +160,7 @@ class BuildStage:
             payloads=[],
             raw_payloads=[],
             matched_pattern_labels=[],
-        )
+    )
 
 
 def _make_finding_id(url: str, query_context: str = "") -> str:

@@ -178,7 +178,7 @@ class EvidenceQuery:
             run_id=run_id or 'unknown',
             events=list(events),
             chain_head=chain_head,
-        )
+    )
 
     def verify_all(self) -> dict[str, Any]:
         """Verify integrity of all events."""

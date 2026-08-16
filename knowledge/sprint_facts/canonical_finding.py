@@ -133,7 +133,7 @@ class CanonicalFinding(Struct, frozen=True):
             f"warc:{warc_record_id}",
             f"offset:{compressed_offset}",
             f"size:{compressed_size}",
-        )
+    )
         if provenance:
             final_provenance = tuple(list(provenance) + list(warc_provenance))
         else:
@@ -152,7 +152,7 @@ class CanonicalFinding(Struct, frozen=True):
             compressed_offset=compressed_offset,
             compressed_size=compressed_size,
             warc_url=warc_url,
-        )
+    )
 
     @classmethod
     def from_adapters(
@@ -200,14 +200,14 @@ class CanonicalFinding(Struct, frozen=True):
                             adapter_name,
                             len(results),
                             query[:50],
-                        )
+    )
             except Exception as e:  # noqa: BLE001 — fail-soft per adapter
                 _logger.warning(
                     "[CanonicalFinding] %s.to_canonical_findings() failed for query '%s': %s",
                     adapter_name,
                     query[:50],
                     e,
-                )
+    )
         return findings
 
 

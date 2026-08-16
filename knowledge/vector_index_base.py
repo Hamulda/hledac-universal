@@ -375,7 +375,7 @@ class USEARCHEngine:
                 connectivity=_USEARCH_CONNECTIVITY,
                 expansion_add=_USEARCH_EXPANSION_ADD,
                 expansion_search=_USEARCH_EXPANSION_SEARCH,
-            )
+    )
 
             self._usearch_labels = []
             for key, (emb, _meta) in vectors_data.items():
@@ -387,7 +387,7 @@ class USEARCHEngine:
             logger.info(
                 f"[USEARCH] Built index: {len(self._usearch_labels)} vectors, "
                 f"connectivity={_USEARCH_CONNECTIVITY}"
-            )
+    )
         except ImportError:
             logger.debug("[USEARCH] USEARCH not available")
             self._usearch_loaded = False

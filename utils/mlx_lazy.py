@@ -10,7 +10,7 @@ _warnings.warn(
     "import lazy components from hledac.universal.utils.mlx_memory._core instead (F330-MLX-DUP-007)",
     DeprecationWarning,
     stacklevel=2,
-)
+    )
 
 from hledac.universal.utils.mlx_memory._core import MLX_AVAILABLE
 from _core import aclose

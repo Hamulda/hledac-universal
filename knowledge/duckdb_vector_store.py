@@ -151,7 +151,7 @@ class DuckDBVectorStore:
                     _logger.debug(
                         "[ARCH-DB-001] RAG chunk validation failed for chunk_id=%s",
                         chunk.get("chunk_id", "?"),
-                    )
+    )
                     return False  # Skip write — validation failed
 
                 # Validation passed — proceed with upsert
@@ -172,14 +172,14 @@ class DuckDBVectorStore:
                         len(embedding_list),
                         float(chunk.get("created_at", 0.0)),
                     ],
-                )
+    )
                 return True
             except Exception as e:  # noqa: BLE001 — best-effort per chunk
                 _logger.debug(
                     "[DUCKDB:VEC] upsert_rag_embeddings failed for %s: %s",
                     chunk.get("chunk_id", "?"),
                     e,
-                )
+    )
                 return False
 
         # Process chunks in parallel batches to avoid unbounded concurrency
@@ -316,7 +316,7 @@ class DuckDBVectorStore:
                 elif c.get("distance") is not None:
                     vectors.append(
                         np.array(query_vector, dtype=np.float32) * (1.0 - c["distance"])
-                    )
+    )
                     ids.append(c["chunk_id"])
 
             if not vectors:
@@ -327,7 +327,7 @@ class DuckDBVectorStore:
 
             mmr_indices = maximal_marginal_relevance(
                 query_vec, matrix, k=k, lambda_mult=lambda_mult
-            )
+    )
 
             return [candidates[i] for i in mmr_indices if i < len(candidates)]
 
@@ -379,7 +379,7 @@ class DuckDBVectorStore:
                     _logger.debug(
                         "[ARCH-DB-001] Entity embedding validation failed for entity_id=%s",
                         entity.get("entity_id", "?"),
-                    )
+    )
                     return False  # Skip write — validation failed
 
                 # Validation passed — proceed with upsert
@@ -400,14 +400,14 @@ class DuckDBVectorStore:
                         len(embedding_list),
                         float(entity.get("updated_at", 0.0)),
                     ],
-                )
+    )
                 return True
             except Exception as e:  # noqa: BLE001
                 _logger.debug(
                     "[DUCKDB:VEC] upsert_entity_embeddings failed for %s: %s",
                     entity.get("entity_id", "?"),
                     e,
-                )
+    )
                 return False
 
         # Process entities in parallel batches to avoid unbounded concurrency

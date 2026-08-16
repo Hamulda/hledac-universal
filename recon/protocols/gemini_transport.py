@@ -126,7 +126,7 @@ async def _fetch_gemini_tcp(
     async with asyncio.timeout(timeout):
         reader, writer = await asyncio.open_connection(
             host, port, ssl=_get_gemini_ssl_context()
-        )
+    )
         try:
             # Send protocol request — url/headers are internal, not user-supplied
             # noqa: B321 — gemini protocol request construction is internal-only
@@ -140,7 +140,7 @@ async def _fetch_gemini_tcp(
             if not header_line:
                 return GeminiResponse(
                     status=0, meta="", body="", content_type="", url=url
-                )
+    )
 
             # Parse status and meta
             parts = header_line.split(" ", 1)
@@ -174,7 +174,7 @@ async def _fetch_gemini_tcp(
                 body=body,
                 content_type=content_type,
                 url=url,
-            )
+    )
         finally:
             writer.close()
             await writer.wait_closed()
@@ -302,7 +302,7 @@ async def search_geminispace(query: str) -> list[GeminiFinding]:
             "kennedy.gemi.dev",
             GEMINI_PORT,
             f"/search?q={encoded_query}",
-        )
+    )
 
         if resp.status >= 20 and resp.status < 30:
             links = extract_gemini_links(resp.body)
@@ -315,7 +315,7 @@ async def search_geminispace(query: str) -> list[GeminiFinding]:
                         url=url,
                         content_type="search_result",
                         source_capsule="kennedy.gemi.dev",
-                    )
+    )
                     findings.append(finding)
 
     except Exception as e:
@@ -379,7 +379,7 @@ async def crawl_capsule(
                         url=current_url,
                         content_type=resp.content_type,
                         source_capsule=parse_gemini_url(current_url)[0],
-                    )
+    )
                     findings.append(finding)
 
                     # Queue discovered links
@@ -443,7 +443,7 @@ async def geminispace_to_findings(
                     ts=time.time(),
                     provenance=(result.url,),
                     payload_text=content[:4096] if content else None,
-                )
+    )
                 findings.append(finding)
 
     except Exception as e:
@@ -469,7 +469,7 @@ async def get_capsule_index() -> list[str]:
             "gemini.circumlunar.space",
             GEMINI_PORT,
             "/capsules/",
-        )
+    )
 
         if resp.status >= 20 and resp.status < 30:
             links = extract_gemini_links(resp.body)

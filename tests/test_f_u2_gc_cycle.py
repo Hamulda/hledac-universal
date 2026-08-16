@@ -55,7 +55,7 @@ class TestGcCycleMaintain:
     def test_cooldown_skips_refreeze(self) -> None:
         from hledac.universal._core.memory_cycle import (  # type: ignore[import-not-found]
             gc_cycle_maintain,
-        )
+    )
 
         if not hasattr(gc, "freeze"):
             pytest.skip("gc.freeze not available on this Python build")
@@ -93,7 +93,7 @@ class TestGcCycleMaintain:
         from hledac.universal._core.memory_cycle import (  # type: ignore[import-not-found]
             gc_cycle_maintain,
             get_stats,
-        )
+    )
 
         if not hasattr(gc, "freeze"):
             pytest.skip("gc.freeze not available on this Python build")

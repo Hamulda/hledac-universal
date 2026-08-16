@@ -99,7 +99,7 @@ async def get_or_download_model(
     if current_size_gb >= min(max_size, HARDCAP_CACHE_SIZE_GB):
         logger.warning(
             f"[model_cache] Cache at {current_size_gb:.1f}GB, cannot download {model_id}"
-        )
+    )
         return None
 
     # Check disk space (need ~2x model size for temp files)
@@ -108,7 +108,7 @@ async def get_or_download_model(
     if available_gb < estimated_model_gb:
         logger.warning(
             f"[model_cache] Insufficient disk space: {available_gb:.1f}GB available"
-        )
+    )
         return None
 
     # Download via snapshot_download
@@ -120,7 +120,7 @@ async def get_or_download_model(
             _snapshot_download,
             model_id,
             cache_dir=str(MODEL_CACHE_DIR),
-        )
+    )
         logger.info(f"[model_cache] ✓ {model_id} cached at {cache_dir}")
         return Path(cache_dir)
 

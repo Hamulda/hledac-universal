@@ -109,7 +109,7 @@ class TestModuleAvailability:
             ioc = rust.ioc
             assert hasattr(ioc, "decode_ioc_candidates"), (
                 "decode_ioc_candidates not found in rust.ioc"
-            )
+    )
         except ImportError:
             pytest.skip("core.rust_backend not available")
 
@@ -123,7 +123,7 @@ class TestModuleAvailability:
             ioc = rust.ioc
             assert hasattr(ioc, "batch_decode_ioc_candidates"), (
                 "batch_decode_ioc_candidates not found"
-            )
+    )
         except ImportError:
             pytest.skip("core.rust_backend not available")
 
@@ -348,13 +348,13 @@ class TestFalsePositiveGuard:
                 "This is a normal paragraph. It contains regular English text. "
                 "There is nothing suspicious here. Just ordinary words and sentences. "
                 "The quick brown fox jumps over the lazy dog."
-            )
+    )
             result = ioc.decode_ioc_candidates(text, max_depth=3)
             candidates = getattr(result, "candidates", result)
             # Normal English has entropy ~3.5-4.5 bits/byte, below threshold 5.5
             assert not candidates, (
                 f"Normal paragraph should not trigger deobfuscation, got {candidates}"
-            )
+    )
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -372,7 +372,7 @@ class TestFalsePositiveGuard:
                 "        if item.active:\n"
                 "            results.append(process_item(item))\n"
                 "    return results\n"
-            )
+    )
             result = ioc.decode_ioc_candidates(code, max_depth=3)
             candidates = getattr(result, "candidates", result)
             # Code has moderate entropy but not >5.5 bits/byte
@@ -380,7 +380,7 @@ class TestFalsePositiveGuard:
             # it doesn't produce excessive candidates
             assert len(candidates) < 10, (
                 f"Code should not produce excessive candidates, got {len(candidates)}"
-            )
+    )
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -407,7 +407,7 @@ class TestAdversarialInputs:
             candidates = getattr(result, "candidates", result)
             assert not candidates, (
                 f"Homogeneous AAAA should not decode, got {candidates}"
-            )
+    )
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -676,7 +676,7 @@ class TestMultipleRegions:
             candidates = getattr(result, "candidates", result)
             assert len(candidates) >= 1, (
                 f"Should decode at least one region, got {candidates}"
-            )
+    )
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -778,7 +778,7 @@ class TestM1Budget:
             elapsed = time.monotonic() - start
             assert elapsed <= 0.025, (
                 f"100 KB should process in ≤25ms, took {elapsed*1000:.1f}ms"
-            )
+    )
             assert result is not None
         except ImportError:
             pytest.skip("Rust extension not available")

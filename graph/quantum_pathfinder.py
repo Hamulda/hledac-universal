@@ -187,7 +187,7 @@ def _get_scipy_sparse() -> Any:
                 logging.getLogger(__name__).debug(
                     "scipy.sparse unavailable: sparse matrix operations disabled. "
                     "Install with: pip install hledac-universal[ml]"
-                )
+    )
                 _SPARSE_LOGGED = True
             _SPARSE_CACHE = None
     return _SPARSE_CACHE
@@ -1270,7 +1270,7 @@ class DuckPGQGraph:
                 WHERE
                     p.depth < {max_hops}
                     AND NOT d.value = ANY(p.path)  -- avoid cycles
-            )
+    )
             SELECT path
             FROM path
             WHERE node_value = ?
@@ -1345,14 +1345,14 @@ class DuckPGQGraph:
                 ) outdeg ON outdeg.src_id = pr.node_id
                 WHERE pr.iter < {max_iter}
                 GROUP BY n.id, n.value, pr.iter
-            )
+    )
             SELECT node_value, pagerank
             FROM (
                 SELECT node_value, pagerank,
                        ROW_NUMBER() OVER (ORDER BY pagerank DESC) as rn
                 FROM pagerank_iter
                 WHERE iter = {max_iter}
-            )
+    )
             WHERE rn <= 1000
             ORDER BY pagerank DESC
             """
@@ -1424,7 +1424,7 @@ class DuckPGQGraph:
                         SELECT COALESCE(
                             mode() WITHIN GROUP (ORDER BY c.label),
                             n.id
-                        )
+    )
                         FROM ioc_edges e
                         JOIN community_prop c ON c.node_id = e.src_id
                         WHERE e.dst_id = n.id
@@ -1437,11 +1437,11 @@ class DuckPGQGraph:
                       SELECT COALESCE(
                           mode() WITHIN GROUP (ORDER BY c.label),
                           n.id
-                      )
+    )
                       FROM ioc_edges e
                       JOIN community_prop c ON c.node_id = e.src_id
                       WHERE e.dst_id = n.id
-                  )
+    )
             )
             SELECT label, node_value
             FROM community_prop
@@ -1450,11 +1450,11 @@ class DuckPGQGraph:
                    SELECT COALESCE(
                        mode() WITHIN GROUP (ORDER BY c.label),
                        (SELECT id FROM ioc_nodes LIMIT 1)
-                   )
+    )
                    FROM ioc_edges e
                    JOIN community_prop c ON c.node_id = e.src_id
                    WHERE e.dst_id = (SELECT id FROM ioc_nodes WHERE value = (SELECT node_value FROM community_prop GROUP BY node_value HAVING COUNT(*) = 1 LIMIT 1))
-               )
+    )
             ORDER BY label, node_value
             """
             # Bounded batch processing — peak RAM stays below batch_size × row_size
@@ -1507,7 +1507,7 @@ class DuckPGQGraph:
                         min_adamic_adar=0.01,
                         min_jaccard=min_confidence,
                         max_candidates=max_candidates,
-                    )
+    )
                     if result and hasattr(result, 'edges'):
                         edges = []
                         for e in result.edges:
@@ -1606,7 +1606,7 @@ class DuckPGQGraph:
                     })
 
             # Sort by confidence
-            edges.sort(key=itemgetter("'"), reverse=True)
+            edges.sort(key=itemgetter("confidence"), reverse=True)
             return edges
 
         except Exception as e:
@@ -1807,7 +1807,7 @@ class DuckPGQGraph:
             '               classification_status = excluded.classification_status,\n'
             '               provenance = COALESCE(excluded.provenance, ioc_nodes.provenance)',
             [row_id, value, ioc_type, confidence, source, ts, ts, ts, classification_status, provenance_json]
-        )
+    )
         return row_id
 
     def upsert_ioc(
@@ -1843,7 +1843,7 @@ class DuckPGQGraph:
         return self.add_ioc(
             ioc_value, ioc_type, confidence, source, observed_at=observed_at,
             provenance=provenance, classification_status=classification_status
-        )
+    )
 
     def upsert_ioc_batch(
         self,
@@ -1911,7 +1911,7 @@ class DuckPGQGraph:
             '             classification_status = CASE WHEN ioc_nodes.classification_status = \'classified\' THEN ioc_nodes.classification_status ELSE excluded.classification_status END,\n'
             '             provenance = COALESCE(excluded.provenance, ioc_nodes.provenance)',
             [(row[0], row[1], row[2], row[3], row[4], row[5], classification_status, provenance_json) for row in normalized_rows]
-        )
+    )
         return len(normalized_rows)
 
     def add_relation(self, src: str, dst: str, rel_type: str, weight: float=1.0, evidence: str=''):
@@ -2136,7 +2136,7 @@ class DuckPGQGraph:
                 for finding_key, vector in zip(
                     all_data.get("finding_key", []),
                     all_data.get("vector", []),
-                )
+    )
                 if finding_key and vector
             }
             result = []

@@ -169,7 +169,7 @@ def _load() -> None:
             "Native extension not found. "
             "Run: cd rust_extensions && maturin develop  (dev)  or  "
             "cd rust_extensions && maturin build --release && uv pip install dist/*.whl  (prod)"
-        )
+    )
 
     _spec = importlib.util.spec_from_file_location("hledac_rust_extensions", so_path)
     if _spec is None:

@@ -316,7 +316,7 @@ class WasmWasiLinker:
                   wasmtime.ValType.i32(), wasmtime.ValType.i32()],
                  [wasmtime.ValType.i32()],
                  self._host_sock_open),
-        )
+    )
 
         # sock_connect(fd: i32, addr_ptr: i32, addr_len: i32) -> (errno: i32)
         linker.define_func(
@@ -327,7 +327,7 @@ class WasmWasiLinker:
                   wasmtime.ValType.i32(), wasmtime.ValType.i32()],
                  [wasmtime.ValType.i32()],
                  self._host_sock_connect),
-        )
+    )
 
         # sock_send(fd: i32, ri_data_ptr: i32, ri_data_len: i32,
         #           si_flags: i32, so_data_len_ptr: i32) -> (errno: i32)
@@ -340,7 +340,7 @@ class WasmWasiLinker:
                   wasmtime.ValType.i32(), wasmtime.ValType.i32()],
                  [wasmtime.ValType.i32()],
                  self._host_sock_send),
-        )
+    )
 
         # sock_recv(fd: i32, ri_data_ptr: i32, ri_data_len: i32,
         #           ri_flags: i32, ro_data_len_ptr: i32, ro_flags_ptr: i32)
@@ -355,7 +355,7 @@ class WasmWasiLinker:
                   wasmtime.ValType.i32()],
                  [wasmtime.ValType.i32()],
                  self._host_sock_recv),
-        )
+    )
 
         return linker
 
@@ -430,7 +430,7 @@ class WasmSandbox:
         self._enable_wasi = enable_wasi
         self._wasi_linker: WasmWasiLinker | None = (
             WasmWasiLinker() if enable_wasi else None
-        )
+    )
         self._engine: Engine | None = None
         self._config: Config | None = None
         self._epoch_ticker: threading.Thread | None = None
@@ -443,7 +443,7 @@ class WasmSandbox:
         logger.info(
             'WasmSandbox initialized: fuel=%s, epoch=%ss, timeout=%ss, wasi=%s',
             fuel_limit, epoch_deadline, timeout, enable_wasi,
-        )
+    )
 
     @classmethod
     def with_wasi(
@@ -467,7 +467,7 @@ class WasmSandbox:
             timeout=timeout,
             cache_dir=cache_dir,
             enable_wasi=True,
-        )
+    )
 
     @property
     def wasi_enabled(self) -> bool:
@@ -495,7 +495,7 @@ class WasmSandbox:
         self._epoch_ticker_running = True
         self._epoch_ticker = threading.Thread(
             target=self._epoch_ticker_loop, daemon=True, name='wasm-epoch-ticker',
-        )
+    )
         self._epoch_ticker.start()
         logger.debug('Epoch ticker started')
 
@@ -541,13 +541,13 @@ class WasmSandbox:
             async with asyncio.timeout(self.timeout):
                 result = await loop.run_in_executor(
                     None, self._run_sync, wasm_bytes, function_name, args,
-                )
+    )
         except TimeoutError:
             result['error'] = f'Execution timeout ({self.timeout}s)'
             logger.warning(
                 'WASM execution timeout: %s (%.1fs)',
                 function_name, self.timeout,
-            )
+    )
         except Exception as e:
             result['error'] = str(e)
             logger.error(f'WASM execution error: {e}')

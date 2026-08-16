@@ -90,11 +90,13 @@ mod simdjson_extract;
 mod simhash_ext;
 mod sprint_policies;
 mod spsc_queue;
+
+// FIX: mpsc_pool was declared as file but never in lib.rs - added now
+mod mpsc_pool;
 mod telemetry_agg;
 mod text_norm;
 mod text_similarity;
 mod tls13;
-mod tls_metadata;
 mod topology;
 mod tracing;
 mod unicode_fingerprint;
@@ -118,6 +120,14 @@ mod arrow_c_data;
 
 #[cfg(feature = "data")]
 mod arrow_ipc_mmap;
+
+// FIX: aimd_controller was declared as file but never in lib.rs - added now
+#[cfg(feature = "data")]
+mod aimd_controller;
+
+// FIX: federated_qtable was declared as file but never in lib.rs - added now
+#[cfg(feature = "advanced")]
+mod federated_qtable;
 
 // ============================================================================
 // Apple Silicon modules (macOS only)
@@ -197,7 +207,9 @@ mod office;
 #[cfg(feature = "embedded_tor")]
 mod arti_bridge;
 
-#[cfg(feature = "embedded_tor")]
+// FIX [MODERN-07]: quic module should be gated by "quic" feature, not "embedded_tor"
+// This allows QUIC to be enabled independently of embedded_tor
+#[cfg(feature = "quic")]
 mod quic;
 
 #[cfg(feature = "embedded_tor")]
@@ -235,6 +247,10 @@ mod madvise;
 
 #[cfg(target_os = "macos")]
 mod os_unfair_lock;
+
+// Mach kernel zero-copy remapping (macOS only)
+#[cfg(target_os = "macos")]
+mod mach_remap;
 
 // ============================================================================
 // Version info
@@ -294,6 +310,190 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Pool registration
     // Pool functions are registered in their respective modules
+
+    // MODERN-07: Call registration functions for async modules
+    // These modules have register() / register_functions() but were never called!
+    // This bug prevented DNS, QUIC, and async bridge functions from being exposed to Python.
+
+    // DNS module (always compiled, conditionally feature-gated functions)
+    dns::register_functions(&m)?;
+
+    // QUIC/HTTP3 module
+    #[cfg(feature = "quic")]
+    quic::register(&m)?;
+
+    // Async bridge (Python↔Rust async FFI) - only compiled with shared_tokio
+    #[cfg(feature = "shared_tokio")]
+    async_bridge::register(&m)?;
+
+    // Embedded Tor (Arti) module
+    #[cfg(feature = "embedded_tor")]
+    arti_bridge::register(&m)?;
+
+    // Stealth bridge (async DNS/QUIC bridges for curl_cffi_fetch.py)
+    #[cfg(feature = "stealth_bridge")]
+    stealth_bridge::register(&m)?;
+
+    // Async query (DuckDB async queries via Arrow IPC)
+    #[cfg(feature = "shared_tokio")]
+    async_query::register(&m)?;
+
+    // Anti-analysis (TLS/HTTP2 challenge detection)
+    #[cfg(feature = "anti_analysis")]
+    anti_analysis::register(&m)?;
+
+    // Fulltext search (Tantivy BM25 index)
+    #[cfg(feature = "fulltext")]
+    fulltext_index::register(&m)?;
+
+    // Always-compiled modules with register() functions (no feature gate needed)
+    accelerate::register(&m)?;
+    bloom::register(&m)?;
+    feed_pipeline::register(&m)?;
+    h2_safari_preset::register(&m)?;
+    health::register(&m)?;
+    topology::register(&m)?;
+    tracing::register(&m)?;
+
+    // macOS-only modules (platform-gated)
+    #[cfg(feature = "metal")]
+    metal_compute::register(&m)?;
+    #[cfg(feature = "mlx_bridge")]
+    mlx_bridge::register(&m)?;
+    #[cfg(feature = "iosurface")]
+    iosurface_bridge::register(&m)?;
+    #[cfg(feature = "nw_framework")]
+    nw_connection::register(&m)?;
+    #[cfg(feature = "whisper")]
+    whisper::register(&m)?;
+
+    // Swarm DAG (async task scheduler)
+    #[cfg(feature = "shared_tokio")]
+    swarm_dag::register(&m)?;
+
+    // P2P harvest modules
+    #[cfg(feature = "p2p_harvest")]
+    {
+        p2p_harvest::register(&m)?;
+        swarm_fabric::register(&m)?;
+    }
+
+    // Native DB (MongoDB/Redis/Elasticsearch wire protocol)
+    #[cfg(feature = "native_db")]
+    native_db::register(&m)?;
+
+    // Additional always-compiled modules with register() functions
+    deobfuscate::register(&m)?;
+    mpsc_pool::register(&m)?;
+    pipeline_compose::register(&m)?;
+    rolling_hash::register(&m)?;
+    sprint_policies::register(&m)?;
+    spsc_queue::register(&m)?;
+
+    // macOS Metal modules
+    #[cfg(feature = "metal")]
+    metal_hashcrack::register(&m)?;
+    #[cfg(feature = "metal_shared")]
+    metal_shared_buf::register(&m)?;
+
+    // Arrow data module
+    #[cfg(feature = "data")]
+    arrow_batch_builder::register(&m)?;
+
+    // AIMD controller (feature = "data")
+    #[cfg(feature = "data")]
+    aimd_controller::register(&m)?;
+
+    // Federated QTable (feature = "advanced")
+    #[cfg(feature = "advanced")]
+    federated_qtable::register(&m)?;
+
+    // Darwin (macOS) modules
+    #[cfg(target_os = "macos")]
+    darwin_affinity::register(&m)?;
+
+    // MODERN-07 FIX: Add missing registration calls for modules with register_functions()
+    // These modules expose Python-callable functions but were never registered!
+
+    // Always-compiled modules with Python API
+    adaptive_scheduler::register_functions(&m)?;
+    circuit_breaker::register_functions(&m)?;
+    claims_extraction::register_functions(&m)?;
+    compress::register_functions(&m)?;
+    crypto_accelerate::register_functions(&m)?;
+    data::register_functions(&m)?;
+    elastic_pool::register_functions(&m)?;
+    feed_decision::register_functions(&m)?;
+    ffi_safe::register_functions(&m)?;
+    graph_centrality::register_functions(&m)?;
+    graph_traverse::register_functions(&m)?;
+    hot_edges_rs::register_functions(&m)?;
+    html_parse::register_functions(&m)?;
+    int_counter_layout::register_functions(&m)?;
+    ioc_extract::register_functions(&m)?;
+    ioc_extract_simd::register_functions(&m)?;
+    ioc_stream_scan::register_functions(&m)?;
+    link_predictor::register_functions(&m)?;
+    lsh_index::register_functions(&m)?;
+    memory::register_functions(&m)?;
+    pool_run::register_functions(&m)?;
+    quality_gate::register_functions(&m)?;
+    query_terms::register_functions(&m)?;
+    regex_lz4::register(&m)?;
+    serde_json_rs::register_functions(&m)?;
+    signal_batch::register_functions(&m)?;
+    simd_similarity::register_functions(&m)?;
+    telemetry_agg::register_functions(&m)?;
+    text_norm::register_functions(&m)?;
+    text_similarity::register_functions(&m)?;
+    tls13::register_functions(&m)?;
+    url_engine::register_functions(&m)?;
+    url_ops::register_functions(&m)?;
+    xxhash_ext::register_functions(&m)?;
+    zero_copy::register_functions(&m)?;
+
+    // Additional modules discovered with Python API
+    aho_corasick_simd::register_module(&m)?;
+    git_forensics::register_module(&m)?;
+    ioc_dedup::register_class(&m)?;
+    rate_limit::register_module(&m)?;
+    unindexed_scanner::register_module(&m)?;
+    warc_parser::register_module(&m)?;
+
+    // Feature-gated modules
+    #[cfg(feature = "dns")]
+    dns_tunnel::register_functions(&m)?;
+    #[cfg(feature = "embedded_tor")]
+    sendfile::register_functions(&m)?;
+    #[cfg(feature = "fulltext")]
+    graph_analytics::register_functions(&m)?;
+    #[cfg(feature = "lmdb_dht")]
+    lmdb_dht::register_functions(&m)?;
+    #[cfg(feature = "mlx_bridge")]
+    binary_matryoshka::register_functions(&m)?;
+    #[cfg(feature = "simdjson")]
+    {
+        simdjson_extract::register_functions(&m)?;
+        simhash_ext::register_functions(&m)?;
+    }
+    #[cfg(feature = "tls13")]
+    tls_metadata::register_functions(&m)?;
+
+    // Platform-gated modules (macOS)
+    #[cfg(target_os = "macos")]
+    {
+        madvise::register_functions(&m)?;
+        os_unfair_lock::register(&m)?;
+        mach_remap::add_module(&m)?;
+    }
+
+    // Arrow IPC mmap (data feature, platform-specific implementation)
+    #[cfg(feature = "data")]
+    arrow_ipc_mmap::add_module(&m)?;
+
+    // Compound-gated (macOS + feature)
+    #[cfg(all(target_os = "macos", feature = "ane"))]
+    ane::register_functions(&m)?;
 
     Ok(())
 }

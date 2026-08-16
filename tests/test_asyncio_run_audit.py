@@ -39,7 +39,7 @@ AUTHORIZED_PATTERNS = (
     "probe_",         # probe test files (recon/tests/, etc.)
     "quick_scrape",   # convenience sync wrapper for async scrape()
     "scraper.py",     # StealthWebScraper convenience wrapper module
-)
+    )
 
 
 # Directories to exclude from scanning (tools, benchmarks, probes, venv)
@@ -66,7 +66,7 @@ EXCLUDE_DIRS = (
     # Vendor/stub code
     "stubs",
     "layers/examples",
-)
+    )
 
 
 def is_authorized_path(path: str) -> bool:
@@ -154,7 +154,7 @@ def scan_file(filepath: str) -> list[Violation]:
                         line=node.lineno,
                         col=node.col_offset,
                         context="asyncio.run()",
-                    )
+    )
                 )
     return violations
 

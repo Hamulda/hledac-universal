@@ -40,7 +40,7 @@ _MLXModuleType = Any
 from hledac.universal.utils.cpu_affinity import (
     set_mlx_affinity,
     is_apple_silicon,
-)
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -317,7 +317,7 @@ def get_memory_info() -> MetalMemoryInfo:
             active_bytes=active,
             active_gib=active / (1024**3),
             available=True,
-        )
+    )
     except Exception:
         return MetalMemoryInfo(active_bytes=0, active_gib=0.0, available=False)
 

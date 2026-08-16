@@ -26,7 +26,7 @@ from typing import (
     Literal,
     ParamSpec,
     TypeVar,
-)
+    )
 from collections.abc import Awaitable, Callable
 import logging
 
@@ -186,7 +186,7 @@ def module_singleton_creator(
 
         get_scheduler = module_singleton_creator(
             factory=_create_scheduler,
-        )
+    )
 
     Místo:
         _scheduler_singleton: MicroBurstScheduler | None = None
@@ -241,7 +241,7 @@ def module_singleton_getter(
             singleton_name="_lang_detector_instance",
             factory=lambda: LangDetector(...),
             reset_func=lambda: globals().update({'_lang_detector_instance': None}),
-        )
+    )
 
         def get_lang_detector(...) -> LangDetector:
             return _get_lang_detector()
@@ -305,7 +305,7 @@ def lazy_module_getter(
         __getattr__ = lazy_module_getter(
             "hledac.universal.runtime.sprint_scheduler_v1_archived",
             {"SprintRunContext": "SprintRunContext", "get_sprint_ctx": "get_sprint_ctx"}
-        )
+    )
 
     Místo:
         def __getattr__(name: str):
@@ -348,7 +348,7 @@ async def async_cleanup(
             self.extractor,
             logger=logger,
             context="HTNPlanner"
-        )
+    )
 
     Místo:
         if self.decomposer is not None and hasattr(self.decomposer, 'unload'):
@@ -448,7 +448,7 @@ def collect_results(
         results = collect_results(
             queries,
             lambda q: _python_query_duckdb(db_path, q)
-        )
+    )
 
     Místo:
         results = []
@@ -472,7 +472,7 @@ async def collect_results_async(
         results = await collect_results_async(
             batch_items,
             lambda item: self._process_single(item)
-        )
+    )
 
     Místo:
         results = []
@@ -503,7 +503,7 @@ def aggregate_with_score(
         ranked = aggregate_with_score(
             candidates,
             lambda a: compute_eig(hypotheses, a)
-        )
+    )
 
     Místo:
         scored = []
@@ -719,7 +719,7 @@ def record_transition_safe(
             to_phase="RUNNING",
             component=self._component,
             started_at=self._started_at
-        )
+    )
     """
     try:
         elapsed = elapsed_ms(started_at)
@@ -728,7 +728,7 @@ def record_transition_safe(
             to_phase=to_phase,
             component=component,
             elapsed_ms=elapsed,
-        )
+    )
     except Exception:  # noqa: BLE001
         pass
 
@@ -751,7 +751,7 @@ def backpressure_tier(
             queue_depth=qsize,
             high_pressure_threshold=100,
             medium_pressure_threshold=50
-        )
+    )
 
     Místo:
         pressure_tier = "normal"
@@ -790,7 +790,7 @@ async def collect_batch_items(
             current_schema=first_item[2],
             current_prompt_hash=first_item[3].get('hash'),
             current_length_bin=first_item[4]
-        )
+    )
 
     Vrací:
         (items, schema_key, prompt_hash, length_bin)
@@ -869,7 +869,7 @@ def safe_close(
             self._socket,
             logger=logger,
             context="Metrics"
-        )
+    )
 
     Místo:
         if self._persist_file:
@@ -1378,7 +1378,7 @@ class lazy_resource_property:
             # Generic factory: try to create from type or raise
             raise RuntimeError(
                 f"lazy_resource_property for {self._attr_name} needs a factory"
-            )
+    )
 
         object.__setattr__(obj, self._attr_name, value)
         return value
@@ -1468,10 +1468,10 @@ async def safe_cleanup_component(
     Usage:
         await safe_cleanup_component(
             self._secure_destructor, 'SecureDestructor', logger, _type='async'
-        )
+    )
         safe_cleanup_component(
             self._mission_audit, 'MissionAudit', logger, _type='sync'
-        )
+    )
 
     Instead of:
         if component and hasattr(component, 'cleanup'):
@@ -1515,7 +1515,7 @@ async def scan_parallel(
             checker=lambda h, p: self._check_docker_api(h, p),
             label='exposed_service_hunter:docker',
             log_success='Found Docker API: {host}:{port}',
-        )
+    )
 
     S vlastním semaphore:
         sem = asyncio.Semaphore(20)
@@ -1859,7 +1859,7 @@ def make_close_method(
                     "_table",
                     initialized_attr="_initialized",
                     initialized_value=False
-                )
+    )
 
     Místo:
         def close(self) -> None:
@@ -1910,7 +1910,7 @@ class CloseMethodDescriptor:
                 "_table",
                 initialized_attr="_initialized",
                 initialized_value=False,
-            )
+    )
 
     Výhody:
     - DRY pro close() patterns jako class-level atribut

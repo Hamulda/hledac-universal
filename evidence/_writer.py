@@ -75,7 +75,7 @@ class EvidenceEvent(msgspec.Struct, frozen=False, gc=False):
             payload=payload, run_id=run_id, source_ids=source_ids,
             confidence=confidence, content_hash=content_hash, seq_no=seq_no,
             prev_chain_hash=prev_chain_hash or '', chain_hash=chain_hash,
-        )
+    )
 
     @staticmethod
     def _calculate_hash(
@@ -97,7 +97,7 @@ class EvidenceEvent(msgspec.Struct, frozen=False, gc=False):
         return self._calculate_hash(
             self.event_id, self.event_type, self.timestamp,
             self.payload, self.source_ids, self.confidence, self.run_id,
-        )
+    )
 
     def payload_dict(self) -> dict[str, Any]:
         """Return payload as dict."""
@@ -346,7 +346,7 @@ class EvidenceWriter:
             confidence=confidence,
             seq_no=self._seq + 1,
             prev_chain_hash=self._chain_head,
-        )
+    )
         self.write_event(event)
         return event
 

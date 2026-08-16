@@ -83,7 +83,7 @@ class TestRobotsParserCanFetch:
             "User-agent: *\n"
             "Allow: /public/\n"
             "Disallow: /api/\n"
-        )
+    )
         doc = rp._parse_robots_content(robots_content, 'https://example.com/robots.txt')
         assert rp.can_fetch('/api/internal', '*', doc) is False
         assert rp.can_fetch('/public/blog', '*', doc) is True
@@ -97,7 +97,7 @@ class TestRobotsParserCanFetch:
             "Crawl-delay: 5\n"
             "User-agent: Googlebot\n"
             "Crawl-delay: 10\n"
-        )
+    )
         doc = rp._parse_robots_content(robots_content, 'https://example.com/robots.txt')
         assert rp.get_crawl_delay('OtherBot', doc) == 5.0  # falls back to *
         assert rp.get_crawl_delay('Googlebot', doc) == 10.0

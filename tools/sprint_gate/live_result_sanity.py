@@ -128,7 +128,7 @@ class SanityParams:
             quality_raw=kwargs.get('quality_raw'),
             min_quality_grade=kwargs.get('min_quality_grade'),
             allow_feed_only=kwargs.get('allow_feed_only', False),
-        )
+    )
 
 
 class SanityResult(msgspec.Struct, frozen=True, gc=False):
@@ -606,7 +606,7 @@ _SANITY_CHECKS: tuple[_CheckSpec, ...] = (
                lambda p: ()),
     _CheckSpec('swap_gate_comparable', _check_swap_gate_comparable,
                lambda p: ()),
-)
+    )
 
 
 # Verdict classification using frozensets for robust lookup
@@ -616,7 +616,7 @@ _VERDICT_KEYWORDS: tuple[tuple[frozenset[str], SanityVerdict], ...] = (
     (frozenset({'actual=', 'Wallclock'}), SanityVerdict.SANITY_FAIL_WALLCLOCK_BUDGET),
     (frozenset({'Stale trace verdict', 'TRACE_TERMINALITY'}), SanityVerdict.SANITY_FAIL_STALE_TERMINALITY),
     (frozenset({'internal trace', 'Benchmark missing'}), SanityVerdict.SANITY_FAIL_BENCHMARK_SHAPE_GAP),
-)
+    )
 
 
 def _classify_verdict(disagreements: list[str]) -> SanityVerdict:

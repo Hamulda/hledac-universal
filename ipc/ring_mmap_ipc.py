@@ -31,7 +31,7 @@ Usage:
   ipc = RingMMapIPC.create_for_processing(
       msg_type=MyRequest,
       result_type=MyResult,
-  )
+    )
   await ipc.spawn_worker(my_handler)
   result = await ipc.call(MyRequest(...))
 
@@ -150,7 +150,7 @@ class RingMMap:
                 shm_name,
                 flags=posix_ipc.O_CREAT | posix_ipc.O_EXCL,
                 size=size,
-            )
+    )
 
         self._shm = shm
         self._buf = shm.buf  # memoryview
@@ -318,7 +318,7 @@ class RingMMapIPC:
             name_prefix="myworker",
             msg_type=MyRequest,
             result_type=MyResult,
-        )
+    )
         await ipc.spawn_worker(my_handler)
         result = await ipc.call(MyRequest(...))
 
@@ -399,12 +399,12 @@ class RingMMapIPC:
                 shm_name,
                 flags=posix_ipc.O_CREAT | posix_ipc.O_EXCL,
                 size=ring_size,
-            )
+    )
             result_shm = posix_ipc.SharedMemory(
                 result_shm_name,
                 flags=posix_ipc.O_CREAT | posix_ipc.O_EXCL,
                 size=_RESULT_SIZE,
-            )
+    )
 
             ipc._ring = RingMMap(shm_name, ring_size)
             ipc._result_buf = result_shm.buf
@@ -418,7 +418,7 @@ class RingMMapIPC:
                 result_sem_name=result_sem_name,
                 ready_sem_name=ready_sem_name,
                 max_message_size=max_message_size,
-            )
+    )
 
         except Exception:
             if ring_shm is not None:
@@ -484,7 +484,7 @@ class RingMMapIPC:
             ready_sem = posix_ipc.Semaphore(
                 channel.ready_sem_name,
                 flags=posix_ipc.O_CREAT,
-            )
+    )
 
             kwargs = kwargs or {}
 
@@ -503,7 +503,7 @@ class RingMMapIPC:
                     kwargs,
                 ),
                 daemon=False,
-            )
+    )
             self._proc.start()
 
             # Wait for worker to be ready
@@ -536,7 +536,7 @@ class RingMMapIPC:
             sem = posix_ipc.Semaphore(
                 self._channel.sem_name,
                 flags=posix_ipc.O_CREAT,
-            )
+    )
             sem.release()
             sem.close()
         except Exception:  # noqa: BLE001
@@ -724,7 +724,7 @@ def run_worker(
                 if len(result_bytes) > _RESULT_SIZE - 4:
                     result_bytes = msgspec.msgpack.encode(
                         type("Result", (), {"error": "result too large", "success": False})()
-                    )
+    )
                 struct.pack_into("<I", result_buf, 0, len(result_bytes))
                 result_buf[:len(result_bytes)] = result_bytes
                 result_sem.release()

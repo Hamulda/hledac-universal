@@ -29,7 +29,7 @@ class _PythonMetalDomainInner:
         self._ipv4_re = re.compile(
             r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
             r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
-        )
+    )
         self._ipv6_re = re.compile(
             r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|"
             r"(?:[0-9a-fA-F]{1,4}:){1,7}:|"
@@ -42,14 +42,14 @@ class _PythonMetalDomainInner:
             r":(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)|"
             r"::(?:[fF]{4}:)?(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
             r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
-        )
+    )
         self._url_re = re.compile(r"https?://[^\s<>\"\']+")
         self._email_re = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
         # MD5, SHA1, SHA256, SHA512
         self._hash_re = re.compile(
             r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|"
             r"\b[a-fA-F0-9]{64}\b|\b[a-fA-F0-9]{128}\b"
-        )
+    )
 
     def batch_keyword_scan(self, texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
         """Batch keyword scan - returns (text_idx, start, end, keyword_idx) for each match."""

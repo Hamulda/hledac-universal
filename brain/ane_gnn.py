@@ -261,7 +261,7 @@ class GraphSAGEModel:
         
         from coremltools.converters.mil.frontend.torch import (
             convert as torch_convert,
-        )
+    )
         import torch
         
         # Create PyTorch model for conversion
@@ -326,13 +326,13 @@ class GraphSAGEModel:
         from coremltools.optimize.torch.pruning import (
             PruningConfig,
             SparsityConfig,
-        )
+    )
         
         # Save with ANE optimization
         coreml_model = _coremltools.convert(
             spec,
             compute_units=_coremltools.ComputeUnit.ALL,
-        )
+    )
         
         coreml_model.save(str(output_path))
         logger.info(f'[ANE-GNN] Exported GraphSAGE to {output_path}')
@@ -384,7 +384,7 @@ class ANEGNNEngine:
                 hidden_dim=self.config.hidden_dim,
                 out_dim=self.config.out_dim,
                 num_layers=self.config.num_layers,
-            )
+    )
             logger.info('[ANE-GNN] Using MLX GraphSAGE')
         else:
             self._numpy_model = GraphSAGEModel(
@@ -392,7 +392,7 @@ class ANEGNNEngine:
                 hidden_dim=self.config.hidden_dim,
                 out_dim=self.config.out_dim,
                 num_layers=self.config.num_layers,
-            )
+    )
             logger.info('[ANE-GNN] Using NumPy GraphSAGE fallback')
     
     def _load_coreml_model(self):
@@ -411,7 +411,7 @@ class ANEGNNEngine:
                     str(self.model_path),
                     self.config.out_dim,
                     self.config.max_batch_nodes,
-                )
+    )
                 self._model_registered = True
                 logger.info('[ANE-GNN] Registered in rust.ane registry')
             except Exception as e:
@@ -469,7 +469,7 @@ class ANEGNNEngine:
             feat_shape,
             _CoreML.MLMultiArrayDataTypeFloat32,
             None,
-        )
+    )
         
         # Fill feature data
         flat_feat = features.flatten()
@@ -552,7 +552,7 @@ class ANEGNNEngine:
         if n_nodes > self.config.max_batch_nodes:
             raise ValueError(
                 f'Batch size {n_nodes} exceeds max {self.config.max_batch_nodes}'
-            )
+    )
         
         # Build adjacency matrix
         adj = self._build_adjacency(edges, n_nodes)
@@ -563,19 +563,19 @@ class ANEGNNEngine:
             compute_unit = 'ane'
             embeddings = await asyncio.to_thread(
                 self._run_coreml_inference, features, adj
-            )
+    )
         elif hasattr(self, '_mlx_model') and _MLX_AVAILABLE:
             # MLX Metal GPU path
             compute_unit = 'mlx'
             embeddings = await asyncio.to_thread(
                 self._run_mlx_inference, features, adj
-            )
+    )
         else:
             # NumPy CPU fallback
             compute_unit = 'numpy'
             embeddings = await asyncio.to_thread(
                 self._run_numpy_inference, features, adj
-            )
+    )
         
         elapsed_ms = (time.time() - start_time) * 1000
         
@@ -585,7 +585,7 @@ class ANEGNNEngine:
             inference_time_ms=elapsed_ms,
             compute_unit=compute_unit,
             batch_size=n_nodes,
-        )
+    )
     
     def batch_inference(
         self,
@@ -745,7 +745,7 @@ class HybridLinkPredictor:
         all_node_ids = [query_node_id] + candidate_node_ids
         result = await self.gnn_engine.run_inference(
             all_node_ids, features, graph_edges
-        )
+    )
         
         embeddings = result.embeddings
         query_emb = embeddings[0]  # First is query node
@@ -776,7 +776,7 @@ class HybridLinkPredictor:
             # Heuristic scores
             heur_score, aa, jac, pa, cn = self._compute_heuristic_score(
                 query_idx, cand_idx, adjacency, degrees
-            )
+    )
             
             # Combined score
             combined = self.gnn_weight * gnn_score + self.heuristic_weight * heur_score

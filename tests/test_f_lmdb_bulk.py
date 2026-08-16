@@ -31,7 +31,7 @@ from hledac.universal.utils.lmdb_bulk import (  # noqa: E402
     DEFAULT_BULK_BATCH,
     putmulti_bounded,
     putmulti_safe,
-)
+    )
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -240,7 +240,7 @@ class TestPutmultiBoundedPerformance:
         assert bulk_elapsed * 1.5 < peritem_elapsed, (
             f"bulk should be faster: per-item-txns={peritem_elapsed*1000:.1f}ms "
             f"vs bulk={bulk_elapsed*1000:.1f}ms"
-        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +352,7 @@ def _scan_peritem_in_loops(path: _Path) -> list[tuple[int, str]]:
                 src_lines = source.splitlines()
                 snippet = (
                     src_lines[lineno - 1].strip() if 0 < lineno <= len(src_lines) else "?"
-                )
+    )
                 # Filter out obvious non-per-item patterns:
                 # - if there's a for loop INSIDE the same `with` block
                 #   (single-txn batch — correct)
@@ -362,13 +362,13 @@ def _scan_peritem_in_loops(path: _Path) -> list[tuple[int, str]]:
                 has_inner_loop = any(
                     isinstance(child, (_ast.For, _ast.While, _ast.AsyncFor))
                     for child in body
-                )
+    )
                 # Also check if any enclosing ancestor is an AsyncFunctionDef
                 # (parallel gather pattern — correct)
                 in_async_fn = any(
                     isinstance(anc, _ast.AsyncFunctionDef)
                     for anc in ancestors
-                )
+    )
                 # GHOST_INVARIANT fix (Sprint 6.9): cursor.putmulti() inside
                 # the with-block is the CORRECT bulk-write pattern — even if the
                 # with is inside a for-loop (batching). The anti-pattern is
@@ -416,7 +416,7 @@ class TestS3BulkWriteAudit:
             assert findings == [], (
                 f"{rel}: per-item env.begin(write=True) in loop:\n"
                 + "\n".join(f"  L{l}: {s}" for l, s in findings)
-            )
+    )
 
     def test_no_peritem_in_loops_memory(self):
         for rel in ("memory/memory_manager.py", "semantic_deduplicator.py", "dht/local_graph.py"):
@@ -424,7 +424,7 @@ class TestS3BulkWriteAudit:
             assert findings == [], (
                 f"{rel}: per-item env.begin(write=True) in loop:\n"
                 + "\n".join(f"  L{l}: {s}" for l, s in findings)
-            )
+    )
 
     def test_no_peritem_in_loops_runtime(self):
         for rel in (
@@ -435,7 +435,7 @@ class TestS3BulkWriteAudit:
             assert findings == [], (
                 f"{rel}: per-item env.begin(write=True) in loop:\n"
                 + "\n".join(f"  L{l}: {s}" for l, s in findings)
-            )
+    )
 
     def test_canonical_write_uses_bulk_text(self):
         """The canonical write path (DuckDBShadowStore) must use batch,
@@ -460,7 +460,7 @@ class TestS3BulkWriteAudit:
         assert "wal_put_many" in body, "canonical batch must use wal_put_many"
         assert "env.begin(write=True)" not in body, (
             "canonical batch must not open per-item write transactions"
-        )
+    )
 
     def test_putmulti_bounded_used_in_dedup_flush_text(self):
         """_flush_dedup must use putmulti_bounded for N-hash bulk write.
@@ -485,5 +485,5 @@ class TestS3BulkWriteAudit:
         assert "putmulti_bounded" in body, "_flush_dedup must use putmulti_bounded"
         assert "env.begin(write=True)" not in body, (
             "_flush_dedup must not use per-item env.begin(write=True)"
-        )
+    )
 

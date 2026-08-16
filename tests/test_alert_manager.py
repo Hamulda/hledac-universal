@@ -15,11 +15,7 @@ import time
 
 import pytest
 
-
-
-
-
-
+from hledac.universal.monitoring.alert_manager import (
     Alert,
     AlertManager,
     AlertSeverity,
@@ -40,8 +36,7 @@ class TestAlertDeduplication:
     """Test alert deduplication logic."""
 
     def test_should_fire_alert_first_time(self) -> None:
-
-from _core import aclose        """First alert should fire."""
+        """First alert should fire."""
         # Clear the global registry
         from hledac.universal.monitoring.alert_manager import _ALERT_REGISTRY
         _ALERT_REGISTRY.clear()

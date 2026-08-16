@@ -78,7 +78,7 @@ async def _get_dht_node() -> KademliaNode | None:
                 governor=governor,
                 bootstrap_nodes=_DHT_BOOTSTRAP_NODES,
                 local_graph_store=lgs,
-            )
+    )
             await node.start()
             _node_instance = node
             logger.debug("[DHT] KademliaNode started (shared singleton)")
@@ -173,7 +173,7 @@ async def async_search_dht(
             source_family="dht_discovery",
             elapsed_s=time.monotonic() - start,
             error_type=None,
-        )
+    )
 
     node = await _get_dht_node()
     if node is None:
@@ -186,7 +186,7 @@ async def async_search_dht(
             source_family="dht_discovery",
             elapsed_s=time.monotonic() - start,
             error_type="node_start_failed",
-        )
+    )
 
     try:
         candidates = _query_to_infohash_candidates(query, max_candidates=max_results)
@@ -213,7 +213,7 @@ async def async_search_dht(
                 policy="collect",
                 concurrency=10,
                 ctx="dht:get_peers"
-            )
+    )
 
             # Flatten and deduplicate — result.ok is list of lists
             all_peers: list[tuple[str, int, str]] = []
@@ -246,7 +246,7 @@ async def async_search_dht(
             source_family="dht_discovery",
             elapsed_s=elapsed,
             error_type=None,
-        )
+    )
 
     except TimeoutError:
         elapsed = time.monotonic() - start
@@ -259,7 +259,7 @@ async def async_search_dht(
             source_family="dht_discovery",
             elapsed_s=elapsed,
             error_type="timeout",
-        )
+    )
     except Exception as e:
         elapsed = time.monotonic() - start
         logger.debug(f"[DHT] async_search_dht error (non-fatal): {e}")
@@ -272,7 +272,7 @@ async def async_search_dht(
             source_family="dht_discovery",
             elapsed_s=elapsed,
             error_type="exception",
-        )
+    )
 
 
 # ---------------------------------------------------------------------------

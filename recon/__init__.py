@@ -213,7 +213,7 @@ _LAZY_SPECS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
         "WorkflowOrchestrator", "ComprehensiveReport", "SharedContext",
         "CorrelationReport", "Anomaly", "Finding", "create_workflow_orchestrator",
     )),
-)
+    )
 
 # Build the name -> spec index. For duplicate names (Anomaly, Pattern, EntityType,
 # AlertSeverity, CertificateInfo imported from multiple submodules), the LAST

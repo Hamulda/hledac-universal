@@ -57,7 +57,7 @@ def _check_coreml_engine_available() -> bool:
             logger.debug(
                 '[CoreML-ANE] Python 3.14 detected — coremltools PyPI wheels unavailable. '
                 'Install from GitHub: pip install --extra-index-url https://pypi.anaconda.org/apple/repo/simple coremltools'
-            )
+    )
             return False
         # If we get here, coremltools is somehow installed (maybe from conda)
         version_tuple = _parse_coreml_version()
@@ -72,7 +72,7 @@ def _check_coreml_engine_available() -> bool:
             logger.debug(
                 '[CoreML-ANE] coremltools not installed. '
                 'Install: pip install coremltools'
-            )
+    )
             return False
         if version_tuple < (6, 0):
             logger.debug(f'[CoreML-ANE] coremltools {".".join(map(str, version_tuple))} < 6.0')
@@ -81,7 +81,7 @@ def _check_coreml_engine_available() -> bool:
         logger.debug(
             '[CoreML-ANE] coremltools not installed. '
             'Install: pip install coremltools'
-        )
+    )
         return False
     if not _ANNOT_MODEL_PATH.exists():
         logger.debug(f'[CoreML-ANE] Model not found at {_ANNOT_MODEL_PATH}')

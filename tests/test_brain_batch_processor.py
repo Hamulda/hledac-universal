@@ -73,7 +73,7 @@ class TestBatchItem:
             timeout=60.0,
             created_at=1234567890.0,
             future=None,
-        )
+    )
         assert item.id == "test-2"
         assert item.response_model is str
         assert item.priority == 1.0
@@ -115,7 +115,7 @@ class TestBatchConfig:
             default_flush_interval=1.0,
             high_pressure_max_size=5,
             medium_pressure_max_size=10,
-        )
+    )
         assert config.max_size == 20
         assert config.default_flush_interval == 1.0
         assert config.high_pressure_max_size == 5
@@ -145,7 +145,7 @@ class TestBatchStats:
             queue_depth=10,
             avg_latency_ms=150.5,
             last_flush_at=1234567890.0,
-        )
+    )
         assert stats.processed_count == 100
         assert stats.failed_count == 5
         assert stats.queue_depth == 10

@@ -777,7 +777,6 @@ def _build_query_variants(query: str, dspy_variants: list | None = None) -> list
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from _core import aclose
 
 
 class SearchStage(Enum):
@@ -963,7 +962,6 @@ def _stage_validate(ctx: SearchContext) -> SearchContext:
     """Stage 1: Input validation and normalization."""
     if not ctx.trimmed_query:
         return dataclass_replace(ctx,
-            stage=SearchStage.VALIDATION,
             result=DiscoveryBatchResult(hits=(), error="empty_query"),
             stage=SearchStage.COMPLETE,
         )
@@ -1045,6 +1043,7 @@ def _stage_check_cache(ctx: SearchContext) -> SearchContext:
 
 async def _stage_live_search(ctx: SearchContext) -> SearchContext:
     """Stage 6: Execute live search with timeout."""
+    global _last_error
     # Multi-variant search path
     if len(ctx.query_variants) > 1:
         result = await _search_with_variants(
@@ -1087,12 +1086,10 @@ async def _stage_live_search(ctx: SearchContext) -> SearchContext:
         )
 
     except asyncio.CancelledError:
-        global _last_error
         _last_error = "cancelled"
         raise
 
     except TimeoutError:
-        global _last_error
         _last_error = "timeout"
         return dataclass_replace(ctx,
             stage=SearchStage.COMPLETE,
@@ -1100,7 +1097,6 @@ async def _stage_live_search(ctx: SearchContext) -> SearchContext:
         )
 
     except Exception as e:
-        global _last_error
         error_tag = _error_classifier.classify(e, str(e))
         _last_error = error_tag
 
@@ -1572,10 +1568,8 @@ logger = logging.getLogger(__name__)
 async def _scrape_mojeek(
     query: str, n: int = 10
 ) -> list[dict]:
-    """Mojeek independent crawler, no CAPTCHA policy.
-
-    G1 FIX: beautifulsoup4 REMOVED — uses selectolax with CSS selectors.
-    """
+    """Mojeek independent crawler, no CAPTCHA policy."""
+    from bs4 import BeautifulSoup
     _UA = (  # noqa: N806
         "Mozilla/5.0 (Macintosh; ARM Mac OS X 14_0) "
         "AppleWebKit/605.1.15 (KHTML, like Gecko) "
@@ -1598,35 +1592,15 @@ async def _scrape_mojeek(
             return []
         if status != 200:
             return []
-        # G1 FIX: Use selectolax instead of beautifulsoup4
-        try:
-            from selectolax.parser import HTMLParser as _Parser
-            tree = _Parser(str(text))
-            for li in tree.css("ul.results-standard li")[:n]:
-                a = li.css_first("a.ob")
-                p = li.css_first("p.s")
-                if a:
-                    href = a.attributes.get("href", "")
-                    if href:
-                        results.append({
-                            "title":   a.text(strip=True),
-                            "url":     href,
-                            "snippet": p.text(strip=True) if p else "",
-                            "source":  "mojeek_scrape"
-                        })
-        except ImportError:
-            # Fallback: regex-only (stdlib) — less precise but works
-            import re
-            # Match result blocks: title link + snippet
-            pattern = re.compile(
-                r'<li[^>]*>.*?<a[^>]+class="ob"[^>]+href="([^"]+)"[^>]*>([^<]+)</a>.*?<p[^>]+class="s"[^>]*>([^<]+)</p>.*?</li>',
-                re.DOTALL | re.IGNORECASE
-            )
-            for match in pattern.finditer(str(text))[:n]:
+        soup = BeautifulSoup(str(text), "html.parser")
+        for li in soup.select("ul.results-standard li")[:n]:
+            a = li.select_one("a.ob")
+            p = li.select_one("p.s")
+            if a and a.get("href"):
                 results.append({
-                    "title":   match.group(2).strip(),
-                    "url":     match.group(1).strip(),
-                    "snippet": match.group(3).strip(),
+                    "title":   a.get_text(strip=True),
+                    "url":     a["href"],
+                    "snippet": p.get_text(strip=True) if p else "",
                     "source":  "mojeek_scrape"
                 })
     except Exception as e:

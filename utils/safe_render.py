@@ -36,7 +36,7 @@ MARKDOWN_SPECIAL_CHARS = (
     (">", "\\>"),     # html-like
     ("|", "\\|"),     # table
     ("\n", "\\n"),    # newlines
-)
+    )
 
 
 def escape_markdown_text(text: str) -> str:

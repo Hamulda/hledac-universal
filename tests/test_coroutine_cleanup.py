@@ -221,7 +221,7 @@ class TestWaitForTimeouts:
         result = await asyncio.wait_for(
             some_coroutine(),
             timeout=35.0  # Match F271B spec
-        )
+    )
         ```
         """
 
@@ -234,17 +234,17 @@ class TestWaitForTimeouts:
             await asyncio.wait_for(slow_operation(), timeout=0.05)
 
     @pytest.mark.asyncio
-    async def test_safe_wait_for_from_async_helpers(self) -> None:
+    async def test_safe_wait_for_from_asyncx(self) -> None:
         """
-        F320: safe_wait_for() wrapper from utils/async_helpers.
+        F320: safe_wait_for() wrapper from utils/asyncx.
 
         Preferred pattern for Python 3.14+ compatibility:
         ```python
-        from utils.async_helpers import safe_wait_for
+        from utils.asyncx import safe_wait_for
         result = await safe_wait_for(coro, timeout=30.0)
         ```
         """
-        from utils.async_helpers import safe_wait_for
+        from utils.asyncx import safe_wait_for
 
         async def quick_op() -> str:
             await asyncio.sleep(0.01)
@@ -360,7 +360,7 @@ class TestLoopCleanup:
         parallel() with semaphore caps concurrent tasks,
         preventing resource exhaustion.
         """
-        from utils.async_helpers import parallel
+        from utils.asyncx import parallel
 
         async def work(i: int) -> int:
             await asyncio.sleep(0.01)
@@ -430,7 +430,7 @@ class TestF271BCompliance:
         result = await asyncio.wait_for(
             _async_discovery_search(...),
             timeout=35.0
-        )
+    )
         ```
         """
 
@@ -494,7 +494,8 @@ class TestIntegrationCleanup:
     @pytest.mark.asyncio
     async def test_concurrent_cleanup_with_gather(self) -> None:
         """Multiple tasks with proper gather cleanup."""
-        from utils.async_helpers import safe_gather_return_exceptions
+        # Use asyncio.gather with return_exceptions (no asyncx equivalent for this pattern)
+        import asyncio
 
         async def task_work(i: int) -> int:
             await asyncio.sleep(0.01)
@@ -504,7 +505,7 @@ class TestIntegrationCleanup:
         tasks = [asyncio.create_task(task_work(i)) for i in range(50)]
 
         # Gather with proper exception handling
-        results = await safe_gather_return_exceptions(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # All should complete successfully
         successful = [r for r in results if not isinstance(r, Exception)]

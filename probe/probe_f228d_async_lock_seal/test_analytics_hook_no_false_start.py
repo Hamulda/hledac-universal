@@ -21,7 +21,7 @@ class TestAnalyticsHookWorkerLockSafety:
         rec = _ShadowRecorder()
         assert isinstance(rec._worker_lock, threading.Lock), (
             "_worker_lock should be threading.Lock — it guards a sync flag"
-        )
+    )
 
     def test_worker_lock_not_needed_for_async_context(self):
         """
@@ -36,7 +36,7 @@ class TestAnalyticsHookWorkerLockSafety:
         # Verify _ensure_worker is NOT async def
         assert not inspect.iscoroutinefunction(rec._ensure_worker), (
             "_ensure_worker should not be async — it synchronously checks the loop"
-        )
+    )
 
     def test_no_await_inside_worker_lock(self):
         """
@@ -92,7 +92,7 @@ class TestAnalyticsHookWorkerLockSafety:
         check_count = source.count("if self._worker_started:")
         assert check_count >= 2, (
             "Double-checked locking requires 2 checks: fast path + under-lock"
-        )
+    )
 
     def test_worker_is_async_def(self):
         """Verify _worker() is async def — started via create_task from sync context."""
@@ -100,11 +100,11 @@ class TestAnalyticsHookWorkerLockSafety:
         rec = _ShadowRecorder()
         assert inspect.iscoroutinefunction(rec._worker), (
             "_worker should be async def — started via loop.create_task()"
-        )
+    )
 
     def test_shadow_record_finding_is_sync(self):
         """shadow_record_finding() is sync — enqueues and returns immediately."""
         from knowledge.analytics_hook import shadow_record_finding
         assert not inspect.iscoroutinefunction(shadow_record_finding), (
             "shadow_record_finding should be sync (hot path)"
-        )
+    )

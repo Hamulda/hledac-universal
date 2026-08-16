@@ -65,7 +65,7 @@ _PROBE_HOSTS: tuple[str, ...] = (
     "https://cloudflare.com/",
     "https://cdn.jsdelivr.net/",
     "https://unpkg.com/",
-)
+    )
 _PROBE_FAILURE_THRESHOLD: int = 3  # skip host after 3 consecutive failures
 _PROBE_FAILURE_RESET_AFTER_S: float = 30.0  # re-enable a skipped host after 30s
 # F320-3.2: Session staleness threshold. A session older than this is
@@ -75,11 +75,11 @@ _PROBE_FAILURE_RESET_AFTER_S: float = 30.0  # re-enable a skipped host after 30s
 # Configurable via HLEDAC_CURL_CFFI_PREWARM_STALE_TTL.
 _STALE_SESSION_TTL_S: float = ENV.get_float(
     "HLEDAC_CURL_CFFI_PREWARM_STALE_TTL", default=60.0
-)
+    )
 # Per-host circuit-breaker state: host -> (consecutive_failures, last_failure_time)
 _probe_circuit_var: contextvars.ContextVar[dict[str, tuple[int, float]]] = contextvars.ContextVar(
     "_probe_circuit", default={}
-)
+    )
 
 # Lazy reference to the runtime module to avoid a circular import
 # (curl_cffi_runtime imports prewarm_pool, not the other way around).
@@ -117,7 +117,7 @@ _stats_var: contextvars.ContextVar[dict[str, int]] = contextvars.ContextVar(
         "sessions_closed": 0,
         "stale_evictions": 0,  # F320-3.2: sessions evicted as stale
     },
-)
+    )
 
 
 def _resolve_enabled() -> bool:
@@ -191,7 +191,7 @@ async def _create_session(profile: str) -> Any | None:
     try:
         from hledac.universal.transport._tcp_keepalive import (
             TCP_KEEPALIVE_CURL_OPTIONS,
-        )
+    )
         _tcp_opts = TCP_KEEPALIVE_CURL_OPTIONS
     except Exception:  # noqa: BLE001
         _tcp_opts = {}
@@ -203,7 +203,7 @@ async def _create_session(profile: str) -> Any | None:
             timeout=10.0,
             max_clients=max_clients,
             curl_options=_tcp_opts,  # ISSUE-P6-001: TCP keep-alive on prewarmed sockets
-        )
+    )
         stats = _stats_var.get()
         stats["sessions_created"] += 1
         _stats_var.set(stats)
@@ -383,7 +383,7 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
                 safe_create_task(
                     old_sess.aclose(),
                     name=f"prewarm:evict:{slot_idx}",
-                )
+    )
             except RuntimeError:  # noqa: BLE001
                 pass
     # Create new session (async but fast — curl_cffi init)
@@ -471,7 +471,7 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
                             safe_create_task(
                                 sess.aclose(),
                                 name=f"prewarm:evict:stale:{slot_idx}",
-                            )
+    )
                         except RuntimeError:  # noqa: BLE001
                             pass
                     stats = _stats_var.get()
@@ -492,7 +492,7 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
                             safe_create_task(
                                 _fill_slot(other, profile),
                                 name=f"prewarm:fill:{profile}:{other}",
-                            )
+    )
                         except RuntimeError:  # noqa: BLE001
                             pass
                     stats = _stats_var.get()
@@ -552,7 +552,7 @@ async def fill_all_slots() -> None:
             [_ensure_slot(i) for i in range(_POOL_SIZE)],
             policy="log",
             ctx="prewarm_pool:fill_all_slots",
-        )
+    )
 
 
 async def close_pool() -> None:

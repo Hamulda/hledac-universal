@@ -15,11 +15,7 @@ MODERNIZATION (Issue #18):
 import re
 from typing import Any
 
-
-
-
-
-
+from hledac.universal.runtime.acquisition.lane_constants import (
     NON_TERMINAL_STATES,
     TERMINAL_STATES,
 )
@@ -28,8 +24,7 @@ from typing import Any
 # ── MandatoryLaneTerminality (imported from nonfeed_outcomes) ──────────────────────
 
 
-
-from _core import acloseclass MandatoryLaneTerminality:
+class MandatoryLaneTerminality:
     """Forward-declared for type hints. Real class in nonfeed_outcomes.py."""
 
     __slots__ = ()

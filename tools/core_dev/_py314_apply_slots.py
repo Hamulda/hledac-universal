@@ -46,7 +46,7 @@ def find_dataclass_classes(tree: ast.Module) -> list[tuple[ast.ClassDef, ast.exp
                     has_slots = any(
                         kw.arg == "slots" and isinstance(kw.value, ast.Constant) and kw.value.value is True
                         for kw in dec.keywords
-                    )
+    )
                     result.append((node, dec, has_slots))
                     break
                 elif isinstance(dec, ast.Name) and dec.id == "dataclass":
@@ -87,7 +87,7 @@ def rewrite_decorator(dec_node: ast.expr | None, add_slots: bool) -> ast.expr:
                 func=ast.Name(id="dataclass", ctx=ast.Load()),
                 args=[],
                 keywords=[ast.keyword(arg="slots", value=ast.Constant(value=True))],
-            )
+    )
         return ast.Name(id="dataclass", ctx=ast.Load())
     if isinstance(dec_node, ast.Call):
         new_keywords = list(dec_node.keywords)
@@ -98,7 +98,7 @@ def rewrite_decorator(dec_node: ast.expr | None, add_slots: bool) -> ast.expr:
             func=dec_node.func,
             args=list(dec_node.args),
             keywords=new_keywords,
-        )
+    )
     return dec_node
 
 

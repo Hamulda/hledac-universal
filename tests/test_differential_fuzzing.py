@@ -22,7 +22,7 @@ from hypothesis.strategies import (
     sampled_from,
     text,
     tuples,
-)
+    )
 
 # Strategie — rozsáhlé generování testovacích dat
 
@@ -67,13 +67,13 @@ _UNICODE_CHARS = (
     "한국어한국어"  # sample
     "العربية"  # sample
     "😀😎🤖"  # emojis
-)
+    )
 UNICODE_TEXT = text(alphabet=_UNICODE_CHARS, min_size=0, max_size=1000)
 ASCII_TEXT = text(
     alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \t\n.,!?-;:",
     min_size=0,
     max_size=500,
-)
+    )
 MIXED_CONTENT = text(min_size=0, max_size=2000)
 
 # IOC-obsahující texty
@@ -82,27 +82,27 @@ IOC_TEXT_IPV4 = text(alphabet=_IOC_BASE_CHARS, min_size=50, max_size=1000).map(
     lambda s: s + " 192.168.1.1 10.0.0.255 172.16.0.1 8.8.8.8 1.2.3.4"
     if len(s) < 100
     else s[:100]
-)
+    )
 IOC_TEXT_EMAILS = text(alphabet=_IOC_BASE_CHARS, min_size=50, max_size=1000).map(
     lambda s: s + " user@example.com admin@test.org root@localhost"
     if len(s) < 100
     else s[:100]
-)
+    )
 IOC_TEXT_DOMAINS = text(alphabet=_IOC_BASE_CHARS, min_size=50, max_size=1000).map(
     lambda s: s + " example.com google.com github.io api.example.org"
     if len(s) < 100
     else s[:100]
-)
+    )
 IOC_TEXT_HASHES = text(alphabet=_IOC_BASE_CHARS + "abcdef0123456789", min_size=100, max_size=1000).map(
     lambda s: s + " d41d8cd98f00b204e9800998ecf8427e 5ba38463b51b5a0f71b3a4a8c8ad3e2d1a7c6b9d0e3f5"
     if len(s) < 100
     else s[:100]
-)
+    )
 IOC_TEXT_CVES = text(alphabet=_IOC_BASE_CHARS, min_size=50, max_size=500).map(
     lambda s: s + " CVE-2024-1234 CVE-2023-99999 CVE-2021-44228"
     if len(s) < 100
     else s[:100]
-)
+    )
 
 # IP strategie
 IPV4_STRATEGY = from_regex(r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)", fullmatch=True)
@@ -122,7 +122,7 @@ ENTROPY_TEXT = text(
     alphabet="abcdefgh",
     min_size=0,
     max_size=1000,
-)
+    )
 UNIFORM_TEXT = text(alphabet="a", min_size=0, max_size=500)
 RANDOM_TEXT = binary(min_size=0, max_size=1000)
 
@@ -133,7 +133,7 @@ QUALITY_TEXT = text(
     min_size=0,
     max_size=200,
     alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \t\n.,!?-;:_"
-)
+    )
 
 # Batch strategie
 BATCH_TEXTS = lists(UNICODE_TEXT, min_size=1, max_size=100)
@@ -516,7 +516,7 @@ class TestDifferentialSimdDomain:
             lambda vl: (
                 all(len(v) > 0 and any(x != 0.0 for x in v) for v in vl)
                 and len(vl[0]) >= 2  # ensure vectors are long enough for dimension check
-            )
+    )
         ),
         query=lists(floats(min_value=-100.0, max_value=100.0), min_size=1, max_size=50).filter(
             lambda q: len(q) >= 2 and any(x != 0.0 for x in q)
@@ -709,7 +709,7 @@ class TestDifferentialIocDomain:
         # Obě implementace by měly mít stejné typy klíčů
         assert set(py_result.keys()) == set(rust_result.keys()), (
             f"IOC type keys differ: python={set(py_result.keys())} rust={set(rust_result.keys())}"
-        )
+    )
 
 
 class TestDifferentialHtmlDomain:

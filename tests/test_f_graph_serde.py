@@ -88,7 +88,7 @@ class TestGraphSerdeJsonRoundtrip:
         from intelligence._graph_serde import (
             is_our_format,
             save_nx_graph_jsonl,
-        )
+    )
 
         out = tmp_graphs_dir / "g.jsonl"
         save_nx_graph_jsonl(str(out), tiny_nx_graph, max_nodes=10_000)
@@ -228,7 +228,7 @@ class TestRelationshipDiscoveryNoPickleInHotPath:
         text = src_path.read_text()
         assert "pickle.dump" not in text, (
             "pickle.dump must NOT appear — new writes are JSON+orjson only"
-        )
+    )
 
 
 # ---------------------------------------------------------------------------

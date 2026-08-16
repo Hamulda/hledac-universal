@@ -244,7 +244,7 @@ class TransportResolver:
                 asyncio.to_thread(_probe_tcp_port, '127.0.0.1', 9050, 0.5),
                 timeout=0.6,
                 label="tor_probe",
-            )
+    )
         except asyncio.TimeoutError:
             return False
 
@@ -333,7 +333,7 @@ class TransportResolver:
             "Use get_transport_for_url() + RouteDecision instead.",
             DeprecationWarning,
             stacklevel=2,
-        )
+    )
         self._check_transports()
         if context.requires_anonymity or context.risk_level == 'high':
             if self._nym_class:

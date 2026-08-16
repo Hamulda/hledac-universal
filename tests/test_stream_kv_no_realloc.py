@@ -50,10 +50,10 @@ class TestStreamKVNoRealloc:
         source = inspect.getsource(DeepHermes3Engine._stream_tokens)
         assert '_kv_cache_reset_interval' not in source, (
             "M-07 REGRESSION: _kv_cache_reset_interval still present in _stream_tokens"
-        )
+    )
         assert 'stream_cache_resets' not in source, (
             "M-07 REGRESSION: stream_cache_resets stat update still present in _stream_tokens"
-        )
+    )
         # The mutation that had zero effect must be gone
         assert "stream_kwargs['prompt_cache'] = kv_cache" not in source or (
             # It's OK if prompt_cache is set ONCE before the loop, not inside the loop
@@ -72,10 +72,10 @@ class TestStreamKVNoRealloc:
         assert 'RotatingKVCache' in source, (
             "M-07: RotatingKVCache not found in _stream_tokens — "
             "streaming path should mirror non-streaming path for paged_kv_cache=True"
-        )
+    )
         assert 'self._paged_kv_cache' in source, (
             "M-07: self._paged_kv_cache check missing from _stream_tokens"
-        )
+    )
 
     def test_stream_tokens_no_loop_inside_stream_generate(self):
         """
@@ -107,7 +107,7 @@ class TestStreamKVNoRealloc:
         assert make_prompt_cache_count == 0, (
             f"M-07 REGRESSION: make_prompt_cache called {make_prompt_cache_count} time(s) "
             "inside the stream_generate loop — this was the root cause bug"
-        )
+    )
 
     def test_rotatingkvcache_config_parity_stream_vs_nonstream(self):
         """
@@ -136,15 +136,15 @@ class TestStreamKVNoRealloc:
         if gen_line:
             assert 'max_size=max_tok' in gen_line, (
                 f"M-07: non-streaming path uses wrong max_size: {gen_line}"
-            )
+    )
             assert 'keep=self._paged_kv_keep' in gen_line, (
                 f"M-07: non-streaming path missing keep param: {gen_line}"
-            )
+    )
 
         if stream_line:
             assert 'max_size=max_tok' in stream_line, (
                 f"M-07: streaming path uses wrong max_size: {stream_line}"
-            )
+    )
             assert 'keep=self._paged_kv_keep' in stream_line, (
                 f"M-07: streaming path missing keep param: {stream_line}"
-            )
+    )

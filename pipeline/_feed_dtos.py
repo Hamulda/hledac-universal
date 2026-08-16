@@ -183,7 +183,7 @@ def classify_fallback_decision_python(
             True,
             False,
             "feed-native already carried hits",
-        )
+    )
 
     if not article_fallback_attempted:
         if (
@@ -197,7 +197,7 @@ def classify_fallback_decision_python(
                 False,
                 False,
                 f"high quality ({quality_band}), assembled {assembled_text_len} chars",
-            )
+    )
         if (
             adapter_source_priority_bias >= 0.1
             and assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS
@@ -209,7 +209,7 @@ def classify_fallback_decision_python(
                 False,
                 False,
                 f"adapter source_priority_bias={adapter_source_priority_bias:.2f}",
-            )
+    )
         return (
             "no_fetch_warranted",
             False,
@@ -217,7 +217,7 @@ def classify_fallback_decision_python(
             False,
             False,
             f"assembled={assembled_text_len}, quality={quality_band}",
-        )
+    )
 
     if (
         metadata_boost

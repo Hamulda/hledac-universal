@@ -48,11 +48,7 @@ import time
 import uuid
 from typing import Any
 
-
-
-
-
-
+from .coordinator import (
     AGGREGATION_MAX_FINDINGS,
     FederatedResearchCoordinator,
     NodeLane,
@@ -63,7 +59,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["FederatedSidecarAdapter"]
 
-from _core import aclose
 
 # --- M1 BOUNDS (different from coordinator.py — tighter for sidecar) --------
 

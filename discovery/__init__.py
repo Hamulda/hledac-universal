@@ -1,11 +1,7 @@
 # Discovery package — source adapters, planners, and fusion rankers.
 
 # Base types (SSOT)
-
-
-
-
-
+from hledac.universal.discovery.base import (
     BaseDiscoveryMixin,
     DiscoveryAdapterProtocol,
     DiscoveryBatchResult,
@@ -17,8 +13,7 @@
 __all__ = [
     "BaseDiscoveryMixin",
     "DiscoveryAdapterProtocol",
-
-from _core import aclose    "DiscoveryBatchResult",
+    "DiscoveryBatchResult",
     "DiscoveryHit",
     "DiscoveryResult",
     "RateLimiter",

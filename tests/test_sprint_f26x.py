@@ -93,7 +93,7 @@ class TestSprintF26X:
         assert isinstance(cl._batch_queue, asyncio.Queue)
         assert cl._batch_queue.maxsize == 256, (
             f"F26X M1 invariant: _batch_queue.maxsize must be 256, got {cl._batch_queue.maxsize}"
-        )
+    )
 
     # ------------------------------------------------------------------ 4
     def test_probe_f26x_inject_none(self, sprint_scheduler):

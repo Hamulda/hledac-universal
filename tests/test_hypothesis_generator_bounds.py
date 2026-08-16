@@ -9,11 +9,7 @@ Tests invariant enforcement:
 probe_f214q/ — uses HypothesisGenerator directly (no scheduler, no DuckDB).
 """
 
-
-
-
-
-
+from hledac_hypothesis.hypothesisgenerator import (
     MAX_HYPOTHESES,
     MAX_SEEDS_PER_HYPOTHESIS,
     HypothesisGenerator,
@@ -26,8 +22,7 @@ class MockFinding:
     """Minimal CanonicalFinding-like for testing."""
 
     def __init__(self, finding_id: str, payload_text: str):
-
-from _core import aclose        self.finding_id = finding_id
+        self.finding_id = finding_id
         self.payload_text = payload_text
 
 

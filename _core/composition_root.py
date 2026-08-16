@@ -74,7 +74,7 @@ def _init_uvloop() -> bool:
         _is_darwin_arm = (
             platform.system() == "Darwin"
             and platform.machine().lower() in ("arm64", "aarch64")
-        )
+    )
         if _is_darwin_arm and sys.version_info < (3, 15):
             _UVLOOP_AVAILABLE = True
             return True
@@ -123,7 +123,7 @@ def install_signal_handler(
             getattr(signal.Signals, "SIGINT", None) and signal.Signals(signum).name
             if hasattr(signal, "Signals")
             else str(signum)
-        )
+    )
         logger.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
         try:
             # Always call set() directly — it is async-signal-safe (Python 3.10+).
@@ -374,7 +374,7 @@ def build_runtime(
             prng_seed=prng_seed,
             replay_seed=replay_seed,
             warc_dir=warc_dir,
-        )
+    )
     )
 
     return loop, sprint_task, shutdown_event, restore_signals

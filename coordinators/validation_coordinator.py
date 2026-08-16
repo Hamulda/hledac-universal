@@ -439,7 +439,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
             policy="log",
             concurrency=12,
             ctx="validation_coordinator.clean_html_batch",
-        )
+    )
 
     def get_validation_stats(self) -> dict[str, Any]:
         """Get validation statistics."""

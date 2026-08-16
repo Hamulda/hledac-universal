@@ -69,7 +69,7 @@ def _build_jinja2_env() -> "jinja2.Environment | None":
                 autoescape=jinja2.select_autoescape(["html", "xml"]),
                 keep_trailing_newline=True,
                 auto_reload=False,  # No reload needed — compiled once
-            )
+    )
             return env
     except Exception:  # noqa: BLE001
         pass
@@ -362,7 +362,7 @@ def render_sprint_markdown(
                 source_yield_sorted=sorted(src_y.items(), key=lambda x: x[1], reverse=True),
                 phase_timings=phase,
                 phase_timings_min=phase_timings_min,
-            )
+    )
         except Exception:  # noqa: BLE001
             pass  # Fall through to Python-based rendering
 
@@ -399,7 +399,7 @@ _ANALYST_BRIEF_SECTIONS: tuple[tuple[str, str, str, int], ...] = (
     ("risk_hypotheses", "Risk Hypotheses", "- ", 5),
     ("feed_cluster_summary", "Feed Cluster", "- ", 5),
     ("pivot_recommendations", "Pivot Recommendations", "- ", 5),
-)
+    )
 
 
 def _render_evidence_chains(lines: list, analyst_brief: dict) -> None:
@@ -1169,7 +1169,7 @@ _OPTIONAL_SECTIONS: tuple[tuple[str, callable, str], ...] = (
     ("evidence_chains", _render_evidence_chains_section, "evidence_chains"),
     ("analyst_brief", _render_analyst_brief_section, "analyst_brief"),
     ("investigation_packet", lambda pkt: _render_f232_analyst_brief(pkt, None), "investigation_packet"),
-)
+    )
 
 
 def _render_f232_analyst_brief(investigation_packet: dict, scorecard: dict) -> str:

@@ -135,7 +135,7 @@ class I2PSAMv3Client:
             async with asyncio.timeout(self._timeout):
                 self._reader, self._writer = await asyncio.open_connection(
                     self._host, self._port
-                )
+    )
             # SAM v3 handshake: negotiate protocol version
             hello = f'HELLO VERSION MIN={SAM_MIN_VERSION} MAX={SAM_MAX_VERSION}\n'
             self._writer.write(hello.encode())
@@ -148,7 +148,7 @@ class I2PSAMv3Client:
             if 'RESULT=OK' not in reply_str:
                 logger.warning(
                     f'SAM v3 handshake failed: {reply_str[:120]}'
-                )
+    )
                 await self._close_writer()
                 return False
 
@@ -201,7 +201,7 @@ class I2PSAMv3Client:
                     f' inbound.quantity=0'
                     f' outbound.quantity=0'
                     f'\n'
-                )
+    )
                 self._writer.write(create_cmd.encode())  # type: ignore[union-attr]
                 await self._writer.drain()  # type: ignore[union-attr]
 
@@ -218,14 +218,14 @@ class I2PSAMv3Client:
                     logger.info(
                         f'SAM v3 session created: {session_name}'
                         f' dest={dest[:20] if dest else "TRANSIENT"}...'
-                    )
+    )
                     return dest
                 else:
                     msg = _extract_sam_field(reply_str, 'MESSAGE') or 'unknown'
                     logger.warning(
                         f'SAM v3 session create failed: RESULT={result}'
                         f' MESSAGE={msg}'
-                    )
+    )
                     return None
             except TimeoutError:
                 logger.debug('SAM v3 session create timeout')
@@ -269,7 +269,7 @@ class I2PSAMv3Client:
                     f' DESTINATION={destination}'
                     f' SILENT=false'
                     f'\n'
-                )
+    )
                 self._writer.write(connect_cmd.encode())  # type: ignore[union-attr]
                 await self._writer.drain()  # type: ignore[union-attr]
 
@@ -286,14 +286,14 @@ class I2PSAMv3Client:
                     logger.debug(
                         f'SAM v3 stream connected to'
                         f' {destination[:40]}...'
-                    )
+    )
                     return (self._reader, self._writer)  # type: ignore[return-value]
                 else:
                     msg = _extract_sam_field(reply_str, 'MESSAGE') or ''
                     logger.debug(
                         f'SAM v3 stream connect failed:'
                         f' RESULT={result} MESSAGE={msg[:80]}'
-                    )
+    )
                     return None
             except TimeoutError:
                 logger.debug(f'SAM v3 stream connect timeout to'
@@ -408,7 +408,7 @@ class I2PSAMv3Client:
                 f'Accept: */*\r\n'
                 f'Connection: close\r\n'
                 f'\r\n'
-            )
+    )
             writer.write(request.encode())
             await writer.drain()
 
@@ -647,7 +647,7 @@ class I2PTransport(Transport):
                 host='127.0.0.1',
                 port=self.sam_port,
                 timeout=10.0,
-            )
+    )
             connected = await self._sam_v3_client.connect()
             if not connected:
                 logger.debug('SAM v3 handshake failed — SAM bridge not available')
@@ -659,13 +659,13 @@ class I2PTransport(Transport):
             dest = await self._sam_v3_client.create_session(
                 session_name=session_id,
                 destination='TRANSIENT',
-            )
+    )
             if dest:
                 self.i2p_address = dest
                 logger.info(
                     f'I2PTransport: SAM v3 session active'
                     f' (session={session_id}, dest={dest[:24]}...)'
-                )
+    )
                 return True
 
             logger.debug('SAM v3 session create failed — falling back')
@@ -764,12 +764,12 @@ class I2PTransport(Transport):
             logger.debug(
                 f'SAM v3 register_handler: {msg_type}'
                 f' (inbound STREAM ACCEPT not yet implemented)'
-            )
+    )
         else:
             raise NotImplementedError(
                 'I2P SAM v3 streaming session not implemented;'
                 ' use SOCKS5 mode (rdns=True) for .i2p hostname resolution'
-            )
+    )
 
     async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str | None=None) -> str:
         """
@@ -809,7 +809,7 @@ class I2PTransport(Transport):
                     f'Connection: close\r\n'
                     f'\r\n'
                     f'{body}'
-                )
+    )
                 stream = await self._sam_v3_client.connect_stream(target)
                 if stream:
                     reader, writer = stream
@@ -834,7 +834,7 @@ class I2PTransport(Transport):
             except Exception as e:
                 logger.warning(
                     f'SAM v3 message send failed, falling back to proxy: {e}'
-                )
+    )
                 # Fall through to proxy modes
 
         # Proxy modes
@@ -947,7 +947,7 @@ class I2PTransport(Transport):
                 dest = await self._sam_v3_client.create_session(
                     session_name=session_id,
                     destination='TRANSIENT',
-                )
+    )
                 if dest:
                     self.i2p_address = dest
                 logger.info('[I2P] Phase-boundary SAM v3 session refresh: %s → %s', old_phase, new_phase)
@@ -982,7 +982,7 @@ class I2PTransport(Transport):
             return TransportResult(
                 url=config.url, error='i2p_unavailable',
                 failure_stage='i2p_check', selected_transport='i2p',
-            )
+    )
 
         # Try SAM v3 direct stream first (primary mode)
         if self.transport_mode == 'sam' and self._sam_v3_client:
@@ -1000,25 +1000,25 @@ class I2PTransport(Transport):
                     destination=dest,
                     path=path,
                     timeout=timeout,
-                )
+    )
                 if result:
                     status_code, body = result
                     return TransportResult(
                         url=config.url, text=body,
                         status_code=status_code,
                         selected_transport='i2p_samv3',
-                    )
+    )
                 else:
                     logger.debug(
                         f'SAM v3 fetch failed for {config.url[:60]},'
                         f' falling back to proxy'
-                    )
+    )
                     # Fall through to proxy modes
             except Exception as e:
                 logger.warning(
                     f'SAM v3 fetch error for {config.url[:60]}: {e},'
                     f' falling back to proxy'
-                )
+    )
                 # Fall through to proxy modes
 
         # Fallback: SOCKS5/HTTP proxy
@@ -1030,7 +1030,7 @@ class I2PTransport(Transport):
                 error=f'i2p_session_unavailable: {e}',
                 failure_stage='i2p_session',
                 selected_transport='i2p',
-            )
+    )
         try:
             timeout = getattr(config, 'timeout_s', 30) or 30
             resp = await session.get(config.url, timeout=timeout)
@@ -1039,14 +1039,14 @@ class I2PTransport(Transport):
                 url=config.url, text=body,
                 status_code=resp.status_code,
                 selected_transport='i2p',
-            )
+    )
         except Exception as e:
             return TransportResult(
                 url=config.url,
                 error=f'i2p_fetch_failed: {e}',
                 failure_stage='i2p_fetch',
                 selected_transport='i2p',
-            )
+    )
 I2P_HTTP_PROXY: str = f'http://127.0.0.1:{I2P_HTTP_PORT}'
 
 async def get_i2p_session() -> httpx.AsyncClient:

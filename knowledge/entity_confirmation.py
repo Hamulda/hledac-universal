@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 _ENTITY_CONFIRMATION_ENABLED: bool = (
     os.getenv("HLEDAC_ENABLE_ENTITY_CONFIRMATION", "1").lower()
     in ("1", "true", "yes", "on")
-)
+    )
 
 # Confirmation thresholds — mirrors RouteGraphService pattern
 _MIN_DISTINCT_SOURCES: int = 3  # COUNT(DISTINCT source_type) >= 3
@@ -185,7 +185,7 @@ class EntityConfirmationService:
         self._cache: _ConfirmationCache = _ConfirmationCache(
             max_entries=_CACHE_MAX_ENTRIES,
             ttl_s=_CACHE_TTL_SECONDS,
-        )
+    )
         self._lock: asyncio.Lock = asyncio.Lock()
         self._stats: dict[str, int] = {
             "queries": 0,
@@ -288,7 +288,7 @@ class EntityConfirmationService:
             except Exception as e:
                 logger.debug(
                     "[EntityConfirmation] Batch query failed (fail-soft): %s", e
-                )
+    )
                 # Fail-soft: return cached results only + not-confirmed placeholders
                 for ev, et in uncached:
                     key = self._make_key(ev, et)
@@ -303,7 +303,7 @@ class EntityConfirmationService:
                         source_types=(),
                         sprint_ids=(),
                         last_observed_ts=0.0,
-                    )
+    )
 
         return results
 
@@ -326,7 +326,7 @@ class EntityConfirmationService:
         try:
             observations = await self._store.async_get_entity_observations_by_entity(
                 entity_value, limit=50
-            )
+    )
         except Exception:
             return None
 
@@ -379,7 +379,7 @@ class EntityConfirmationService:
             except Exception as e:
                 logger.debug(
                     "[EntityConfirmation] Chunk query failed: %s", e
-                )
+    )
                 # Continue with next chunk
 
         return results
@@ -399,7 +399,7 @@ class EntityConfirmationService:
             try:
                 observations = await self._store.async_get_entity_observations_by_entity(
                     ev, limit=50
-                )
+    )
                 if not observations:
                     return (self._make_key(ev, et), EntityConfirmation(
                         entity_value=ev,
@@ -417,7 +417,7 @@ class EntityConfirmationService:
             except Exception as e:
                 logger.debug(
                     "[EntityConfirmation] Single entity query failed for %s: %s", ev, e
-                )
+    )
                 return (self._make_key(ev, et), EntityConfirmation(
                     entity_value=ev,
                     entity_type=et,
@@ -479,7 +479,7 @@ class EntityConfirmationService:
         is_confirmed = (
             distinct_sources >= _MIN_DISTINCT_SOURCES
             and max_confidence > _MIN_MAX_CONFIDENCE
-        )
+    )
 
         return EntityConfirmation(
             entity_value=entity_value,
@@ -492,7 +492,7 @@ class EntityConfirmationService:
             source_types=tuple(sorted(sources)),
             sprint_ids=tuple(sorted(sprints)),
             last_observed_ts=max_ts,
-        )
+    )
 
 
 # -- Singleton accessor --------------------------------------------------------

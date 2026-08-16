@@ -518,13 +518,13 @@ async def _try_certspotter_fallback(
                 outcome = CTOutcome(
                     attempted=True, query=query, raw_count=raw_count, built_count=len(hits),
                     error=None, timeout=False, duration_s=elapsed, provider_status=CTProviderStatus.OK
-                )
+    )
                 result = DiscoveryBatchResult(
                     hits=tuple(hits)[:_MAX_HITS], error=None, error_type='ok',
                     provider_name='certspotter',
                     provider_chain=('certspotter', f'crtsh_{circuit_reason}'),
                     source_family='ct', elapsed_s=elapsed
-                )
+    )
                 return (result, outcome)
     except Exception:  # noqa: BLE001
         pass
@@ -567,7 +567,7 @@ async def _search_wildcards(
                     session, url, params={'output': 'json'},
                     headers={'User-Agent': 'Hledac/1.0 (research bot)'},
                     timeout=timeout, failure_kind='crtsh'
-                )
+    )
                 if err:
                     return ([], err, CTProviderStatus.TIMEOUT if err == 'timeout' else CTProviderStatus.HTTP_5XX)
                 if status != 200:
@@ -584,7 +584,7 @@ async def _search_wildcards(
             result = await parallel(
                 [_fetch_one(u) for u in wildcard_urls],
                 taskgroup=True, policy='collect', ctx='crtsh_adapter:wildcard'
-            )
+    )
             results = result.ok
     except asyncio.CancelledError:
         raise
@@ -616,11 +616,11 @@ async def _search_wildcards(
         outcome = CTOutcome(
             attempted=True, query=query, raw_count=0, built_count=0,
             error='no_domain_like_token', skip_reason='no_domain_like_token', duration_s=elapsed
-        )
+    )
         result = DiscoveryBatchResult(
             hits=(), error='no_domain_like_token', error_type='invalid_query',
             provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed
-        )
+    )
         return (result, outcome)
     else:
         elapsed = time.monotonic() - search_start
@@ -629,12 +629,12 @@ async def _search_wildcards(
             error=strong_error or 'all_wildcard_failed',
             timeout=strong_tag == CTProviderStatus.TIMEOUT,
             duration_s=elapsed, provider_status=strong_tag
-        )
+    )
         result = DiscoveryBatchResult(
             hits=(), error=strong_error or 'all_wildcard_failed',
             error_type='wildcard_exhausted', provider_name='crtsh',
             provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed
-        )
+    )
         return (result, outcome)
 
 
@@ -656,7 +656,7 @@ async def _search_freetext(
                 session, freetext_url, params={'output': 'json'},
                 headers={'User-Agent': 'Hledac/1.0 (research bot)'},
                 timeout=timeout, failure_kind='crtsh'
-            )
+    )
             if err is None and status == 200:
                 hits, raw = _build_hits_from_raw(data, freetext_query, freetext_query, _MAX_HITS)
                 if hits:
@@ -699,7 +699,7 @@ async def _handle_cooldown_with_cache(
             stale_age=stale_age,
             elapsed=elapsed,
             provider_status=CTProviderStatus.CACHE_HIT_STALE,
-        )
+    )
 
     return _make_error_response(
         error='cooldown_active',
@@ -749,7 +749,7 @@ def _handle_http_error(status: int, domain: str, cooldown_now: float, cache_dir:
                 stale_age=stale_age,
                 elapsed=elapsed,
                 provider_status=CTProviderStatus.CACHE_HIT_STALE,
-            )
+    )
         return _build_http_error_response(status, domain, elapsed, CTProviderStatus.HTTP_5XX, f'http_{status}', 'http_5xx')
 
     if status >= 400:
@@ -798,7 +798,7 @@ def _parse_cert_data(data: list, query: str, elapsed: float) -> tuple[DiscoveryB
             query=query,
             elapsed=elapsed,
             provider_status=CTProviderStatus.PARSE_ERROR,
-        )
+    )
 
     raw_count = len(data)
     seen_domains: set[str] = set()
@@ -816,7 +816,7 @@ def _parse_cert_data(data: list, query: str, elapsed: float) -> tuple[DiscoveryB
             elapsed=elapsed,
             provider_status=CTProviderStatus.EMPTY,
             raw_count=raw_count,
-        )
+    )
 
     return _make_success_response(hits, raw_count, query, elapsed)
 
@@ -840,7 +840,7 @@ async def _make_crtsh_api_call(
                 session, _CRTSH_URL, params=params,
                 headers={'User-Agent': 'Hledac/1.0 (research bot)'},
                 timeout=timeout, failure_kind='crtsh'
-            )
+    )
     except asyncio.CancelledError:
         raise
 
@@ -863,14 +863,14 @@ async def _make_crtsh_api_call(
                 stale_age=stale_age,
                 elapsed=elapsed,
                 provider_status=CTProviderStatus.CACHE_HIT_STALE,
-            )
+    )
         return _make_error_response(
             error=err,
             error_type=err_tag,
             query=domain,
             elapsed=elapsed,
             provider_status=CTProviderStatus.TIMEOUT if is_timeout else CTProviderStatus.HTTP_5XX,
-        )
+    )
 
     # Handle HTTP status codes
     http_result, http_outcome = _handle_http_error(status, domain, cooldown_now, cache_dir, elapsed)
@@ -915,7 +915,7 @@ async def _handle_crtsh_timeout(
                     elapsed=cs_elapsed,
                     provider_status=CTProviderStatus.OK,
                     timeout=True,
-                )
+    )
                 result = DiscoveryBatchResult(
                     hits=tuple(hits)[:_MAX_HITS],
                     error=None,
@@ -924,7 +924,7 @@ async def _handle_crtsh_timeout(
                     provider_chain=('certspotter', 'crtsh_timeout'),
                     source_family='ct',
                     elapsed_s=cs_elapsed,
-                )
+    )
                 return (result, outcome)
     except Exception:  # noqa: BLE001
         pass
@@ -942,7 +942,7 @@ async def _handle_crtsh_timeout(
             stale_age=stale_age,
             elapsed=elapsed,
             provider_status=CTProviderStatus.CACHE_HIT_STALE,
-        )
+    )
 
     return _make_error_response(
         error='timeout',
@@ -980,7 +980,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
             error='empty_query', error_type='invalid_query',
             query=query_stripped, elapsed=elapsed,
             provider_status=CTProviderStatus.SKIP
-        )
+    )
 
     # Phase 2: Circuit breaker check with fallback
     crtsh_decision = domain_breaker_check('crt.sh')
@@ -1033,7 +1033,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
             error=str(e), error_type='provider_exception',
             query=domain_candidate, elapsed=elapsed,
             provider_status=CTProviderStatus.PARSE_ERROR
-        )
+    )
 
 
 class CRTshAdapter(BaseDiscoveryMixin):
@@ -1101,4 +1101,4 @@ class CRTshAdapter(BaseDiscoveryMixin):
                 score=hit.score,
                 reason=hit.reason,
                 metadata=metadata,
-            )
+    )

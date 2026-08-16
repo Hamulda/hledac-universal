@@ -8,7 +8,6 @@ F350M-R / Issue #P2.
 Bounded LIFO registry replacing WeakValueDictionary + deque dual-eviction.
 M1 8GB: No GC overhead — objects released deterministically.
 """
-from dataclasses import dataclass, field
 import msgspec
 from typing import Any, Final
 from collections.abc import Callable
@@ -23,7 +22,7 @@ class OwnedResource(msgspec.Struct, gc=False):
     """
     obj: Any
     cleanup: Callable[[], None] | None = None
-    released: bool = field(default=False)
+    released: bool = msgspec.field(default=False)
 
     def release(self) -> None:
         """Explicit release — deterministic, no GC dependency."""

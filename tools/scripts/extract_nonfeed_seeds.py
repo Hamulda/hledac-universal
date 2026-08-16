@@ -65,7 +65,7 @@ from hledac.universal.runtime.nonfeed_seed_extractor import (  # noqa: E402
     classify_seed_quality,
     compute_lane_unlocks,
     extract_nonfeed_seeds_from_findings,
-)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +234,7 @@ def _build_where_clause(
         # Search all text columns for the query filter
         text_col_refs = " || ' ' || ".join(
             f'COALESCE("{c}", \'\')' for c in schema.text_columns
-        )
+    )
         where_parts.append(f"({text_col_refs}) LIKE '%' || ? || '%'")
         params.append(query_filter)
 
@@ -250,7 +250,7 @@ def _build_where_clause(
         if ts_candidates:
             where_parts.append(
                 f"{ts_candidates[0]} >= CURRENT_TIMESTAMP - INTERVAL '{since_hours} hours'"
-            )
+    )
 
     if where_parts:
         return " WHERE " + " AND ".join(where_parts), params
@@ -379,7 +379,7 @@ def _read_findings_from_duckdb(
             # Build and execute query
             where_clause, params = _build_where_clause(
                 schema, query_filter, sprint_id_filter, since_hours
-            )
+    )
             select_cols = ", ".join(f'"{c}"' for c in schema.columns)
             sql = f'SELECT {select_cols} FROM "{table_name}"{where_clause} LIMIT {limit_findings}'
 
@@ -401,7 +401,7 @@ def _read_findings_from_duckdb(
                             findings=all_findings,
                             tables_checked=tables_checked,
                             rows_scanned=rows_scanned,
-                        )
+    )
 
             # Early termination check
             if len(all_findings) >= limit_findings:
@@ -526,7 +526,7 @@ def main() -> None:
             query_filter=args.query,
             sprint_id_filter=args.sprint_id,
             since_hours=args.since_hours,
-        )
+    )
         findings = duckdb_result.findings
         tables_checked = duckdb_result.tables_checked
         rows_scanned = duckdb_result.rows_scanned

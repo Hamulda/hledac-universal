@@ -12,7 +12,7 @@ from hledac.universal.discovery.base import (
     BaseDiscoveryMixin,
     DiscoveryResult,
     RateLimiter,
-)
+    )
 from hledac.universal.discovery.duckduckgo_adapter import DuckDuckGoAdapter
 from hledac.universal.discovery.crtsh_adapter import CRTshAdapter
 from hledac.universal.discovery.circl_pdns_adapter import CirclPDNSAdapter
@@ -29,7 +29,7 @@ class TestDiscoveryResult:
             snippet="An example page",
             source="test",
             source_type="search",
-        )
+    )
         with pytest.raises(AttributeError):
             r.query = "changed"
 
@@ -41,7 +41,7 @@ class TestDiscoveryResult:
             snippet="An example",
             source="test",
             source_type="search",
-        )
+    )
         with pytest.raises(AttributeError):
             r.foo = "bar"
 
@@ -54,7 +54,7 @@ class TestDiscoveryResult:
             snippet="S",
             source="src",
             source_type="st",
-        )
+    )
         assert r.rank == 0
         assert r.retrieved_ts >= now - 1
         assert r.score == 0.0
@@ -70,7 +70,7 @@ class TestDiscoveryResult:
             source="src",
             source_type="st",
             metadata={"ct_issuer_name": "DigiCert"},
-        )
+    )
         assert r.metadata["ct_issuer_name"] == "DigiCert"
 
 
@@ -146,7 +146,7 @@ class TestBaseDiscoveryMixinAbstractEnforcement:
                     snippet="Test",
                     source="concrete",
                     source_type="test",
-                )
+    )
         adapter = ConcreteAdapter()
         assert adapter.name == "concrete"
         assert adapter.source_type == "test"

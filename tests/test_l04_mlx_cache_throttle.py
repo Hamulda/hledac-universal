@@ -134,7 +134,7 @@ class TestClearInterval:
 
         assert not clear_called, (
             "clear_cache() must NOT be called when below threshold and NORMAL pressure"
-        )
+    )
 
     def test_triggers_at_threshold(self):
         """
@@ -197,7 +197,7 @@ class TestClearInterval:
         assert clear_count <= 5, (
             f"100 generations triggered {clear_count} clears; "
             f"acceptance threshold is ≤ 5 (at 20-gen intervals)"
-        )
+    )
 
     def test_timestamp_recorded_after_clear(self):
         """_last_inference_at is updated after every _mlx_clear_and_timestamp call."""
@@ -260,7 +260,7 @@ class TestPressureTriggers:
         assert clear_called, (
             f"clear_cache() must fire immediately when pressure={pressure_state}, "
             "regardless of generation counter"
-        )
+    )
 
     @pytest.mark.parametrize("pressure_state", ["normal", "elevated"])
     def test_normal_elevated_pressure_respects_threshold(self, pressure_state: str):
@@ -290,7 +290,7 @@ class TestPressureTriggers:
 
         assert not clear_called, (
             f"clear_cache() must NOT fire when pressure={pressure_state} and below threshold"
-        )
+    )
 
     def test_uma_sampling_failure_fail_open(self):
         """

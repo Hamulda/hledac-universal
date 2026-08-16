@@ -267,7 +267,7 @@ async def run_lane_batch(lanes: list[tuple[str, LaneRunner, float | None]]) -> R
         result.match(
             ok=lambda v: process_results(v),
             err=lambda e: handle_lane_errors(e),
-        )
+    )
     """
 
     async def _run_one(name: str, runner: LaneRunner, timeout_s: float | None) -> tuple[str, Result]:

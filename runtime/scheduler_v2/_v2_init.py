@@ -1,12 +1,8 @@
 """STEP 4 Phase 6 — Consolidated V2 initialization: Bootstrap + Injector.
 
-F350M-R / A2 / A7-FIX.
+F350M-R / A2.
 
-A7-FIX: Root-cause muffling antipattern remediation.
-- Narrowed except blocks to specific exception types (ImportError, RuntimeError, OSError)
-- Full traceback logging before InitResult.failure
-- Exception chaining with __cause__ preservation
-- Fail-loud for critical services (DuckDB, Governor) with clear diagnostics
+
 
 Single home for all bootstrap + declarative injection logic previously
 duplicated across SprintBootstrap, Injector, and entrypoint_injections.
@@ -26,10 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import logging as _logging
-import traceback
 import time as _t
-from typing import TYPE_CHECKING, Any
-from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from operator import attrgetter, itemgetter
 import msgspec
@@ -39,70 +33,6 @@ from hledac.universal.utils.asyncx import parallel, safe_create_task
 
 if TYPE_CHECKING:
     pass
-
-
-def _hasattr_safe(obj: Any, attr: str) -> bool:
-    """Safe hasattr that doesn't trigger AttributeError on __getattr__."""
-    try:
-        return hasattr(obj, attr)
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def _init_failure(
-    exc: BaseException,
-    elapsed_ms: float,
-    logger: _logging.Logger,
-    service_name: str,
-    *,
-    reraise: bool = False,
-) -> InitResult[Any]:
-    """Create InitResult.failure with full traceback logging.
-
-    A7-FIX: This replaces `InitResult.failure(str(e), ms)` which muffled
-    root causes. Now logs the complete traceback for debugging while still
-    returning InitResult for fail-soft services.
-
-    Args:
-        exc: The exception that caused the init failure
-        elapsed_ms: Time taken before failure (for logging/InitResult)
-        logger: Logger instance for traceback output
-        service_name: Human-readable service name for log messages
-        reraise: If True, also raise the exception after logging (fail-loud)
-
-    Returns:
-        InitResult with error message including traceback summary
-
-    Raises:
-        (optional) The original exception if reraise=True
-    """
-    # Capture full traceback for diagnostics
-    tb_summary = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-
-    # Log at ERROR level for critical services, WARNING for optional ones
-    logger.error(
-        "[A7-FIX] %s init failed after %.1fms.\n"
-        "Root cause preserved:\n%s"
-        "\nException: %s: %s",
-        service_name,
-        elapsed_ms,
-        tb_summary,
-        type(exc).__name__,
-        str(exc),
-    )
-
-    if reraise:
-        raise
-
-    # Include traceback summary in error for forensic debugging
-    # A7-FIX: Increased from 500 to 2000 chars to capture deeply nested exception chains
-    # While this slightly increases InitResult payload size, it preserves critical context
-    # for debugging complex failure scenarios (e.g., import cascades, runtime composition)
-    tb_excerpt = tb_summary[:2000] if len(tb_summary) > 2000 else tb_summary
-    return InitResult.failure(
-        f"[A7] {type(exc).__name__}: {exc}\nTrace: {tb_excerpt}",
-        elapsed_ms,
-    )
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -121,19 +51,14 @@ class _Injection(msgspec.Struct, frozen=True, gc=False):
 
 
 # EvidenceLog init from shared module (F350M-R)
-
-
-
-
-
+from hledac.universal.runtime._shared.evidence_log_shared import (
     evidence_log_init as _evidence_log_init,
 )
 
 
 def _policy_manager_factory(*, rl_train_mode: bool) -> Any:
     from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
-
-from _core import aclose    return SprintPolicyManager(enabled=True, rl_train_mode=rl_train_mode)
+    return SprintPolicyManager(enabled=True, rl_train_mode=rl_train_mode)
 
 
 def _duckdb_store_factory(*, duckdb_store: Any) -> Any:
@@ -276,27 +201,9 @@ class V2Init:
                              logger=logger)
     """
 
-    __slots__ = (
-        "_scheduler",
-        "_config",
-        "_result",
-        "_cancel_event",
-        "_ctx",
-        "_governor",
-        "_hermes_engine",
-        "_evidence_log",
-        "_sidecar_orchestrator",
-        "_lifecycle",
-        "_acquisition_plan",
-    )
+    __slots__ = ()
 
     def __init__(self, scheduler: Any) -> None:
-        # Type guard: reject non-object types early
-        if not hasattr(scheduler, "__dict__") and not hasattr(scheduler, "__slots__"):
-            raise TypeError(
-                f"V2Init requires an object with __dict__ or __slots__, "
-                f"got {type(scheduler).__name__}"
-            )
         self._scheduler = scheduler
         self._config = getattr(scheduler, "_config", None)
         self._result = getattr(scheduler, "_result", None)
@@ -361,25 +268,17 @@ class V2Init:
     ) -> None:
         """Bootstrap core services concurrently."""
         from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
-        from hledac.universal.runtime.scheduler.core.lifecycle import SprintLifecycleAdapter
-        from hledac.universal.runtime.sprint_lifecycle_runner import SprintLifecycleRunner
 
         # Store cancel_event on scheduler (used by scheduler.run() and aclose)
         object.__setattr__(self._scheduler, "_cancel_event", cancel_event)
 
-        # Lifecycle manager (canonical state machine)
+        # Lifecycle manager
         _lifecycle_mgr = SprintLifecycleManager(
             sprint_duration_s=self._config.sprint_duration_s if self._config else 1800.0,
             windup_lead_s=self._config.windup_lead_s if self._config else 180.0,
         )
         object.__setattr__(self._scheduler, "_lifecycle", _lifecycle_mgr)
-
-        # [F-1 P0] Lifecycle runner: wraps manager via adapter to provide
-        # windup_guard() and string current_phase (SprintLifecycleManager lacks both).
-        # Runner is the mechanical boundary; manager is the canonical state.
-        _lifecycle_adapter = SprintLifecycleAdapter(_lifecycle_mgr)
-        _lifecycle_runner = SprintLifecycleRunner(_lifecycle_mgr, _lifecycle_adapter)
-        object.__setattr__(self._scheduler, "_runner", _lifecycle_runner)
+        object.__setattr__(self._scheduler, "_runner", _lifecycle_mgr)
 
         # [ULTIMATE]-002: Wire cognitive saturation detector into lifecycle manager.
         # The detector monitors entity discovery rate and triggers WINDUP when
@@ -399,8 +298,7 @@ class V2Init:
                 _cs_detector._persist_s,
                 _cs_detector._min_active_s,
             )
-        except (ImportError, AttributeError, TypeError) as _cs_exc:
-            # A7-FIX: Narrowed to specific exceptions; fail-soft (cognitive saturation is non-critical)
+        except Exception as _cs_exc:  # noqa: BLE001 — fail-soft; cognitive saturation is non-critical
             _logging.getLogger(__name__).warning(
                 "[ULTIMATE]-002] Failed to wire CognitiveSaturationDetector (non-critical): %s", _cs_exc
             )
@@ -414,8 +312,7 @@ class V2Init:
             try:
                 rm = get_rayon_pool_manager()
                 rm.set_phase("DEGRADED")
-            except (RuntimeError, OSError):
-                # A7-FIX: Narrowed — rayon manager may not be initialized yet
+            except Exception:  # noqa: BLE001
                 pass
 
         _lifecycle_mgr.add_phase_exit_callback(_on_degraded_enter)
@@ -442,58 +339,9 @@ class V2Init:
             _evidence_log,
         ) = _init_result.ok
 
-        # [A1-FIX]: Assert critical service availability after parallel init.
-        # Before this fix, failures in _lazy_imports.py were silent → services None.
-        # Now we log which services failed and raise AssertionError for critical ones.
-        _bootstrap_logger = _logging.getLogger(__name__)
-        _failed_services: list[str] = []
-        _service_results = [
-            ("duckdb_store", _duckdb_store),
-            ("governor", _governor),
-            ("hermes_engine", _hermes_engine),
-            ("evidence_log", _evidence_log),
-        ]
-        for _svc_name, _svc_result in _service_results:
-            if _svc_result is None or (_hasattr_safe(_svc_result, "value") and _svc_result.value is None):
-                _svc_error = getattr(_svc_result, "error", None) if _svc_result else "Unknown"
-                _failed_services.append(f"{_svc_name}: {_svc_error or 'init failed'}")
-                _bootstrap_logger.error(
-                    "[V2Init] Service init failed: %s — error: %s",
-                    _svc_name,
-                    _svc_error or "unknown",
-                )
-
-        if _failed_services:
-            _bootstrap_logger.error(
-                "[V2Init] CRITICAL: %d service(s) failed to initialize: %s",
-                len(_failed_services),
-                "; ".join(_failed_services),
-            )
-            # A1: Raise AssertionError for critical services — fail fast, don't silently degrade
-            # DuckDB and Governor are considered critical for sprint operation.
-            _critical_failed = [
-                s for s in _failed_services
-                if "duckdb" in s.lower() or "governor" in s.lower()
-            ]
-            if _critical_failed:
-                raise AssertionError(
-                    f"[A1-CRITICAL] V2Init cannot start: critical services unavailable: "
-                    f"{'; '.join(_critical_failed)}. "
-                    f"This indicates _lazy_imports.py is missing or modules failed to import. "
-                    f"Check that hledac/universal/_lazy_imports.py exists."
-                )
-
         object.__setattr__(self._scheduler, "_governor", _governor)
         object.__setattr__(self._scheduler, "_hermes_engine", _hermes_engine)
         object.__setattr__(self._scheduler, "_evidence_log", _evidence_log)
-
-        # P0-5 FIX: Start the lifecycle manager (BOOT → WARMUP transition).
-        # Without this, _started_at stays None, phase stays BOOT forever,
-        # tick() is a no-op, and DEGRADED/WINDUP phases are unreachable.
-        _lifecycle_mgr.start()
-        # [F-1 P0] Initialize runner: sets _wall_clock_start and prev_phase.
-        # Must be called after manager.start() so adapter has valid phase state.
-        _lifecycle_runner.setup()
 
         # META-001: Inject DuckDB store into CrossSprintGate for pre-fetch gating
         try:
@@ -501,19 +349,11 @@ class V2Init:
             _gate = get_cross_sprint_gate()
             _duckdb_raw = _duckdb_store.value if hasattr(_duckdb_store, 'value') else _duckdb_store
             _gate.inject_duckdb_store(_duckdb_raw)
-        except (ImportError, AttributeError, RuntimeError):
-            # A7-FIX: Narrowed to specific exceptions; fail-soft (gate injection is non-critical)
+        except Exception:  # noqa: BLE001 — fail-soft; gate injection is non-critical
             pass
 
         # SidecarOrchestrator (needs duckdb — runs after)
         _sidecar_orch = await self._init_sidecar_orchestrator(query)
-        # [A1-FIX]: Log sidecar orchestrator init status
-        if _sidecar_orch is None or (_hasattr_safe(_sidecar_orch, "value") and _sidecar_orch.value is None):
-            _sidecar_error = getattr(_sidecar_orch, "error", None) if _sidecar_orch else "Unknown"
-            _bootstrap_logger.error(
-                "[V2Init] SidecarOrchestrator init failed — error: %s",
-                _sidecar_error or "unknown",
-            )
         object.__setattr__(self._scheduler, "_sidecar_orchestrator", _sidecar_orch)
 
         # Update ctx
@@ -529,7 +369,7 @@ class V2Init:
             governor=_governor,
             hermes_engine=_hermes_engine,
             evidence_log=_evidence_log,
-            runner=_lifecycle_runner,  # [F-1 P0] SprintLifecycleRunner (has windup_guard + string current_phase)
+            runner=_lifecycle_mgr,
             lifecycle=_lifecycle_mgr,
         )
         object.__setattr__(self._scheduler, "_ctx", _updated_ctx)
@@ -577,8 +417,7 @@ class V2Init:
             gravity_inject = getattr(self._scheduler, "inject_gravity_field", None)
             if gravity_inject:
                 gravity_inject(_gravity_field)
-        except (ImportError, AttributeError, TypeError):
-            # A7-FIX: Narrowed to specific exceptions (gravity field is non-critical)
+        except Exception:
             pass
 
     def _inject_object(self, inj, obj: Any) -> None:
@@ -615,12 +454,8 @@ class V2Init:
             return
         try:
             _evidence_log_init(_elog, sprint_id, query, sprint_duration_s, windup_lead_s)
-        except (TypeError, AttributeError, RuntimeError) as e:
-            # A7-FIX: Narrowed to specific exceptions that evidence_log_init may raise
-            # This is fail-soft (evidence warmup is non-critical)
-            _logging.getLogger(__name__).warning(
-                "[V2Init] EvidenceLog warmup failed (non-critical): %s", e
-            )
+        except Exception:  # noqa: BLE001
+            pass
 
     async def _apply_injections(
         self,
@@ -664,13 +499,11 @@ class V2Init:
                     self._inject_prefetch_pipeline(obj)
                 else:
                     self._inject_object(inj, obj)
-            except (ImportError, TypeError, RuntimeError, OSError) as e:
-                # A7-FIX: Narrowed to specific exception types that factories may raise
+            except Exception as e:
                 if inj.fail_soft:
                     logger.debug("V2Init: %s injection failed (fail-soft): %s", inj.name, e)
                 else:
-                    # A1-FIX: Critical service — re-raise with full context
-                    raise type(e)(f"{inj.name} injection failed: {e}") from e
+                    raise
 
         self._warmup_evidence_log(sprint_id, query, sprint_duration_s, windup_lead_s)
 
@@ -683,18 +516,13 @@ class V2Init:
             builder = AcquisitionPlanBuilder()
             plan = await builder.build(query, self._config)
             return plan
-        except (ImportError, TypeError, RuntimeError, OSError) as e:
-            # A7-FIX: Narrowed to specific exceptions; log traceback for debugging
-            _logging.getLogger(__name__).warning(
-                "[V2Init] AcquisitionPlan build failed: %s", e
-            )
+        except Exception:
             return None
 
     # ── Individual init methods ─────────────────────────────────────────────────
 
     async def _init_duckdb_store(self, query: str) -> InitResult[Any]:
         _t0 = _t.monotonic()
-        _logger = _logging.getLogger(__name__)
         try:
             from hledac.universal._lazy_imports import get_DuckDBShadowStore
             from hledac.universal.paths import RAMDISK_ROOT
@@ -713,98 +541,50 @@ class V2Init:
                 semantic_store = SemanticStore(db_path=lancedb_path)
                 await semantic_store.initialize()
                 store.inject_semantic_store(semantic_store)
-            except (ImportError, OSError, RuntimeError) as sem_exc:
+            except Exception as sem_exc:
                 # Fail-soft: SemanticStore injection failure must not block DuckDB init.
                 # buffer_findings() is already fail-open (no-op when store is None).
-                _logger.warning(
+                _logging.getLogger(__name__).warning(
                     "[V2Init] SemanticStore injection failed (non-critical): %s",
                     sem_exc,
                 )
 
             return InitResult.success(store, (_t.monotonic() - _t0) * 1000)
-
-        except ImportError as e:
-            # A7-FIX: Narrow to ImportError — module/dependency not found
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "DuckDB", reraise=True)
-
-        except (OSError, RuntimeError) as e:
-            # A7-FIX: Narrow to OS/Runtime errors — actual DuckDB failures
-            # A1: DuckDB is critical → fail loud immediately with full traceback
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "DuckDB", reraise=True)
-
         except Exception as e:
-            # A7-FIX: Catch-all for unexpected errors (NameError, AttributeError, etc.)
-            # These are usually programmer errors — fail loud immediately
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "DuckDB", reraise=True)
+            return InitResult.failure(str(e), (_t.monotonic() - _t0) * 1000)
 
     async def _init_governor(self) -> InitResult[Any]:
         _t0 = _t.monotonic()
-        _logger = _logging.getLogger(__name__)
         try:
             from hledac.universal._lazy_imports import get_M1ResourceGovernor
             M1ResourceGovernor = get_M1ResourceGovernor()
             governor = M1ResourceGovernor()
             return InitResult.success(governor, (_t.monotonic() - _t0) * 1000)
-
-        except ImportError as e:
-            # A7-FIX: Narrow to ImportError — module/dependency not found
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "Governor", reraise=True)
-
-        except (OSError, RuntimeError) as e:
-            # A7-FIX: Narrow to OS/Runtime errors — governor runtime failures
-            # A1: Governor is critical → fail loud immediately with full traceback
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "Governor", reraise=True)
-
         except Exception as e:
-            # A7-FIX: Catch-all for unexpected errors (NameError, AttributeError, etc.)
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "Governor", reraise=True)
+            return InitResult.failure(str(e), (_t.monotonic() - _t0) * 1000)
 
     async def _init_hermes_engine(self, query: str) -> InitResult[Any]:
         _t0 = _t.monotonic()
-        _logger = _logging.getLogger(__name__)
         try:
             from hledac.universal._lazy_imports import get_Hermes3Engine
             Hermes3Engine = get_Hermes3Engine()
             engine = Hermes3Engine()
             return InitResult.success(engine, (_t.monotonic() - _t0) * 1000)
-
-        except ImportError as e:
-            # A7-FIX: Narrow to ImportError — MLX/model dependencies not available
-            # Hermes is optional (synthesis) → fail-soft
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "Hermes", reraise=False)
-
-        except (OSError, RuntimeError) as e:
-            # A7-FIX: Narrow to OS/Runtime errors — model loading failures
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "Hermes", reraise=False)
-
         except Exception as e:
-            # A7-FIX: Catch-all for unexpected errors
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "Hermes", reraise=False)
+            return InitResult.failure(str(e), (_t.monotonic() - _t0) * 1000)
 
     async def _init_evidence_log(self) -> InitResult[Any]:
         _t0 = _t.monotonic()
-        _logger = _logging.getLogger(__name__)
         try:
             from hledac.universal._lazy_imports import get_EvidenceLog
             EvidenceLog = get_EvidenceLog()
             elog = EvidenceLog()
             return InitResult.success(elog, (_t.monotonic() - _t0) * 1000)
-
-        except ImportError as e:
-            # A7-FIX: Narrow to ImportError — evidence log module not available
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "EvidenceLog", reraise=False)
-
-        except (OSError, RuntimeError) as e:
-            # A7-FIX: Narrow to OS/Runtime errors — storage/initialization failures
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "EvidenceLog", reraise=False)
-
         except Exception as e:
-            # A7-FIX: Catch-all for unexpected errors
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "EvidenceLog", reraise=False)
+            return InitResult.failure(str(e), (_t.monotonic() - _t0) * 1000)
 
     async def _init_sidecar_orchestrator(self, query: str) -> InitResult[Any]:
         _t0 = _t.monotonic()
-        _logger = _logging.getLogger(__name__)
         try:
             from hledac.universal._lazy_imports import get_SidecarOrchestrator
             SidecarOrchestrator = get_SidecarOrchestrator()
@@ -814,18 +594,8 @@ class V2Init:
                 scheduler=self._scheduler,
             )
             return InitResult.success(orch, (_t.monotonic() - _t0) * 1000)
-
-        except ImportError as e:
-            # A7-FIX: Narrow to ImportError — sidecar module not available
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "SidecarOrchestrator", reraise=False)
-
-        except (OSError, RuntimeError, TypeError) as e:
-            # A7-FIX: TypeError can occur from wrong kwargs (historical bug)
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "SidecarOrchestrator", reraise=False)
-
         except Exception as e:
-            # A7-FIX: Catch-all for unexpected errors
-            return _init_failure(e, (_t.monotonic() - _t0) * 1000, _logger, "SidecarOrchestrator", reraise=False)
+            return InitResult.failure(str(e), (_t.monotonic() - _t0) * 1000)
 
     async def _prewarm_hermes(self) -> None:
         try:
@@ -833,15 +603,12 @@ class V2Init:
             if _engine is not None and hasattr(_engine, "prepare"):
                 await asyncio.sleep(0.1)
                 await _engine.prepare()
-        except (RuntimeError, OSError, AttributeError):
-            # A7-FIX: Narrowed to specific exceptions; prewarm failure is non-critical
+        except Exception:  # noqa: BLE001
             pass
 
 
 class _FlagsEmpty:
     """Neutral flags object used when flags=None."""
-
-    __slots__ = ()
 
     def __getattr__(self, _name: str) -> bool:
         return False

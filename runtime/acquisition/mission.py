@@ -136,10 +136,10 @@ class NonfeedMissionController:
         # F208L version from lanes/__init__.py (not simple version from plan_builder)
         from hledac.universal.runtime.scheduler.lanes import (
             normalize_terminal_state,
-        )
+    )
         from hledac.universal.runtime.acquisition.lane_constants import (
             AcquisitionLane,
-        )
+    )
 
         if family == "PUBLIC":
             if public_outcome is None:
@@ -268,7 +268,7 @@ class NonfeedMissionController:
                     public_outcome,
                     ct_quarantine_count,
                     quality_rejection_ledger,
-                )
+    )
                 memory_skipped = family in memory_skipped_families
                 status = cls._evaluate_family_status(outcome, memory_skipped)
                 required_results[family] = {
@@ -285,7 +285,7 @@ class NonfeedMissionController:
                     public_outcome,
                     ct_quarantine_count,
                     quality_rejection_ledger,
-                )
+    )
                 memory_skipped = family in memory_skipped_families
                 status = cls._evaluate_family_status(outcome, memory_skipped)
                 optional_results[family] = {
@@ -298,7 +298,7 @@ class NonfeedMissionController:
             all_required_complete = all(
                 r["status"] in ("complete", "terminal_no_evidence", "skipped")
                 for r in required_results.values()
-            )
+    )
 
             return NonfeedMissionSnapshot(
                 acquisition_profile=acquisition_profile,
@@ -308,7 +308,7 @@ class NonfeedMissionController:
                 required_results=required_results,
                 optional_results=optional_results,
                 all_required_complete=all_required_complete,
-            )
+    )
         except Exception:
             return NonfeedMissionSnapshot(
                 acquisition_profile=acquisition_profile,
@@ -318,7 +318,7 @@ class NonfeedMissionController:
                 required_results={},
                 optional_results={},
                 all_required_complete=False,
-            )
+    )
 
     @classmethod
     def _derive_exit_reason(
@@ -419,7 +419,7 @@ _INFER_RE: __import__("re").compile(
     r"|url|website|web"
     r")\b",
     __import__("re").IGNORECASE,
-)
+    )
 
 
 def infer_mission_intent(query: str) -> str:

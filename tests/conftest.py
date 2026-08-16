@@ -248,7 +248,7 @@ def _ensure_r0_artifacts() -> None:
             check=False,
             capture_output=True,
             timeout=60,
-        )
+    )
     except subprocess.TimeoutExpired as err:  # noqa: BLE001
         # Fail-safe: neblokuj testy kvůli autoprobe
         pass
@@ -304,7 +304,7 @@ def _enforce_global_timeout() -> None:
             f"test hung on network/deadlock/infinite-loop. "
             f"Add @pytest.mark.timeout(N) to the offending test.",
             pytrace=False,
-        )
+    )
 
     old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(_TEST_TIMEOUT_ENV)
@@ -569,7 +569,7 @@ def _gc_and_close_loops(request: pytest.FixtureRequest) -> None:
                                 t.cancel()
                             loop.run_until_complete(
                                 asyncio.gather(*pending, return_exceptions=True)
-                            )
+    )
                         loop.close()
                     except Exception:  # noqa: BLE001
                         pass
@@ -1140,7 +1140,7 @@ def _asyncio_task_leak_guard(request: pytest.FixtureRequest) -> None:
             f"Ensure all coroutines are awaited or explicitly cancelled.",
             RuntimeWarning,
             stacklevel=2,
-        )
+    )
 
 
 @pytest.fixture(autouse=True)

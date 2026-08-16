@@ -53,7 +53,7 @@ def _derive_encryption_key_sync() -> bytes:
             result = subprocess.run(
                 ['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
                 capture_output=True, text=True, timeout=5,
-            )
+    )
             for line in result.stdout.split('\n'):
                 if 'IOPlatformUUID' in line:
                     machine_id = line.split('"')[-2] if '"' in line else ''

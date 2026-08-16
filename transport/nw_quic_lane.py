@@ -202,7 +202,7 @@ async def fetch_nw_quic(
         response = await nw_connection.fetch_quic_async(
             url,
             timeout,
-        )
+    )
 
         if response is None:
             return None

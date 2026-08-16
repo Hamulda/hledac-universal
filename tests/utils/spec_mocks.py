@@ -206,7 +206,7 @@ def make_duckdb_store_mock_full(
         store = make_duckdb_store_mock_full(
             ingest_return=[],
             query_return=[finding1, finding2]
-        )
+    )
     """
     mock = make_duckdb_store_mock(ingest_return=ingest_return)
 
@@ -355,7 +355,7 @@ def make_sync_mock(
         mock = make_sync_mock(
             methods={"get_stats": {"count": 42}},
             spec=StorageRouter
-        )
+    )
     """
     if spec is not None:
         mock = MagicMock(spec=spec)
@@ -399,7 +399,7 @@ def make_sprint_scheduler_mock(
         scheduler, config = make_sprint_scheduler_mock(
             duckdb_store=make_duckdb_store_mock(ingest_return=[]),
             governor=make_governor_mock(state="critical"),
-        )
+    )
     """
     import asyncio
     from unittest.mock import MagicMock

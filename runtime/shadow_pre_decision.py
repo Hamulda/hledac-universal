@@ -1242,7 +1242,7 @@ def _compose_windup_readiness_preview(
             has_export_data=export.has_ranked_data or export.has_gnn_predictions,
             export_data_quality=_assess_export_quality(export),
             defer_reason="not in WINDUP phase",
-        )
+    )
 
     # In WINDUP — assess windup readiness
     synthesis_mode = lifecycle.windup_local_mode
@@ -1403,7 +1403,7 @@ def _compose_provider_readiness_preview(
             runtime_loaded=runtime_loaded,
             runtime_current_model=runtime_current_model,
             runtime_initialized=runtime_initialized,
-        )
+    )
 
     if lifecycle.phase_conflict:
         blockers.append(f"phase_conflict: {lifecycle.phase_conflict_reason}")
@@ -1422,7 +1422,7 @@ def _compose_provider_readiness_preview(
             runtime_loaded=runtime_loaded,
             runtime_current_model=runtime_current_model,
             runtime_initialized=runtime_initialized,
-        )
+    )
 
     if lifecycle.control_phase_mode == "panic":
         blockers.append("control_mode=panic — provider activation blocked")
@@ -1441,7 +1441,7 @@ def _compose_provider_readiness_preview(
             runtime_loaded=runtime_loaded,
             runtime_current_model=runtime_current_model,
             runtime_initialized=runtime_initialized,
-        )
+    )
 
     if not lifecycle_ready:
         # Lifecycle not active yet — deferred
@@ -1465,7 +1465,7 @@ def _compose_provider_readiness_preview(
                 runtime_loaded=runtime_loaded,
                 runtime_current_model=runtime_current_model,
                 runtime_initialized=runtime_initialized,
-            )
+    )
 
         return ProviderReadinessPreview(
             has_recommendation=has_recommendation_fact,
@@ -1482,7 +1482,7 @@ def _compose_provider_readiness_preview(
             runtime_loaded=runtime_loaded,
             runtime_current_model=runtime_current_model,
             runtime_initialized=runtime_initialized,
-        )
+    )
 
     # Lifecycle is ACTIVE or WINDUP — assess readiness dimensions
     if not control_ready:
@@ -1516,7 +1516,7 @@ def _compose_provider_readiness_preview(
                 runtime_loaded=runtime_loaded,
                 runtime_current_model=runtime_current_model,
                 runtime_initialized=runtime_initialized,
-            )
+    )
         else:
             # readiness="unknown" from model_control — insufficient facts
             unknowns.append("model_control.readiness=unknown — insufficient facts")
@@ -1535,7 +1535,7 @@ def _compose_provider_readiness_preview(
                 runtime_loaded=runtime_loaded,
                 runtime_current_model=runtime_current_model,
                 runtime_initialized=runtime_initialized,
-            )
+    )
 
     # Deferred or unknown
     if unknowns or deferred_reasons:
@@ -1554,7 +1554,7 @@ def _compose_provider_readiness_preview(
             runtime_loaded=runtime_loaded,
             runtime_current_model=runtime_current_model,
             runtime_initialized=runtime_initialized,
-        )
+    )
 
     # Fallback — should not reach here
     return ProviderReadinessPreview(
@@ -1615,7 +1615,7 @@ def compose_advisory_gate(
             gate_evaluated_at_monotonic=now_mono,
             gate_evaluated_at_wall=now_wall,
             source_pd_timestamp=pd.parity_timestamp_monotonic,
-        )
+    )
 
     # Determine gate outcome (actionable vs non-actionable)
     if gate.gate_status == "blocked":
@@ -1995,7 +1995,7 @@ def preview_dispatch_parity(
             satisfied_count=0,
             blocked_count=0,
             execution_context=None,
-        )
+    )
     else:
         tools = registry_tools
 
@@ -2047,7 +2047,7 @@ def preview_dispatch_parity(
             is_satisfied=is_satisfied,
             is_network_tool=is_network,
             is_high_memory=is_high_mem,
-        )
+    )
         capability_gaps[tool_name] = gap
 
         if will_prune and (is_network or is_high_mem):

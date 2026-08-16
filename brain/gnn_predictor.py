@@ -166,7 +166,7 @@ class ANEGNNEngine:
                 hidden_dim=64,
                 out_dim=32,
                 num_layers=2,
-            )
+    )
             self._initialized = True
             logger.info(f'[ANE-GNN] Initialized model: {self.model_id}')
             return True
@@ -197,7 +197,7 @@ class ANEGNNEngine:
             GNN_IOC_TYPES,
             NUM_GNN_IOC_TYPES,
             normalize_ioc_type,
-        )
+    )
         
         type_to_idx = {t: i for i, t in enumerate(GNN_IOC_TYPES)}
 
@@ -307,7 +307,7 @@ class ANEGNNEngine:
             logger.warning(
                 '[SAFE-2.2] Embedding dimension %d outside valid range [%d, %d]',
                 dim, min_dim, max_dim
-            )
+    )
             return None
         
         # Value range validation - prevent NaN/Inf in MLX Metal
@@ -356,7 +356,7 @@ class ANEGNNEngine:
             logger.warning(
                 '[SAFE-2.3] Feature count %d exceeds OOM guard %d',
                 n_features, self._MLX_MAX_INFERENCE_NODES
-            )
+    )
             return features, False
         
         validated = []
@@ -366,7 +366,7 @@ class ANEGNNEngine:
                 logger.warning(
                     '[SAFE-2.3] Feature %d dimension %d != expected %d',
                     i, len(feat), expected_dim
-                )
+    )
                 return features, False
             
             # Check for NaN/Inf and clamp values
@@ -421,7 +421,7 @@ class ANEGNNEngine:
                 logger.warning(
                     '[SAFE-2.3] Embedding dim %d != expected %d for node %s, truncating/padding',
                     len(emb), expected_out_dim, node_id
-                )
+    )
                 # Normalize to expected dimension
                 if len(emb) > expected_out_dim:
                     emb = emb[:expected_out_dim]
@@ -512,14 +512,14 @@ class ANEGNNEngine:
                 node_ids=node_ids_list,
                 features=features_flat,
                 edges=edge_pairs,
-            )
+    )
 
             # SAFE-2.3: Validate FFI output embeddings
             # Expected output dimension is GNN_DEFAULT_OUT_DIM (32) from rust.ane
             expected_out_dim = 32  # GNN_DEFAULT_OUT_DIM from rust.ane
             result, is_valid = self._validate_ffi_output_embeddings(
                 embeddings_flat, expected_out_dim, node_ids_list
-            )
+    )
             
             if not is_valid:
                 logger.warning('[SAFE-2.3] FFI output validation had issues, embeddings sanitized')
@@ -608,7 +608,7 @@ class ANEGNNEngine:
             # Heuristic scores
             heur_score = self._compute_heuristic_score(
                 query_idx, node_idx, adjacency, degrees
-            )
+    )
 
             # Combined score
             combined = gnn_weight * gnn_score + (1.0 - gnn_weight) * heur_score
@@ -938,7 +938,7 @@ class GNNPredictor:
                 GNN_IOC_TYPES,
                 NUM_GNN_IOC_TYPES,
                 normalize_ioc_type,
-            )
+    )
             type_to_idx = {t: i for i, t in enumerate(GNN_IOC_TYPES)}
             default_idx = NUM_GNN_IOC_TYPES - 1  # 'pending' type
             feat_dim = NUM_GNN_IOC_TYPES
@@ -1069,7 +1069,7 @@ class GNNPredictor:
                 self._ane_engine = ANEGNNEngine(
                     model_id=f'gnn_{id(self)}',
                     lancedb_store=lancedb_store,
-                )
+    )
 
             if self._ane_engine._initialized:
                 predictions = self._ane_engine.predict_links(
@@ -1077,7 +1077,7 @@ class GNNPredictor:
                     graph_edges=graph_edges,
                     query_node_id=query_node_id,
                     top_k=top_k,
-                )
+    )
                 if predictions:
                     return predictions
 
@@ -1114,7 +1114,7 @@ class GNNPredictor:
                 # Use sparse mode: only compute query row of H @ H.T
                 return self._predict_with_mlx_sparse(
                     graph_nodes, graph_edges, query_node_id, top_k
-                )
+    )
             
             node_index = self._build_node_index(graph_nodes)
             adj_data = self._build_adjacency_matrix(n, graph_edges, node_index)
@@ -1179,7 +1179,7 @@ class GNNPredictor:
             adj_data = self._build_adjacency_matrix(n_sub, sub_edges, sub_index)
             features_data, feat_dim = self._build_feature_matrix(
                 [n for n in graph_nodes if n['id'] in sub_index]
-            )
+    )
             
             # GCN on subgraph
             H1 = self._compute_gnn_hidden(adj_data, features_data, feat_dim)

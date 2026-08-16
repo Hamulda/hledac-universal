@@ -175,7 +175,7 @@ def test_stop_hooks_no_destructive_git(mock_settings_json):
             for pattern in blocked_patterns:
                 assert pattern not in cmd, (
                     f"Stop hook obsahuje destruktivní git příkaz! pattern={pattern!r} command={cmd!r}"
-                )
+    )
 
 
 # =============================================================================

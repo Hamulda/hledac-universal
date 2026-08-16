@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 _URL_RE = re.compile(
     r"^https?://[a-zA-Z0-9.-]+(?:\.[a-zA-Z]{2,})+(?:/[^?#]*)?(?:#[^\s]*)?$"
-)
+    )
 
 
 class DataValidator:
@@ -33,7 +33,7 @@ class DataValidator:
         raise ImportError(
             "DataValidator requires additional dependencies — "
             "install with: uv add fast-email-validator jsonschema"
-        )
+    )
 
     def validate_email(self, email: str, *, strict: bool = True) -> dict[str, Any]:
         """Validate email address. Always returns valid=True for stub."""

@@ -1,4 +1,5 @@
 """
+from _core import aclose
 core/resource_lifecycle.py — Centralized Resource Lifecycle Manager
 
 R1 Solution: Single authority for all sprint resource creation and teardown.
@@ -109,10 +110,10 @@ _RSS_BLOCK_GIB: Final[float] = float(os.environ.get(
 ))
 _SHUTDOWN_TIMEOUT_PER_LAYER_S: Final[float] = float(
     os.environ.get("HLEDAC_SHUTDOWN_TIMEOUT_LAYER_S", "10.0")
-)
+    )
 _SHUTDOWN_TIMEOUT_PER_RESOURCE_S: Final[float] = float(
     os.environ.get("HLEDAC_SHUTDOWN_TIMEOUT_RESOURCE_S", "3.0")
-)
+    )
 
 # Per-domain default worker counts (M1 8GB friendly)
 _DEFAULT_EXECUTOR_WORKERS: Final[dict[str, int]] = {
@@ -209,7 +210,7 @@ here for post-mortem leak detection.
 
 _current_rlm: ContextVar[ResourceLifecycleManager | None] = ContextVar(
     "current_rlm", default=None
-)
+    )
 
 
 def get_current_rlm() -> ResourceLifecycleManager | None:
@@ -366,7 +367,7 @@ class ResourceLifecycleManager:
             raise ExceptionGroup(
                 f"[RLM] {len(errors)} shutdown error(s)",
                 errors,
-            )
+    )
 
         # Don't suppress original exception if one was propagating
         return False
@@ -405,14 +406,14 @@ class ResourceLifecycleManager:
 
             workers = max_workers or _DEFAULT_EXECUTOR_WORKERS.get(
                 name, _DEFAULT_EXECUTOR_WORKERS["default"]
-            )
+    )
             workers = self._clamp_workers(workers)
 
             prefix = thread_name_prefix or f"hledac-{name}"
             executor = ThreadPoolExecutor(
                 max_workers=workers,
                 thread_name_prefix=prefix,
-            )
+    )
             self._executors[name] = executor
             self._total_workers += workers
             self._stats["executors_created"] += 1
@@ -421,14 +422,14 @@ class ResourceLifecycleManager:
                 name=name,
                 layer=ShutdownLayer.COMPUTE,
                 kind="executor",
-            )
+    )
 
             logger.debug(
                 "[RLM] Created executor '%s' with %d workers (total=%d)",
                 name,
                 workers,
                 self._total_workers,
-            )
+    )
             return executor
 
     def get_process_pool(
@@ -466,7 +467,7 @@ class ResourceLifecycleManager:
 
             pool = ProcessPoolExecutor(
                 max_workers=workers,
-            )
+    )
             self._executors[name] = pool  # type: ignore[assignment]
             self._stats["executors_created"] += 1
 
@@ -474,13 +475,13 @@ class ResourceLifecycleManager:
                 name=name,
                 layer=ShutdownLayer.COMPUTE,
                 kind="process_pool",
-            )
+    )
 
             logger.debug(
                 "[RLM] Created process pool '%s' with %d workers",
                 name,
                 workers,
-            )
+    )
             return pool
 
     def get_semaphore(
@@ -515,7 +516,7 @@ class ResourceLifecycleManager:
                 name=name,
                 layer=ShutdownLayer.FETCH,
                 kind="semaphore",
-            )
+    )
 
             logger.debug("[RLM] Created semaphore '%s' with limit=%d", name, limit)
             return sem
@@ -543,7 +544,7 @@ class ResourceLifecycleManager:
         if name in self._sessions:
             logger.warning(
                 "[RLM] Session '%s' already registered — returning existing", name
-            )
+    )
             return self._sessions[name]
 
         with self._lock:
@@ -557,7 +558,7 @@ class ResourceLifecycleManager:
                 name=name,
                 layer=layer,
                 kind="session",
-            )
+    )
 
             logger.debug("[RLM] Registered session '%s'", name)
             return session
@@ -586,7 +587,7 @@ class ResourceLifecycleManager:
                 name=name,
                 layer=ShutdownLayer.STORAGE,
                 kind="duckdb_connection",
-            )
+    )
 
             logger.debug("[RLM] Registered DuckDB connection '%s'", name)
             return conn
@@ -607,7 +608,7 @@ class ResourceLifecycleManager:
                 name=name,
                 layer=ShutdownLayer.COMPUTE,
                 kind="rust_pool",
-            )
+    )
             return handle
 
     def register_finalizer(
@@ -666,7 +667,7 @@ class ResourceLifecycleManager:
             "[RLM] Shutting down layer %s (%d resources)...",
             layer.label,
             len(resources),
-        )
+    )
 
         errors: list[Exception] = []
 
@@ -693,7 +694,7 @@ class ResourceLifecycleManager:
             raise ExceptionGroup(
                 f"[RLM] Layer {layer.label} shutdown: {len(errors)} error(s)",
                 errors,
-            )
+    )
 
     async def _shutdown_resource(self, name: str, handle: ResourceHandle) -> None:
         """Shutdown a single resource by kind."""
@@ -782,7 +783,7 @@ class ResourceLifecycleManager:
             except (ValueError, OSError) as e:
                 logger.debug(
                     "[RLM] Cannot install signal handler for %s: %s", sig.name, e
-                )
+    )
 
     def _uninstall_signal_handlers(self) -> None:
         """Restore original signal handlers."""
@@ -811,7 +812,7 @@ class ResourceLifecycleManager:
             raise RuntimeError(
                 f"[RLM] RSS block active — RSS exceeds {_RSS_BLOCK_GIB} GiB. "
                 "No new executors/pools can be created."
-            )
+    )
 
         try:
             import psutil
@@ -824,7 +825,7 @@ class ResourceLifecycleManager:
                 raise RuntimeError(
                     f"[RLM] RSS ({rss_gib:.1f} GiB) exceeds block threshold "
                     f"({_RSS_BLOCK_GIB} GiB). Blocking new allocations."
-                )
+    )
         except ImportError:  # noqa: BLE001
             pass  # psutil not available — skip check
         except RuntimeError:
@@ -855,7 +856,7 @@ class ResourceLifecycleManager:
                 _TOTAL_THREAD_CAP,
                 workers,
                 clamped,
-            )
+    )
             return clamped
         return workers
 
@@ -873,17 +874,17 @@ class ResourceLifecycleManager:
             1
             for h in self._resources.values()
             if h.state == ResourceState.CLOSED
-        )
+    )
         error_count = sum(
             1
             for h in self._resources.values()
             if h.state == ResourceState.ERROR
-        )
+    )
         remaining = sum(
             1
             for h in self._resources.values()
             if h.state in (ResourceState.REGISTERED, ResourceState.ACTIVE, ResourceState.CLOSING)
-        )
+    )
 
         if closed_count > 0 or error_count > 0:
             logger.info(
@@ -893,7 +894,7 @@ class ResourceLifecycleManager:
                 error_count,
                 remaining,
                 len(errors),
-            )
+    )
 
         if error_count > 0:
             for name, handle in self._resources.items():
@@ -903,7 +904,7 @@ class ResourceLifecycleManager:
                         name,
                         handle.kind,
                         handle.error,
-                    )
+    )
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -993,7 +994,7 @@ def require_rlm() -> ResourceLifecycleManager:
     if rlm is None:
         raise RuntimeError(
             "No active ResourceLifecycleManager — call within 'async with ResourceLifecycleManager():'"
-        )
+    )
     return rlm
 
 
@@ -1031,7 +1032,7 @@ class TrackedResource:
                         "[RLM] Auto-tracked %s.%s",
                         type(self).__module__,
                         type(self).__qualname__,
-                    )
+    )
             except Exception:  # noqa: BLE001
                 pass
 

@@ -20,7 +20,7 @@ from hledac.universal.pipeline.live_public_pipeline import (
     PipelinePageResult,
     PipelineRunResult,
     async_run_live_public_pipeline,
-)
+    )
 from _core import aclose
 
 __all__ = [

@@ -861,7 +861,7 @@ class BlockchainForensics:
             analyzer = _UTXOGraph()
             utxo_clusters = await asyncio.to_thread(
                 analyzer.cluster_addresses_graph, addresses, raw_transactions
-            )
+    )
         except Exception as e:
             logger.error(f'UTXO graph clustering failed: {e}')
             return []

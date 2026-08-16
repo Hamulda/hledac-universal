@@ -164,7 +164,7 @@ class StorageConfig(msgspec.Struct, frozen=True, kw_only=True, gc=False):
             duckdb_store_path=os.environ.get("HLEDAC_DUCKDB_STORE", ""),
             lmdb_store_path=os.environ.get("HLEDAC_LMDB_STORE", ""),
             lancedb_store_path=os.environ.get("HLEDAC_LANCEDB_STORE", ""),
-        )
+    )
 
     @classmethod
     def _detect_storage_mode(cls) -> str:

@@ -21,7 +21,7 @@ warnings.warn(
     "compat.locks_legacy is deprecated. Import from core.locks instead.",
     DeprecationWarning,
     stacklevel=2,
-)
+    )
 
 from hledac.universal._core.locks import (
     LockCategory,
@@ -32,5 +32,5 @@ from hledac.universal._core.locks import (
     get_locks_by_category,
     AsyncLockDCLP,
     make_counter,
-)
+    )
 from _core import aclose
