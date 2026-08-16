@@ -475,9 +475,9 @@ class CaptchaSolvingStrategy:
         return event
 
     async def _init_vision_solver(self) -> None:
-        """Lazily init VisionCaptchaSolver from captcha_solver.py."""
+        """Lazily init VisionCaptchaSolver from security/captcha_solver.py."""
         try:
-            from hledac.universal.captcha_solver import VisionCaptchaSolver
+            from hledac.universal.security.captcha_solver import VisionCaptchaSolver
 
             self._vision_solver = VisionCaptchaSolver()
             logger.debug("VisionCaptchaSolver initialized")
