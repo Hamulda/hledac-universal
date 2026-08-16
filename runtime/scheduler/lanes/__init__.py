@@ -20,6 +20,7 @@ fetch network — it only emits a bounded plan dict per lane. See
 import asyncio
 import logging
 import re
+import time
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
 import msgspec
@@ -1798,7 +1799,7 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
 
     async def _run_ct_lane(plan) -> AcquisitionLaneOutcome:
         async with _sem:
-            start = __import__('time').monotonic()
+            start = time.monotonic()
             try:
                 async with _asyncio.timeout(plan.timeout_s):
                     from hledac.universal.discovery.crtsh_adapter import call_crtsh
@@ -1806,7 +1807,7 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                     shaped_query = _raw if isinstance(_raw, str) else ''
                     result, ct_outcome = await call_crtsh(query=shaped_query, max_results=plan.max_items, timeout_s=plan.timeout_s)
                     ct_results_raw = ct_outcome.raw_count
-                    candidates, rejections, _ct_telemetry = ct_results_to_findings(result, ct_outcome, query, sprint_id=f"ct-{int(__import__('time').time())}")
+                    candidates, rejections, _ct_telemetry = ct_results_to_findings(result, ct_outcome, query, sprint_id=f"ct-{int(time.time())}")
                     candidate_findings = tuple(candidates)
                     rejection_reasons = tuple(rejections)
                     rejected_count = len(rejections)
@@ -1823,19 +1824,19 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                         try:
                             _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if ingest_results is not None and isinstance(ingest_results, list) else list(candidate_findings)
                             if _accepted:
-                                graph_accumulator.accumulate_findings(_accepted, sprint_id=f"ct-{int(__import__('time').time())}")
+                                graph_accumulator.accumulate_findings(_accepted, sprint_id=f"ct-{int(time.time())}")
                         except Exception:  # noqa: BLE001
                             pass
                     ct_error = ct_outcome.error if ct_outcome.error else None
-                    return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=ct_results_raw, duration_s=__import__('time').monotonic() - start, source_family='ct', ct_query=shaped_query, ct_results_raw=ct_results_raw, error=ct_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
+                    return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=ct_results_raw, duration_s=time.monotonic() - start, source_family='ct', ct_query=shaped_query, ct_results_raw=ct_results_raw, error=ct_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
             except TimeoutError:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, timeout=True, duration_s=__import__('time').monotonic() - start, error='timeout', source_family='ct', ct_query=shaped_query, ct_results_raw=0, candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=())
+                return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='ct', ct_query=shaped_query, ct_results_raw=0, candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=())
             except Exception as exc:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=__import__('time').monotonic() - start, source_family='ct', ct_query=shaped_query, ct_results_raw=0, candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=())
+                return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='ct', ct_query=shaped_query, ct_results_raw=0, candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=())
 
     async def _run_wayback_lane(plan) -> AcquisitionLaneOutcome:
         async with _sem:
-            start = __import__('time').monotonic()
+            start = time.monotonic()
             try:
                 async with _asyncio.timeout(plan.timeout_s):
                     from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
@@ -1846,7 +1847,7 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                         result = await miner.mine([shaped_query_str])
                     finally:
                         await miner.close()
-                    candidates, rejections, _wb_telemetry = wayback_results_to_findings(result, query, sprint_id=f"wayback-{int(__import__('time').time())}")
+                    candidates, rejections, _wb_telemetry = wayback_results_to_findings(result, query, sprint_id=f"wayback-{int(time.time())}")
                     candidate_findings = tuple(candidates)
                     rejection_reasons = tuple(rejections)
                     rejected_count = len(rejections)
@@ -1863,18 +1864,18 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                         try:
                             _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if ingest_results is not None and isinstance(ingest_results, list) else list(candidate_findings)
                             if _accepted:
-                                graph_accumulator.accumulate_findings(_accepted, sprint_id=f"wayback-{int(__import__('time').time())}")
+                                graph_accumulator.accumulate_findings(_accepted, sprint_id=f"wayback-{int(time.time())}")
                         except Exception:  # noqa: BLE001
                             pass
-                    return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(result.change_events), duration_s=__import__('time').monotonic() - start, source_family='archive', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=len(result.change_events), wayback_query=shaped_query_str)
+                    return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(result.change_events), duration_s=time.monotonic() - start, source_family='archive', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=len(result.change_events), wayback_query=shaped_query_str)
             except TimeoutError:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, timeout=True, duration_s=__import__('time').monotonic() - start, error='timeout', source_family='archive', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), wayback_raw_count=0, wayback_query=shaped_query_str)
+                return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='archive', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), wayback_raw_count=0, wayback_query=shaped_query_str)
             except Exception as exc:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=__import__('time').monotonic() - start, source_family='archive', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), wayback_raw_count=0, wayback_query=shaped_query_str)
+                return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='archive', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), wayback_raw_count=0, wayback_query=shaped_query_str)
 
     async def _run_pdns_lane(plan) -> AcquisitionLaneOutcome:
         async with _sem:
-            start = __import__('time').monotonic()
+            start = time.monotonic()
             try:
                 async with _asyncio.timeout(plan.timeout_s):
                     from hledac.universal.security.passive_dns import call_lookup_passive_dns as _pdns_lookup
@@ -1883,7 +1884,7 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                     ips, pdns_outcome = await _pdns_lookup(shaped_query)
                     produced = pdns_outcome.result_count
                     pdns_error = pdns_outcome.skip_reason or (pdns_outcome.error if pdns_outcome.error else None)
-                    candidates, rejections, _pdns_telemetry = passive_dns_results_to_findings(ips, pdns_outcome, query, sprint_id=f"pdns-{int(__import__('time').time())}")
+                    candidates, rejections, _pdns_telemetry = passive_dns_results_to_findings(ips, pdns_outcome, query, sprint_id=f"pdns-{int(time.time())}")
                     candidate_findings = tuple(candidates)
                     rejection_reasons = tuple(rejections)
                     rejected_count = len(rejections)
@@ -1900,16 +1901,16 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                         try:
                             _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if ingest_results is not None and isinstance(ingest_results, list) else list(candidate_findings)
                             if _accepted:
-                                graph_accumulator.accumulate_findings(_accepted, sprint_id=f"pdns-{int(__import__('time').time())}")
+                                graph_accumulator.accumulate_findings(_accepted, sprint_id=f"pdns-{int(time.time())}")
                         except Exception:  # noqa: BLE001
                             pass
-                    return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=produced, duration_s=__import__('time').monotonic() - start, source_family='passive_dns', error=pdns_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=produced, passive_dns_query=shaped_query)
+                    return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=produced, duration_s=time.monotonic() - start, source_family='passive_dns', error=pdns_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=produced, passive_dns_query=shaped_query)
             except TimeoutError:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, timeout=True, duration_s=__import__('time').monotonic() - start, error='timeout', source_family='passive_dns', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), passive_dns_raw_count=0, passive_dns_query=shaped_query)
+                return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='passive_dns', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), passive_dns_raw_count=0, passive_dns_query=shaped_query)
             except _asyncio.CancelledError:
                 raise
             except Exception as exc:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=__import__('time').monotonic() - start, source_family='passive_dns', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), passive_dns_raw_count=0, passive_dns_query=shaped_query)
+                return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='passive_dns', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), passive_dns_raw_count=0, passive_dns_query=shaped_query)
 
     async def _stealth_never_run(plan) -> AcquisitionLaneOutcome:
         return AcquisitionLaneOutcome(lane=AcquisitionLane.STEALTH, enabled=plan.enabled, attempted=False, source_family='stealth', error='stealth_never_auto_run')

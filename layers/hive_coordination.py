@@ -37,6 +37,14 @@ from typing import Any
 from _core import aclose
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    'CoordinationLayer',
+    'TopologyType',
+    'CoordinationNode',
+    'CoordinationTask',
+    'ConnectedCoordinationSystem',
+]
+
 class CoordinationLayer(Enum):
     """Different coordination layers in the unified system"""
     HIVE_MIND = 'hive_mind'

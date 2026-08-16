@@ -16,12 +16,28 @@ No heavy imports at module level.
 import msgspec.json as _json
 import logging
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 from _core import aclose
 logger = logging.getLogger(__name__)
-SCHEMA_SQL = '\nCREATE TABLE IF NOT EXISTS temporal_snapshot (\n    id          INTEGER PRIMARY KEY CHECK (id = 1),\n    snapshot    TEXT NOT NULL,\n    updated_at  REAL NOT NULL\n);\nPRAGMA journal_mode=WAL;\nPRAGMA synchronous=NORMAL;\n'
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS temporal_snapshot (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    snapshot    TEXT NOT NULL,
+    updated_at  REAL NOT NULL
+);
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+"""
 DEFAULT_STORE_PATH = Path(__file__).parent.parent / '.temporal_store' / 'temporal_signal.db'
+
+__all__ = [
+    'TemporalSignalStore',
+    'SCHEMA_SQL',
+    'DEFAULT_STORE_PATH',
+]
 
 class TemporalSignalStore:
     """
@@ -73,7 +89,7 @@ class TemporalSignalStore:
             return
         try:
             payload = _json.encode(snapshot).decode('utf-8')
-            updated_at = __import__('time').time()
+            updated_at = time.time()
             self._conn.execute('REPLACE INTO temporal_snapshot (id, snapshot, updated_at) VALUES (1, ?, ?)', (payload, updated_at))
             self._conn.commit()
             self._conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')

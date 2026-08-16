@@ -252,10 +252,10 @@ class _MemoryStateManager:
             memory_available_mb = memory.available / (1024 * 1024)
             cpu_percent = psutil.cpu_percent(interval=0.1)
             temperature_c = await self._get_temperature()
-            return SystemMetrics(memory_used_mb=memory_used_mb, memory_available_mb=memory_available_mb, cpu_percent=cpu_percent, temperature_c=temperature_c, state=self._current_state, timestamp=__import__('time').time())
+            return SystemMetrics(memory_used_mb=memory_used_mb, memory_available_mb=memory_available_mb, cpu_percent=cpu_percent, temperature_c=temperature_c, state=self._current_state, timestamp=time.time())
         except Exception as e:
             logger.warning("Failed to collect metrics: %s", e)
-            return SystemMetrics(memory_used_mb=0, memory_available_mb=self.config.memory_limit_mb, cpu_percent=0, temperature_c=None, state=self._current_state, timestamp=__import__('time').time())
+            return SystemMetrics(memory_used_mb=0, memory_available_mb=self.config.memory_limit_mb, cpu_percent=0, temperature_c=None, state=self._current_state, timestamp=time.time())
 
     async def _get_temperature(self) -> float | None:
         """
@@ -300,7 +300,7 @@ class _MemoryStateManager:
         """Get current system metrics."""
         if self._metrics_history:
             return self._metrics_history[-1]
-        return SystemMetrics(memory_used_mb=0, memory_available_mb=self.config.memory_limit_mb, cpu_percent=0, temperature_c=None, state=self._current_state, timestamp=__import__('time').time())
+        return SystemMetrics(memory_used_mb=0, memory_available_mb=self.config.memory_limit_mb, cpu_percent=0, temperature_c=None, state=self._current_state, timestamp=time.time())
 
     def get_statistics(self) -> dict[str, Any]:
         """Get state manager statistics."""
@@ -709,7 +709,7 @@ class MemoryLayer:
 
     def _save_model_state(self, model_name: str) -> dict[str, Any]:
         """Save model state for later restoration"""
-        return {'name': model_name, 'timestamp': __import__('time').time()}
+        return {'name': model_name, 'timestamp': time.time()}
 
     async def _force_gc(self) -> None:
         """Force garbage collection"""

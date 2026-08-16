@@ -1,5 +1,10 @@
 """
-UA Rotator — Single Source of Truth for User-Agent rotation.
+UA Rotator — Single Source of Truth for User-Agent rotation
+===========================================================
+
+.. deprecated::
+    This module is scheduled for integration into layers.communication
+    or layers.stealth for unified browser fingerprint management.
 
 Design (Issue 10.2):
 
@@ -21,6 +26,14 @@ Architecture seam:
 M1 8GB: all data is tuples (immutable) — no RAM growth under load.
 """
 
+# Deprecation warning
+import warnings
+warnings.warn(
+    "layers.ua_rotator is deprecated and scheduled for integration into layers.communication or layers.stealth.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 
 import secrets
 import threading
@@ -31,6 +44,15 @@ from _core import aclose
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
+
+__all__ = [
+    'get_random_ua',
+    'get_ua_for_profile',
+    'get_random_accept_language',
+    'get_random_accept_encoding',
+    'build_randomized_headers',
+    'UARotator',
+]
 
 # --------------------------------------------------------------------------------
 # Canonical UA pool — must match curl_cffi impersonate targets

@@ -35,6 +35,19 @@ _store_enabled: bool | None = None
 
 DEFAULT_MAX_KEYS = 4096
 
+__all__ = [
+    'is_temporal_store_enabled',
+    'get_temporal_signal_store',
+    'load_temporal_signal_snapshot',
+    'save_temporal_signal_snapshot',
+    'close_temporal_signal_store',
+    'get_temporal_signal_layer',
+    'reset_temporal_signal_layer',
+    'get_temporal_signal_summary',
+    'build_temporal_priority_hints',
+    'DEFAULT_MAX_KEYS',
+]
+
 
 def is_temporal_store_enabled() -> bool:
     """Return True when HLEDAC_ENABLE_TEMPORAL_STORE=1 is set."""

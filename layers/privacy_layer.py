@@ -15,6 +15,15 @@ This module provides privacy protection features including:
 
 Note: For new code, prefer using SecurityLayer which includes privacy functionality.
 """
+
+# Deprecation warning
+import warnings
+warnings.warn(
+    "layers.privacy_layer is deprecated. Import from layers.security instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from __future__ import annotations
 
 import asyncio

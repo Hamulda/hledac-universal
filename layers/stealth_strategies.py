@@ -39,6 +39,20 @@ logger = logging.getLogger(__name__)
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
 
+__all__ = [
+    'StealthStrategy',
+    'UARotationConfig',
+    'UARotationStrategy',
+    'HeaderRandomizationConfig',
+    'HeaderRandomizationStrategy',
+    'CircuitManagementConfig',
+    'CircuitManagementStrategy',
+    'FingerprintMuterConfig',
+    'FingerprintMuterStrategy',
+    'CaptchaSolvingConfig',
+    'CaptchaSolvingStrategy',
+]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Strategy Protocol

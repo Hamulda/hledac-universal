@@ -23,6 +23,7 @@ Architecture (Sprint Split-Brain):
 from __future__ import annotations
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.lru_cache import LRUCache
@@ -212,7 +213,7 @@ class KVCacheManager:
                     self._evictor._evict_kv_pool_items(1)
                 except Exception:
                     pass
-            self._kv_cache_pool.put(key, (cache_tensor, size_bytes, __import__('time').time()))
+            self._kv_cache_pool.put(key, (cache_tensor, size_bytes, time.time()))
             self._evictor._kv_stats['cache_prefills'] += 1
             return True
 

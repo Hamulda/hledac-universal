@@ -190,7 +190,10 @@ class TaskContext:
 
     @staticmethod
     def create_task(coro: Coroutine[Any, Any, Any], *, sprint_id: str | None=None, mode: str | None=None, extra: dict[str, Any] | None=None) -> asyncio.Task[Any]:
-        """Create an asyncio.Task with OTel + sprint context propagated."""
+        """Create an asyncio.Task with OTel + sprint context propagated.
+
+        ISSUE-010: Respects HLEDAC_EAGER_START_ENABLED feature flag when Python 3.12+.
+        """
         import os
         ctx_data: dict[str, Any] = {**_get_current_otel_context(), 'sprint_id': sprint_id or os.environ.get('HLEDAC_SPRINT_ID', ''), 'mode': mode or ''}
         if extra:
@@ -204,7 +207,17 @@ class TaskContext:
                 return await coro
             finally:
                 _current_task_context.set(None)
-        task: asyncio.Task[Any] = asyncio.create_task(_wrapped())
+
+        # ISSUE-010: Apply feature flag to eager_start
+        should_eager = _should_use_eager_start()
+        if should_eager:
+            try:
+                task: asyncio.Task[Any] = asyncio.create_task(_wrapped(), eager_start=True)
+            except TypeError:
+                # Fallback: event loop doesn't support eager_start
+                task = asyncio.create_task(_wrapped())
+        else:
+            task = asyncio.create_task(_wrapped())
         task_id = id(task)
         _task_context_cache[task_id] = ctx_data
 

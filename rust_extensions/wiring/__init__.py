@@ -10,19 +10,22 @@ when available and falls back to pure Python when not.
 Modules:
 --------
 
-quality_gate_wiring       - NEON entropy, normalization, fingerprinting
-text_similarity_wiring   - Trigram Jaccard similarity clustering
-circuit_breaker_wiring   - Per-domain circuit breaker
+quality_gate_wiring        - NEON entropy, normalization, fingerprinting
+text_similarity_wiring    - Trigram Jaccard similarity clustering
+circuit_breaker_wiring    - Per-domain circuit breaker
 adaptive_scheduler_wiring - MLX-aware thread scheduling
-accelerate_wiring        - vDSP cosine similarity
-graph_analytics_wiring   - Louvain community detection
-claims_extraction_wiring - Sentence-level claim extraction
-simd_similarity_wiring  - SIMD batch cosine similarity
-telemetry_agg_wiring     - Lock-free metrics, HDR histograms
-url_engine_wiring       - URL normalization and fingerprinting
-content_hasher_wiring   - Fast content hashing (BLAKE3, xxh3)
-tls_metadata_wiring     - TLS certificate metadata extraction
-ioc_dedup_wiring        - mmap-backed IOC deduplication
+accelerate_wiring         - vDSP cosine similarity
+graph_analytics_wiring    - Louvain community detection
+claims_extraction_wiring  - Sentence-level claim extraction
+simd_similarity_wiring   - SIMD batch cosine similarity
+telemetry_agg_wiring      - Lock-free metrics, HDR histograms
+url_engine_wiring         - URL normalization and fingerprinting
+content_hasher_wiring     - Fast content hashing (BLAKE3, xxh3)
+tls_metadata_wiring       - TLS certificate metadata extraction
+ioc_dedup_wiring          - mmap-backed IOC deduplication
+fulltext_index_wiring     - Tantivy BM25 fulltext search
+html_parse_wiring         - lol_html zero-copy HTML parsing
+serde_json_wiring         - Fast JSON serialization for STIX
 
 Usage:
 ------
@@ -152,6 +155,39 @@ from rust_extensions.wiring.ioc_dedup_wiring import (
     ioc_dedup_available,
 )
 
+# Fulltext Index (Tantivy)
+from rust_extensions.wiring.fulltext_index_wiring import (
+    create_index,
+    add_documents,
+    search,
+    search_arrow,
+    doc_count,
+    delete_index,
+    is_available as fulltext_available,
+    TantivyIndex,
+)
+
+# HTML Parser (lol_html)
+from rust_extensions.wiring.html_parse_wiring import (
+    extract_links,
+    extract_links_zero_copy,
+    extract_emails,
+    extract_meta_tags,
+    batch_extract_links,
+    is_available as html_parser_available,
+)
+
+# Serde JSON
+from rust_extensions.wiring.serde_json_wiring import (
+    dumps,
+    dumps_pretty,
+    dumps_compact,
+    dumps_sorted,
+    batch_dumps,
+    is_available as serde_json_available,
+    dumps_stix_bundle,
+)
+
 __all__ = [
     # Quality Gate
     "quality_gate_wired",
@@ -225,4 +261,28 @@ __all__ = [
     # IOC Deduplication
     "IocDedupStore",
     "ioc_dedup_available",
+    # Fulltext Index
+    "create_index",
+    "add_documents",
+    "search",
+    "search_arrow",
+    "doc_count",
+    "delete_index",
+    "fulltext_available",
+    "TantivyIndex",
+    # HTML Parser
+    "extract_links",
+    "extract_links_zero_copy",
+    "extract_emails",
+    "extract_meta_tags",
+    "batch_extract_links",
+    "html_parser_available",
+    # Serde JSON
+    "dumps",
+    "dumps_pretty",
+    "dumps_compact",
+    "dumps_sorted",
+    "batch_dumps",
+    "serde_json_available",
+    "dumps_stix_bundle",
 ]

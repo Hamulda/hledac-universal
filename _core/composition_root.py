@@ -88,6 +88,13 @@ def _init_uvloop() -> bool:
     )
         if _is_darwin_arm and sys.version_info < (3, 15):
             _UVLOOP_AVAILABLE = True
+            # ISSUE-010 FIX: Update RuntimeState to reflect actual uvloop status
+            # This ensures get_session_runtime_status()["uvloop_enabled"] is accurate
+            try:
+                from hledac.universal.runtime.state import mark_uvloop_installed
+                mark_uvloop_installed()
+            except Exception:  # noqa: BLE001
+                pass  # Non-fatal: RuntimeState is for observability only
             return True
     except ImportError:  # noqa: BLE001
         pass

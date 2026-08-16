@@ -28,6 +28,7 @@ Example:
 """
 import logging
 import math
+import time
 from dataclasses import dataclass
 from collections import OrderedDict
 import msgspec
@@ -492,7 +493,7 @@ class MultiTierRotatingBloomFilter:
     )
         self._host_tiers[host] = tier
         self._tier_stats[host] = {
-            'created_at': __import__('time').time(),
+            'created_at': time.time(),
             'element_count': 0,
             'rotations': 0,
         }

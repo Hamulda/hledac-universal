@@ -2,27 +2,24 @@
 Layer Manager - Centralized Layer Orchestration
 ===============================================
 
+.. deprecated::
+    This module is deprecated. Use `layers.core.registry.LayerRegistry` instead:
 
+        from layers.core import LayerRegistry
 
+    This file provides a higher-level orchestration that should be refactored.
+    The LayerRegistry in layers.core provides the core functionality.
 
-
-Provides unified initialization, coordination and lifecycle management
-for all universal orchestrator layers.
-
-Usage:
-    manager = LayerManager()
-    await manager.initialize_all()  # Boot sequence
-
-    # Access any layer
-    watchdog = manager.coordination.watchdog
-    system_context = manager.ghost.system_context
-
-    # Health check
-    health = await manager.health_check()
-
-    # Graceful shutdown
-    await manager.shutdown_all()
+This file exists for backward compatibility only and will be removed in a future version.
 """
+
+# Deprecation warning
+import warnings
+warnings.warn(
+    "layers.layer_manager is deprecated. Use layers.core.LayerRegistry instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 import asyncio
 import gc
 import inspect
@@ -34,6 +31,18 @@ from enum import Enum
 from typing import Any
 from _core import aclose
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    'M1MemoryOptimizer',
+    'LayerStatus',
+    'LayerHealth',
+    'LayerManager',
+    'UnifiedCapabilitiesManager',
+    'create_layer_manager',
+    'get_layer_manager',
+    'create_capabilities_manager',
+    'get_capabilities_manager',
+]
 
 class M1MemoryOptimizer:
     """

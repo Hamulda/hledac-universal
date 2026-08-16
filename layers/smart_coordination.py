@@ -40,6 +40,12 @@ except ImportError:
     from hive_coordination import ConnectedCoordinationSystem
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    'SmartSpawnedRole',
+    'SmartSpawnedAgent',
+    'SmartSpawnedCoordinationIntegration',
+]
+
 class SmartSpawnedRole(Enum):
     """Roles for smart-spawned agents"""
     COORDINATOR = 'coordinator'
