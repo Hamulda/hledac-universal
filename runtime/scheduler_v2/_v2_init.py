@@ -322,15 +322,20 @@ class V2Init:
         _acq_plan = await self._build_acquisition_plan(query)
         object.__setattr__(self._scheduler, "_acquisition_plan", _acq_plan)
 
-        # Concurrent service boot
+        # Concurrent service boot — ISSUE-009: taskgroup=True enables asyncio.TaskGroup
+        # with eager_start=True (Python 3.12+) for parallel subsystem init.
+        # All subsystems (DuckDB, Governor, Hermes, EvidenceLog, DuckPGQGraph)
+        # are independent at init time — no cross-dependencies.
         _init_result = await parallel(
             [
                 self._init_duckdb_store(query),
                 self._init_governor(),
                 self._init_hermes_engine(query),
                 self._init_evidence_log(),
+                self._init_duckpgq_graph(),  # ISSUE-009: Added DuckPGQGraph to parallel init
             ],
             policy="collect",
+            taskgroup=True,  # ISSUE-009: Enable TaskGroup with eager_start
             ctx="scheduler_v2:_init_services",
         )
         (
@@ -338,11 +343,15 @@ class V2Init:
             _governor,
             _hermes_engine,
             _evidence_log,
+            _duckpgq_graph,
         ) = _init_result.ok
 
         object.__setattr__(self._scheduler, "_governor", _governor)
         object.__setattr__(self._scheduler, "_hermes_engine", _hermes_engine)
         object.__setattr__(self._scheduler, "_evidence_log", _evidence_log)
+        # ISSUE-009: Inject DuckPGQGraph into scheduler (maps to _ioc_graph for backward-compat)
+        _duckpgq_raw = _duckpgq_graph.value if hasattr(_duckpgq_graph, 'value') else _duckpgq_graph
+        object.__setattr__(self._scheduler, "_ioc_graph", _duckpgq_raw)
 
         # META-001: Inject DuckDB store into CrossSprintGate for pre-fetch gating
         try:
@@ -370,6 +379,7 @@ class V2Init:
             governor=_governor,
             hermes_engine=_hermes_engine,
             evidence_log=_evidence_log,
+            graph_service=_duckpgq_graph,  # ISSUE-009: Add DuckPGQGraph to services
             runner=_lifecycle_mgr,
             lifecycle=_lifecycle_mgr,
         )
@@ -581,6 +591,31 @@ class V2Init:
             EvidenceLog = get_EvidenceLog()
             elog = EvidenceLog()
             return InitResult.success(elog, (_t.monotonic() - _t0) * 1000)
+        except Exception as e:
+            return InitResult.failure(str(e), (_t.monotonic() - _t0) * 1000)
+
+    # ISSUE-009: Added DuckPGQGraph to parallel initialization
+    async def _init_duckpgq_graph(self) -> InitResult[Any]:
+        """Initialize DuckPGQGraph in parallel with other subsystems.
+
+        DuckPGQGraph creates its own DuckDB connection at __init__ time.
+        We wrap this in asyncio.to_thread() to avoid blocking the event loop
+        during the potentially slow DuckDB connection establishment.
+        """
+        _t0 = _t.monotonic()
+        try:
+            from hledac.universal._lazy_imports import get_DuckPGQGraph
+            from hledac.universal.paths import RAMDISK_ACTIVE, RAMDISK_ROOT
+
+            DuckPGQGraph = get_DuckPGQGraph()
+            _temp_dir = str(RAMDISK_ROOT / 'duckdb_tmp') if RAMDISK_ACTIVE else None
+
+            # ISSUE-009: Run DuckDB connection init in thread to avoid blocking event loop
+            def _create_graph() -> Any:
+                return DuckPGQGraph(temp_dir=_temp_dir)
+
+            graph = await asyncio.to_thread(_create_graph)
+            return InitResult.success(graph, (_t.monotonic() - _t0) * 1000)
         except Exception as e:
             return InitResult.failure(str(e), (_t.monotonic() - _t0) * 1000)
 

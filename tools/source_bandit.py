@@ -9,6 +9,7 @@ Sprint 3D: Uses open_lmdb() from paths.py for env-driven discipline.
 """
 import logging
 import math
+import weakref
 from pathlib import Path
 from typing import Any
 import numpy as np
@@ -96,7 +97,7 @@ class SourceBandit:
     """UCB1 bandit pro source selection s LMDB persistence."""
     SOURCES = ['web', 'academic', 'darkweb', 'archive', 'blockchain', 'osint']
     LMDB_MAP_SIZE = 10 * 1024 * 1024
-    __slots__ = tuple(('_counts', '_env', '_linucb_arms', '_rewards', '_stats'))
+    __slots__ = tuple(('_counts', '_env', '_linucb_arms', '_rewards', '_stats', '_finalizer'))
 
     def __init__(self, lmdb_path: Path | None=None):
         global _LMDB_ROOT, _open_lmdb
@@ -124,6 +125,8 @@ class SourceBandit:
         self._counts: dict[str, int] = {}
         self._rewards: dict[str, float] = {}
         self._load_linucb()
+        # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
+        self._finalizer = weakref.finalize(self, _source_bandit_cleanup, self._env)
 
     def _load(self) -> dict[str, dict[str, float]]:
         """Načte statistiky z LMDB."""
@@ -295,4 +298,26 @@ class SourceBandit:
             self._env.close()
 
     def __del__(self):
-        self.close()
+        """
+        F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
+        
+        Called only if:
+        - Finalizer wasn't triggered (interpreter shutdown order)
+        - Object was resurrected and then deleted
+        """
+        if hasattr(self, '_finalizer') and self._finalizer.detach():
+            self.close()
+
+
+def _source_bandit_cleanup(env: Any) -> None:
+    """
+    Module-level cleanup function for weakref.finalize.
+    
+    F264: Close LMDB environment when SourceBandit is garbage collected.
+    Called automatically by weakref.finalize when the object is GC'd.
+    """
+    try:
+        if env is not None:
+            env.close()
+    except Exception:  # noqa: BLE001
+        pass

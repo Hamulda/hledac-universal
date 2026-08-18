@@ -618,4 +618,4 @@ class StreamingMonitor:
 
     def _generate_id(self) -> str:
         """Generate a unique ID."""
-        return str(uuid.uuid4())
+        return str(uuid.uuid7())

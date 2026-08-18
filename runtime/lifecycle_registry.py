@@ -59,7 +59,7 @@ class ResourceLifecycleRegistry:
             oldest = self._resources.pop(0)
             oldest.release()
         import uuid
-        token = str(uuid.uuid4())[:8]
+        token = str(uuid.uuid7())[:8]
         self._resources.append(OwnedResource(obj, cleanup_cb))
         return token
 

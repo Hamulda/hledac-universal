@@ -372,7 +372,8 @@ async def _scrape_paste_site(adapter: _RawPasteAdapter | _PrivateBinAdapter | _Z
     if hit:
         return cached
     loop = asyncio.get_running_loop()
-    new_future: asyncio.Future[str | None] = loop.create_future()
+    # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+    new_future: asyncio.Future[str | None] = loop.create_future(name=f"pastebin:fetch:{site_id}:{paste_id}")
     existing_future = _paste_inflight.setdefault(key, new_future)
     if existing_future is not new_future:
         try:

@@ -148,32 +148,8 @@ def __dir__():
 
 # ── Utility functions (eager, sub-ms) ──────────────────────────────────────────
 
-def _uuid7_stdlib() -> bool:
-    """Check if stdlib uuid.uuid7 is available (Python 3.14+)."""
-    import uuid as _uuid
-    return hasattr(_uuid, "uuid7")
-
-
-def uuid7() -> str:
-    """
-    Return a UUIDv7 string.
-
-    Prefers stdlib uuid.uuid7() when available (Python 3.14+).
-    Falls back to uuid.uuid4() for older runtimes.
-    Returns str, not UUID object.
-    """
-    import uuid as _uuid
-    if hasattr(_uuid, "uuid7"):
-        return str(_uuid.uuid7())
-    return str(_uuid.uuid4())
-
-
-def get_uuid7_compat_status() -> dict:
-    """Return compat shim status."""
-    return {
-        "stdlib_uuid7": _uuid7_stdlib(),
-        "fallback": "uuid4" if not _uuid7_stdlib() else "uuid7",
-    }
+# uuid7() removed: use stdlib uuid.uuid7() directly (Python 3.14+)
+# For runtime IDs use: from hledac.universal.utils.uuid7 import new_runtime_id
 
 
 async def run_cmd(cmd: list[str], timeout: float = 15.0) -> str:

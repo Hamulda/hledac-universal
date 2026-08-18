@@ -37,8 +37,9 @@ from typing import TYPE_CHECKING, Any, Literal
 # Issue R-17: Deprecation markers for domains where Python fallback always wins
 _DEPRECATED_RUST_DOMAINS: set[str] = {
     "_RustGraphDomain",   # Rust has incompatible signature → Python always wins
-    "_RustSimdDomain",    # Rust batch_cosine_scores incompatible → Python always wins
     "_RustXmlDomain",     # Rust sanitize_xml absent on older builds → Python fallback
+    # NOTE: _RustSimdDomain removed - uses proper SIMDSimilarityIntegration via
+    # rust_extensions.wiring.simd_similarity_wiring (not this deprecated path)
 }
 
 if TYPE_CHECKING:
@@ -413,41 +414,66 @@ class _PythonMemoryDomain:
 
 
 class _RustJsonDomain:
+    """
+    A10: Rust serde_json wrapper for 3-4× faster JSON serialization.
+    
+    Wraps rust_extensions serde_json_rs functions. Uses the same pattern as
+    _RustJsonDomain in json.py - pre-serialize with Python json.dumps first,
+    then re-serialize with Rust serde_json for fast deterministic formatting.
+    """
+
     __slots__ = ("_ext",)
 
     def __init__(self, ext: hledac_rust_extensions) -> None:
         self._ext = ext
 
-    def pretty_sorted(self, data: dict) -> str:
-        return self._ext.pretty_sorted(data)
+    def _serialize_first(self, data: Any) -> str:
+        """Pre-serialize Python object to JSON string before Rust re-serialization."""
+        import json as _stdlib_json
+        return _stdlib_json.dumps(data)
 
-    def compact_sorted(self, data: dict) -> str:
-        return self._ext.compact_sorted(data)
+    def pretty_sorted(self, data: Any) -> str:
+        json_str = self._serialize_first(data)
+        return self._ext.serde_json_pretty_sorted(json_str)
 
-    def pretty(self, data: dict) -> str:
-        return self._ext.pretty(data)
+    def compact_sorted(self, data: Any) -> str:
+        json_str = self._serialize_first(data)
+        return self._ext.serde_json_compact_sorted(json_str)
 
-    def compact(self, data: dict) -> str:
-        return self._ext.compact(data)
+    def pretty(self, data: Any) -> str:
+        json_str = self._serialize_first(data)
+        return self._ext.serde_json_pretty(json_str)
 
-    def batch_pretty(self, items: list[dict]) -> list[str]:
-        return self._ext.batch_pretty(items)
+    def compact(self, data: Any) -> str:
+        json_str = self._serialize_first(data)
+        return self._ext.serde_json_compact(json_str)
 
-    def batch_compact(self, items: list[dict]) -> list[str]:
-        return self._ext.batch_compact(items)
+    def batch_pretty(self, items: list[Any]) -> list[str]:
+        import json as _stdlib_json
+        json_strs = [_stdlib_json.dumps(item) for item in items]
+        return self._ext.batch_serde_json_pretty(json_strs)
 
-    def batch_pretty_sorted(self, items: list[dict]) -> list[str]:
-        return self._ext.batch_pretty_sorted(items)
+    def batch_compact(self, items: list[Any]) -> list[str]:
+        import json as _stdlib_json
+        json_strs = [_stdlib_json.dumps(item) for item in items]
+        return self._ext.batch_serde_json_compact(json_strs)
 
-    def batch_compact_sorted(self, items: list[dict]) -> list[str]:
-        return self._ext.batch_compact_sorted(items)
+    def batch_pretty_sorted(self, items: list[Any]) -> list[str]:
+        import json as _stdlib_json
+        json_strs = [_stdlib_json.dumps(item) for item in items]
+        return self._ext.batch_serde_json_pretty_sorted(json_strs)
+
+    def batch_compact_sorted(self, items: list[Any]) -> list[str]:
+        import json as _stdlib_json
+        json_strs = [_stdlib_json.dumps(item) for item in items]
+        return self._ext.batch_serde_json_compact_sorted(json_strs)
 
     # ISSUE-039: orjson-compatible dict→bytes API for hot paths (scorecard, telemetry)
-    def dumps_compact_bytes(self, data: dict) -> bytes:
+    def dumps_compact_bytes(self, data: Any) -> bytes:
         return self._ext.serde_json_dumps_compact_bytes(data)
 
-    def dumps_pretty_bytes(self, data: dict, sort_keys: bool = False) -> bytes:
-        return self._ext.serde_json_dumps_pretty_bytes(data, sort_keys)
+    def dumps_pretty_bytes(self, data: Any, sort_keys: bool = False) -> bytes:
+        return self._ext.serde_json_dumps_pretty_bytes(data)
 
 
 class _PythonJsonDomain:

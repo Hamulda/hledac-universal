@@ -2,6 +2,7 @@
 Historical Frontier — DuckDB-backed read-only discovery.
 
 Sprint F206AM: Providerless Discovery Mesh Phase 1
+ISSUE-18: Migrated to canonical _core.duckdb_pool (from deprecated resource_pool)
 
 Rules:
 - read-only DuckDB
@@ -10,6 +11,12 @@ Rules:
 - no heavy imports
 - fail-soft
 - returns DiscoveryHit objects
+
+Migration (ISSUE-18):
+- OLD: from _core.resource_pool import PoolKind, with_resource
+- OLD: with with_resource(PoolKind.DUCKDB_RO, db_path) as conn
+- NEW: from _core.duckdb_pool import duckdb_ro_connection
+- NEW: with duckdb_ro_connection(db_path) as conn
 """
 
 
@@ -18,7 +25,7 @@ import asyncio
 import time
 
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
-from hledac.universal._core.resource_pool import PoolKind, with_resource
+from _core.duckdb_pool import duckdb_ro_connection
 from _core import aclose
 
 # DuckDB store interface for historical query
@@ -75,8 +82,9 @@ async def async_search_historical_frontier(
     start = time.monotonic()
     db_path = _HISTORICAL_STORE_PATH.replace("~", str(__import__("pathlib").Path.home()))
 
+    # ISSUE-18: Using canonical _core.duckdb_pool (ISSUE-17 ReadCoordinator coordination)
     try:
-        with with_resource(PoolKind.DUCKDB_RO, db_path) as conn:  # noqa: F841 — conn used in _query closure
+        with duckdb_ro_connection(db_path) as conn:
             try:
                 # Tokenize query — match tokens against stored query + title + url
                 tokens = {t.lower().strip(".,;:!?()[]{}-_") for t in query.split() if len(t) > 1}
@@ -96,7 +104,7 @@ async def async_search_historical_frontier(
                             query ILIKE ? OR
                             title ILIKE ? OR
                             url ILIKE ?
-    )
+                        )
                         ORDER BY ts DESC
                         LIMIT ?
                         """,
@@ -112,7 +120,7 @@ async def async_search_historical_frontier(
                     error_type="timeout",
                     elapsed_s=elapsed,
                     error="historical_frontier_timeout",
-    )
+                )
     except Exception:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(
@@ -120,7 +128,7 @@ async def async_search_historical_frontier(
             error_type="provider_exception",
             elapsed_s=elapsed,
             error="historical_frontier_error",
-    )
+        )
 
     if not rows:
         elapsed = time.monotonic() - start

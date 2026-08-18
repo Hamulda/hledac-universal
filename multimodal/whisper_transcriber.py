@@ -358,7 +358,7 @@ class TranscriptionRouter:
         force_engine: EngineChoice = EngineChoice.AUTO,
         force_offline: bool = False,
         extract_iocs: bool = True,
-        model_size: Literal["tiny", "base"] = "tiny",
+        model_size: Literal["tiny", "base", "medium"] = "tiny",
     ) -> TranscriptionResult:
         """
         Transcribe audio with automatic engine routing + fallback.
@@ -369,7 +369,7 @@ class TranscriptionRouter:
             force_engine: Override engine selection.
             force_offline: Prefer offline-first engine.
             extract_iocs: Run IOC extraction on transcription result.
-            model_size: whisper model size if WhisperEngine is used.
+            model_size: whisper model size ("tiny", "base", or "medium").
 
         Returns:
             TranscriptionResult (empty on total failure — never raises).
@@ -525,7 +525,7 @@ class TranscriptionRouter:
         self,
         source_path: Path,
         language: str | None,
-        model_size: Literal["tiny", "base"],
+        model_size: Literal["tiny", "base", "medium"],
     ) -> TranscriptionResult | None:
         """
         Transcribe via WhisperEngine with intelligent routing.
@@ -618,7 +618,7 @@ class TranscriptionRouter:
         self,
         source_path: Path,
         language: str | None,
-        model_size: Literal["tiny", "base"],
+        model_size: Literal["tiny", "base", "medium"],
     ) -> TranscriptionResult | None:
         """
         Direct whisper execution without sandbox (final fallback).
@@ -766,7 +766,7 @@ async def transcribe_audio(
     language: str | None = None,
     force_offline: bool = False,
     force_engine: EngineChoice = EngineChoice.AUTO,
-    model_size: Literal["tiny", "base"] = "tiny",
+    model_size: Literal["tiny", "base", "medium"] = "tiny",
 ) -> TranscriptionResult:
     """
     One-shot audio transcription with automatic engine routing.
@@ -776,7 +776,7 @@ async def transcribe_audio(
         language: ISO-639-1 code or None for auto-detect.
         force_offline: Prefer offline-first engine.
         force_engine: Override engine selection.
-        model_size: whisper model size (if WhisperEngine is used).
+        model_size: whisper model size ("tiny", "base", or "medium").
 
     Returns:
         TranscriptionResult (empty result on failure — never raises).
@@ -794,7 +794,7 @@ async def transcribe_audio(
 async def transcribe_and_extract_iocs(
     source: str | Path,
     language: str | None = None,
-    model_size: Literal["tiny", "base"] = "tiny",
+    model_size: Literal["tiny", "base", "medium"] = "tiny",
 ) -> list[str]:
     """
     Transcribe audio and extract IoCs in one call.
@@ -815,13 +815,132 @@ async def transcribe_and_extract_iocs(
     return result.iocs
 
 
+async def batch_transcribe(
+    sources: list[str | Path],
+    language: str | None = None,
+    model_size: Literal["tiny", "base", "medium"] = "tiny",
+    extract_iocs: bool = True,
+    max_concurrent: int = 2,
+) -> list[TranscriptionResult]:
+    """
+    Batch transcribe multiple audio files with automatic engine routing.
+
+    Optimized for multi-page PDF audio extraction with bounded concurrency.
+    Uses Rust whisper's batch_transcribe for maximum throughput.
+
+    Args:
+        sources: List of audio file paths.
+        language: ISO-639-1 code or None for auto-detect.
+        model_size: whisper model size ("tiny", "base", or "medium").
+        extract_iocs: Run IOC extraction on each result.
+        max_concurrent: Max concurrent transcriptions (default: 2 for M1 8GB).
+
+    Returns:
+        List of TranscriptionResult (empty TranscriptionResult on failure).
+    """
+    # Try Rust batch_transcribe first (fastest path)
+    try:
+        from hledac.universal._core.rust_backend import rust
+
+        if hasattr(rust.whisper, "batch_transcribe"):
+            audio_paths = [str(s) for s in sources]
+
+            # Run batch transcription on thread pool
+            def _batch_sync():
+                return rust.whisper.batch_transcribe(
+                    audio_paths,
+                    model_size=model_size,
+                    language=language,
+                    max_concurrent=max_concurrent,
+                )
+
+            raw_results = await asyncio.to_thread(_batch_sync)
+
+            results: list[TranscriptionResult] = []
+            for item in raw_results.get("results", []):
+                if item.get("success") and item.get("result"):
+                    result_data = item["result"]
+                    segments = [
+                        TranscriptionSegment(
+                            start_s=s.get("start_s", 0.0),
+                            end_s=s.get("end_s", 0.0),
+                            text=s.get("text", ""),
+                            confidence=s.get("confidence", 0.85),
+                        )
+                        for s in result_data.get("segments", [])
+                    ]
+                    transcription = TranscriptionResult(
+                        text=result_data.get("text", ""),
+                        language=result_data.get("language", language or "en"),
+                        duration_s=result_data.get("duration_s", 0.0),
+                        confidence=result_data.get("confidence", 0.85),
+                        segments=segments,
+                        engine=TranscriptionEngine.RUST_WHISPER,
+                        engine_detail=f"rust.whisper::{model_size} +CoreML/ANE",
+                    )
+
+                    # Extract IoCs if requested
+                    if extract_iocs and transcription.text:
+                        transcription = await _extract_iocs_from_text_static(transcription)
+
+                    results.append(transcription)
+                else:
+                    # Failed transcription
+                    results.append(TranscriptionResult(
+                        engine=TranscriptionEngine.NONE,
+                        engine_detail=f"batch failed: {item.get('error', 'unknown')}",
+                    ))
+
+            return results
+
+    except ImportError:
+        logger.debug("[TranscriptionRouter] Rust batch_transcribe not available")
+    except Exception as exc:
+        logger.warning("[TranscriptionRouter] Rust batch_transcribe failed: %s", exc)
+
+    # Fallback: serial transcription via router
+    logger.info("[TranscriptionRouter] Using serial fallback for batch transcription")
+    router = await get_transcription_router()
+    results: list[TranscriptionResult] = []
+
+    for source in sources:
+        result = await router.transcribe(
+            source,
+            language=language,
+            model_size=model_size,
+            extract_iocs=extract_iocs,
+        )
+        results.append(result)
+
+    return results
+
+
+async def _extract_iocs_from_text_static(
+    result: TranscriptionResult,
+) -> TranscriptionResult:
+    """Extract IoCs from transcription text (static helper for batch)."""
+    try:
+        from hledac.universal.rust.ioc import extract_iocs_flat
+        iocs = extract_iocs_flat(result.text)
+        ioc_strings = [str(ioc) for ioc in iocs]
+        return msgspec.structs.replace(
+            result,
+            iocs_extracted=len(ioc_strings),
+            iocs=ioc_strings,
+        )
+    except ImportError:
+        return result
+    except Exception:
+        return result
+
+
 # ============================================================================
 # NEXTGEN-03: Voiceprint Extraction
 # ============================================================================
 
 async def extract_voiceprint(
     source: str | Path,
-    model_size: Literal["tiny", "base"] = "tiny",
+    model_size: Literal["tiny", "base", "medium"] = "tiny",
 ) -> dict[str, Any]:
     """
     NEXTGEN-03: Extract speaker voiceprint embedding from audio file.
@@ -831,7 +950,7 @@ async def extract_voiceprint(
 
     Args:
         source: Audio file path (WAV 16kHz mono recommended)
-        model_size: Whisper model size ("tiny" or "base")
+        model_size: Whisper model size ("tiny", "base", or "medium")
 
     Returns:
         Dict with:
@@ -888,7 +1007,7 @@ async def extract_voiceprint(
 
 async def extract_voiceprint_and_transcribe(
     source: str | Path,
-    model_size: Literal["tiny", "base"] = "tiny",
+    model_size: Literal["tiny", "base", "medium"] = "tiny",
 ) -> tuple[dict[str, Any], TranscriptionResult]:
     """
     NEXTGEN-03: Extract voiceprint and transcribe audio in parallel.

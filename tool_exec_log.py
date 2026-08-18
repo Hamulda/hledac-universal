@@ -327,7 +327,8 @@ class ToolExecLog:
             status = 'error'
         correlation = normalize_correlation(correlation)
         self._seq += 1
-        event_id = f'tool_{self._seq}_{uuid.uuid4().hex[:8]}'
+        # ISSUE-11: uuid7 for time-ordered event IDs (Python 3.14+)
+        event_id = f'tool_{self._seq}_{uuid.uuid7().hex[:8]}'
         chain_input = f'{self._chain_head}:{event_id}:{input_hash}:{output_hash}:{status}:{error_class}'
         chain_hash = hashlib.sha256(chain_input.encode()).hexdigest()
         event = ToolExecEvent(event_id=event_id, ts=datetime.now(UTC).timestamp(), tool_name=tool_name, input_hash=input_hash, output_hash=output_hash, output_len=output_len, status=status, error_class=error_class, seq_no=self._seq, prev_chain_hash=self._chain_head, chain_hash=chain_hash, correlation=correlation)

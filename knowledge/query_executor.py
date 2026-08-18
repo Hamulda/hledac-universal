@@ -280,7 +280,7 @@ class DuckDBQueryExecutor:
         M1 8GB safe: temp table is session-scoped, dropped immediately after.
         """
         import uuid as _uuid
-        _TEMP_TABLE = f"_appender_bulk_{_uuid.uuid4().hex[:8]}"
+        _TEMP_TABLE = f"_appender_bulk_{_uuid.uuid7().hex[:8]}"
         try:
             # Create temp table with same schema as canonical_findings (subset of columns)
             conn.execute(f"""
@@ -478,7 +478,7 @@ class DuckDBQueryExecutor:
             with self._wal_delete_mode():
                 import uuid as _uuid
 
-                reg_name = f"finding_arrow_batch_{_uuid.uuid4().hex[:12]}"
+                reg_name = f"finding_arrow_batch_{_uuid.uuid7().hex[:12]}"
                 conn.register(reg_name, table)
                 try:
                     # B1-FIX: MERGE replaces 2× INSERT round-trips with 1.
@@ -544,7 +544,7 @@ class DuckDBQueryExecutor:
 
         import uuid as _uuid
 
-        _TEMP_TABLE = f"_copy_arrow_batch_{_uuid.uuid4().hex[:8]}"
+        _TEMP_TABLE = f"_copy_arrow_batch_{_uuid.uuid7().hex[:8]}"
         try:
             with self._wal_delete_mode():
                 # Step 1: Create temp table with same schema as canonical_findings
@@ -646,7 +646,7 @@ class DuckDBQueryExecutor:
         parquet_path = None
         try:
             import uuid as _uuid
-            parquet_path = _Path(_resolve_dir) / f"finding_batch_{_uuid.uuid4().hex[:12]}.parquet"
+            parquet_path = _Path(_resolve_dir) / f"finding_batch_{_uuid.uuid7().hex[:12]}.parquet"
 
             # Write Parquet: zstd level 1 — fast compression, low RAM, M1-friendly
             _pq.write_table(

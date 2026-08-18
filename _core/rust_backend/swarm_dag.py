@@ -95,7 +95,7 @@ class _RustSwarmDAG:
             task_id (generated if not provided)
         """
         if task_id is None:
-            task_id = str(uuid.uuid4())
+            task_id = str(uuid.uuid7())
 
         ok = self._dag.submit(
             task_type,
@@ -255,7 +255,7 @@ class PythonFallbackSwarmDAG:
         Queues the task for async processing by _worker_loop().
         """
         if task_id is None:
-            task_id = str(uuid.uuid4())
+            task_id = str(uuid.uuid7())
 
         queue = self._queues.get(task_type)
         if queue is None:

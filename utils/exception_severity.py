@@ -344,7 +344,7 @@ class _ExcEventContext:
             line = tb.tb_lineno or 0
 
         event = ExceptionEvent(
-            event_id=_uuid.uuid4().hex[:12],
+            event_id=_uuid.uuid7().hex[:12],
             cascade_id=self._cascade_id,
             severity=self._severity,
             scope=self._scope,

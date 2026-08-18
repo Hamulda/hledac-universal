@@ -55,7 +55,7 @@ def louvain_communities(
     Args:
         nodes: List of (id, value, node_type) tuples
         edges: List of (from_id, to_id, weight) tuples
-        resolution: Louvain resolution parameter
+        resolution: Louvain resolution parameter (default 1.0, higher = more smaller communities)
 
     Returns:
         Dict mapping node_id -> community_id
@@ -76,7 +76,7 @@ def pagerank(
         nodes: List of (id, value, node_type) tuples
         edges: List of (from_id, to_id, weight) tuples
         damping: Damping factor (default 0.85)
-        max_iter: Maximum iterations
+        max_iter: Maximum iterations (default 100)
 
     Returns:
         Dict mapping node_id -> pagerank_score
@@ -84,16 +84,52 @@ def pagerank(
     return _graph_analytics.pagerank(nodes, edges, damping, max_iter)
 
 
+def strongly_connected_components(
+    nodes: list[tuple[int, str, str]],
+    edges: list[tuple[int, int, float]],
+) -> list[list[int]]:
+    """
+    Compute strongly connected components using Kosaraju's algorithm.
+
+    Args:
+        nodes: List of (id, value, node_type) tuples
+        edges: List of (from_id, to_id, weight) tuples
+
+    Returns:
+        List of components, where each component is a list of node IDs
+    """
+    if not _graph_analytics.available:
+        logger.warning("[GraphAnalytics] SCC unavailable: Rust backend not available")
+        return []
+    try:
+        from _rust_backend import rust
+        result = rust.raw.module.rust_scc(nodes, edges)
+        if result:
+            return [list(comp) for comp in result]
+        return []
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def analyze_ioc_graph(
     node_data: list[dict],
     edge_data: list[dict],
+    resolution: float = 1.0,
+    damping: float = 0.85,
+    max_iter: int = 100,
 ) -> dict:
     """
     Analyze IOC graph with multiple algorithms.
 
+    Tries to use rust_graph_analytics_all for single-pass efficiency,
+    falls back to individual calls if unavailable.
+
     Args:
         node_data: List of IOC node dicts with keys: id, value, ioc_type
         edge_data: List of edge dicts with keys: from_id, to_id, weight
+        resolution: Louvain resolution parameter (default 1.0)
+        damping: PageRank damping factor (default 0.85)
+        max_iter: PageRank max iterations (default 100)
 
     Returns:
         Dict with community_id per node and pagerank scores.
@@ -102,8 +138,26 @@ def analyze_ioc_graph(
     nodes = [(n["id"], n.get("value", ""), n.get("ioc_type", "")) for n in node_data]
     edges = [(e["from_id"], e["to_id"], e.get("weight", 1.0)) for e in edge_data]
 
-    communities = louvain_communities(nodes, edges)
-    ranks = pagerank(nodes, edges)
+    # Try single-pass analytics for efficiency (avoids 3x graph construction)
+    if _graph_analytics.available:
+        try:
+            from _rust_backend import rust
+            result = rust.raw.module.rust_graph_analytics_all(nodes, edges, damping, resolution)
+            if result:
+                return {
+                    "communities": dict(result.get("communities", {})),
+                    "pagerank": dict(result.get("pagerank", {})),
+                    "scc": result.get("scc", []),
+                    "num_communities": len(set(result.get("communities", {}).values())),
+                    "num_nodes": len(nodes),
+                    "num_edges": len(edges),
+                }
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Fall back to individual calls
+    communities = louvain_communities(nodes, edges, resolution)
+    ranks = pagerank(nodes, edges, damping, max_iter)
 
     return {
         "communities": communities,

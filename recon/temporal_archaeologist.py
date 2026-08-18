@@ -904,7 +904,18 @@ class TemporalArchaeologist:
         from hledac.universal._core.rust_backend import rust
         group_similar_texts = rust.raw.group_similar_texts
         if group_similar_texts is None:
+            # ISSUE-026 FIX #3: Python fallback for serial trigram Jaccard
             groups: list[list[ArchivedVersion]] = []
+            for snapshot in snapshots:
+                added = False
+                for group in groups:
+                    similarity = self._content_similarity(snapshot.content or '', group[0].content or '')
+                    if similarity >= threshold:
+                        group.append(snapshot)
+                        added = True
+                        break
+                if not added:
+                    groups.append([snapshot])
             return groups
         try:
             texts = [s.content or '' for s in snapshots]

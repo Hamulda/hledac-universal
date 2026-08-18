@@ -166,7 +166,7 @@ async def test_resolver_ttl_expiry_re_resolves_host():
         new=_counting_mock,
     ):
         await r.resolve_many(["ttl.example"])
-        time.sleep(0.06)  # wait past TTL
+        await asyncio.sleep(0.06)  # wait past TTL
         await r.resolve_many(["ttl.example"])
     assert call_count["n"] == 2
 
@@ -186,7 +186,7 @@ async def test_resolver_ttl_zero_means_no_expiry():
         new=_counting_mock,
     ):
         await r.resolve_many(["never-expire.example"])
-        time.sleep(0.05)
+        await asyncio.sleep(0.05)
         await r.resolve_many(["never-expire.example"])
     assert call_count["n"] == 1
 

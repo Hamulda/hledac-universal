@@ -251,10 +251,7 @@ def _mlx_cache_clear_if_available() -> bool:
     """
     try:
         import asyncio
-        loop = asyncio.get_running_loop()
-        # We're on the event loop thread — offload to a thread pool so the loop
-        # can run other tasks while we wait. to_thread releases the event loop for
-        # the duration of the blocking MLX/GPU ops inside _do_clear.
+
         async def _async_clear() -> bool:
             def _do_clear() -> bool:
                 try:
@@ -272,7 +269,23 @@ def _mlx_cache_clear_if_available() -> bool:
 
             return await asyncio.to_thread(_do_clear)
 
-        return loop.run_until_complete(_async_clear())
+        # ISSUE-10 FIX: Proper sync-to-async bridge without deadlock
+        # Use asyncio.Runner() when no loop is running (Python 3.11+)
+        # Use run_coroutine_threadsafe when loop IS running (to avoid deadlock)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop — use asyncio.Runner() (Python 3.11+)
+            with asyncio.Runner() as runner:
+                return runner.run(_async_clear())
+
+        # Running loop detected — use run_coroutine_threadsafe to avoid deadlock
+        # run_until_complete would cause deadlock when called from running loop
+        if loop.is_running():
+            coro = _async_clear()
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()
+        else:
+            return loop.run_until_complete(_async_clear())
     except Exception:
         return False
 

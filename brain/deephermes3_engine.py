@@ -4659,9 +4659,8 @@ class DeepHermes3Engine:
         if self._model is None:
             return [PlannerRuntimeResult(task_id=r.task_id, executed=False, skipped_panic=False, hermes_output=None, error='model_not_loaded') for r in requests]
         import msgspec
-from compat.msgspec_gc_compat import Struct
 
-        class GenericResult(Struct, kw_only=True):
+        class GenericResult(msgspec.Struct, kw_only=True):
             result: str = ''
             confidence: float = 0.5
 
@@ -5537,9 +5536,8 @@ from compat.msgspec_gc_compat import Struct
         try:
             import outlines.generate as og
             import msgspec
-from compat.msgspec_gc_compat import Struct
 
-            class _ProbeSchema(Struct):
+            class _ProbeSchema(msgspec.Struct):
                 ok: bool
             gen = og.json(self._outlines_model, _ProbeSchema)
             return callable(gen)

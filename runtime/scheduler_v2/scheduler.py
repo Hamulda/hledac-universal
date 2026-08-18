@@ -398,7 +398,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackRecord
 
             record = HypothesisFeedbackRecord(
-                id=str(uuid.uuid4()),
+                id=str(uuid.uuid7()),
                 target_id=getattr(self, "_sprint_id", "") or "default",
                 pivot_type=pivot_type,
                 ioc_type=ioc_type,

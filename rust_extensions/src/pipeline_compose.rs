@@ -118,7 +118,7 @@ pub fn pipeline_map_arc<T: Send + Sync, U: Send + Sync>(
 where
     for<'a> fn(&'a T) -> U: Send + Sync + Copy,
 {
-    let n = source);
+    let n = source.len();
     if n == 0 {
         return Vec::new();
     }
@@ -150,7 +150,7 @@ pub fn pipeline_filter_map_arc<T: Send + Sync, U: Send + Sync>(
 where
     for<'a> fn(&'a T) -> Option<U>: Send + Sync + Copy,
 {
-    let n = source);
+    let n = source.len();
     if n == 0 {
         return Vec::new();
     }
@@ -183,7 +183,7 @@ where
     for<'a> fn(Acc, &'a T) -> Acc: Send + Sync + Copy,
     Acc: std::iter::Sum,
 {
-    let n = source);
+    let n = source.len();
     if n == 0 {
         return initial;
     }
@@ -210,7 +210,7 @@ pub fn pipeline_count_arc<T: Send + Sync>(source: &[ArcItem<T>], predicate: fn(&
 where
     for<'a> fn(&'a T) -> bool: Send + Sync + Copy,
 {
-    let n = source);
+    let n = source.len();
     if n == 0 {
         return 0;
     }
@@ -398,9 +398,9 @@ pub fn pipeline_map(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        );
+        .collect();
 
-    let fn_name = fn_name);
+    let fn_name = fn_name.clone();
     let pool = mixed_pool(n);
     let mapped_strs: Vec<String> = pool.install(|| {
         items_str
@@ -468,9 +468,9 @@ pub fn pipeline_filter(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        );
+        .collect();
 
-    let fn_name = fn_name);
+    let fn_name = fn_name.clone();
     let pool = mixed_pool(n);
     let filtered: Vec<bool> = pool.install(|| {
         items_str
@@ -527,10 +527,10 @@ pub fn pipeline_filter_map(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        );
+        .collect();
 
-    let filter_fn = filter_fn);
-    let map_fn = map_fn);
+    let filter_fn = filter_fn.clone();
+    let map_fn = map_fn.clone();
     let pool = mixed_pool(n);
 
     // Filter + map in rayon
@@ -619,7 +619,7 @@ pub fn pipeline_fold(
     let pool = mixed_pool(n);
 
     // Extract initial value BEFORE pool.install() — &Bound is not Send
-    let initial_str = initial.extract::<String>());
+    let initial_str = initial.extract::<String>().unwrap_or_default();
 
     // Try numeric fold first — extract i64 values before pool
     if let (Ok(initial_num), Ok(items_numeric)) = (
@@ -629,7 +629,7 @@ pub fn pipeline_fold(
             .map(|x| x.extract::<i64>())
             .collect::<Result<Vec<_>, _>>(),
     ) {
-        let fold_fn = fold_fn);
+        let fold_fn = fold_fn.clone();
         let result: i64 = pool.install(|| {
             items_numeric
                 .par_iter()
@@ -652,11 +652,11 @@ pub fn pipeline_fold(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|x| x.str().ok().map(|s| s.to_string()))
-        );
+        .collect();
 
     // Numeric-result folds (count, sum_len) must return i64, not String.
     // Handle them specially before the generic String fold path.
-    let fold_fn_str = fold_fn);
+    let fold_fn_str = fold_fn.clone();
     if fold_fn == "count" {
         let result: i64 =
             pool.install(|| items_str.par_iter().fold(|| 0_i64, |acc, _s| acc + 1).sum());
@@ -727,9 +727,9 @@ pub fn pipeline_count(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        );
+        .collect();
 
-    let predicate_fn = predicate_fn);
+    let predicate_fn = predicate_fn.clone();
     let pool = mixed_pool(n);
     let count: usize = pool.install(|| {
         items_str
@@ -795,10 +795,10 @@ pub fn pipeline_compose_two(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        );
+        .collect();
 
-    let stage1 = stage1);
-    let stage2 = stage2);
+    let stage1 = stage1.clone();
+    let stage2 = stage2.clone();
     let pool = mixed_pool(n);
 
     // Two-stage transform in rayon (pure Rust strings, no Python inside pool)
@@ -849,7 +849,7 @@ pub fn pipeline_batch_stats(
     _py: Python<'_>,
     items: &Bound<'_, PyList>,
 ) -> PyResult<(usize, usize, usize, usize, usize)> {
-    let n = items);
+    let n = items.len();
     if n == 0 {
         return Ok((0, 0, 0, 0, 0));
     }
@@ -863,13 +863,14 @@ pub fn pipeline_batch_stats(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        );
+        .collect();
 
-    if items_str.is_empty() {
+    let n = items_str.len();
+    if n == 0 {
         return Ok((0, 0, 0, 0, 0));
     }
 
-    let pool = mixed_pool(items_str.len());
+    let pool = mixed_pool(n);
 
     // Single parallel pass: compute (length, hash) for each item.
     use xxhash_rust::xxh3::xxh3_64;
@@ -880,20 +881,26 @@ pub fn pipeline_batch_stats(
             .collect()
     });
 
-    let n = item_data);
-    let sum_len: usize = item_data.iter().map(|(l, _)| l));
+    let n = item_data.len();
+    let sum_len: usize = item_data.iter().map(|(l, _)| l).sum();
     let min_len = item_data.iter().map(|(l, _)| l).min().unwrap_or(&0);
     let max_len = item_data.iter().map(|(l, _)| l).max().unwrap_or(&0);
 
-    // Unique count via Mutex<HashSet>: insert returns true only for new entries (first-seen).
-    // ISSUE-5.1 fix: Replaced DashSet (dashmap) with parking_lot::Mutex<HashSet>.
-    // parking_lot::Mutex is faster than DashSet's sharded locking for single-key local use.
-    // Rayon par_iter runs the filter concurrently across workers; Mutex provides thread-safety.
-    let seen = Mutex::new(HashSet::with_capacity(n.min(MAX_PIPELINE_ITEMS)));
-    let unique_count: usize = item_data
-        .par_iter()
-        .filter(|(_, h)| seen.lock().insert(*h))
-        );
+    // O3 OPTIMIZATION: Lock-free unique counting with pre-partitioned HashSets.
+    // Partition hashes into NUM_PARTITIONS shards to reduce mutex contention.
+    // Each worker thread writes to its own shard, eliminating lock contention.
+    const NUM_PARTITIONS: usize = 8;
+    let mut partitions: Vec<HashSet<u64>> = (0..NUM_PARTITIONS)
+        .map(|_| HashSet::with_capacity(n / NUM_PARTITIONS + 100))
+        .collect();
+
+    for &(_, h) in &item_data {
+        let shard_idx = (h as usize) % NUM_PARTITIONS;
+        partitions[shard_idx].insert(h);
+    }
+
+    // Count unique across all partitions (no contention at this point)
+    let unique_count = partitions.iter().map(|p| p.len()).sum();
 
     Ok((n, sum_len, *min_len, *max_len, unique_count))
 }

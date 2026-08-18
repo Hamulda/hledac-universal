@@ -305,7 +305,7 @@ class DataLeakHunter:
                 if resp.status == 200:
                     breaches = await resp.json()
                     for breach in breaches:
-                        alert = LeakAlert(alert_id=str(uuid.uuid4()), timestamp=datetime.now(UTC), target=email, target_type='email', source=LeakSource.BREACH_API, severity=AlertSeverity.HIGH, breach_name=breach.get('Name'), leaked_data={'title': breach.get('Title'), 'date': breach.get('BreachDate'), 'compromised_data': breach.get('DataClasses', []), 'description': breach.get('Description', '')[:200]}, url=breach.get('Domain'))
+                        alert = LeakAlert(alert_id=str(uuid.uuid7()), timestamp=datetime.now(UTC), target=email, target_type='email', source=LeakSource.BREACH_API, severity=AlertSeverity.HIGH, breach_name=breach.get('Name'), leaked_data={'title': breach.get('Title'), 'date': breach.get('BreachDate'), 'compromised_data': breach.get('DataClasses', []), 'description': breach.get('Description', '')[:200]}, url=breach.get('Domain'))
                         alerts.append(alert)
                 elif resp.status == 404:
                     pass
@@ -330,7 +330,7 @@ class DataLeakHunter:
                     data = await resp.json()
                     if data.get('found'):
                         for source in data.get('sources', []):
-                            alert = LeakAlert(alert_id=str(uuid.uuid4()), timestamp=datetime.now(UTC), target=value, target_type=target_type, source=LeakSource.BREACH_API, severity=AlertSeverity.HIGH, breach_name=source, leaked_data={'database': source, 'total_results': data.get('count', 0)})
+                            alert = LeakAlert(alert_id=str(uuid.uuid7()), timestamp=datetime.now(UTC), target=value, target_type=target_type, source=LeakSource.BREACH_API, severity=AlertSeverity.HIGH, breach_name=source, leaked_data={'database': source, 'total_results': data.get('count', 0)})
                             alerts.append(alert)
             await asyncio.sleep(config['rate_limit'])
         except Exception as e:
@@ -351,7 +351,7 @@ class DataLeakHunter:
                 if resp.status == 200:
                     data = await resp.json()
                     for entry in data.get('matches', []):
-                        alert = LeakAlert(alert_id=str(uuid.uuid4()), timestamp=datetime.now(UTC), target=value, target_type=target_type, source=LeakSource.BREACH_API, severity=AlertSeverity.HIGH, breach_name=entry.get('source', 'Dehashed'), leaked_data={'email': entry.get('email'), 'username': entry.get('username'), 'password': entry.get('password'), 'hash': entry.get('hash'), 'database': entry.get('database')}, raw_sample=entry.get('password', '')[:50] if entry.get('password') else None)
+                        alert = LeakAlert(alert_id=str(uuid.uuid7()), timestamp=datetime.now(UTC), target=value, target_type=target_type, source=LeakSource.BREACH_API, severity=AlertSeverity.HIGH, breach_name=entry.get('source', 'Dehashed'), leaked_data={'email': entry.get('email'), 'username': entry.get('username'), 'password': entry.get('password'), 'hash': entry.get('hash'), 'database': entry.get('database')}, raw_sample=entry.get('password', '')[:50] if entry.get('password') else None)
                         alerts.append(alert)
                 elif resp.status == 429:
                     logger.warning('Dehashed API rate limited')
@@ -409,7 +409,7 @@ class DataLeakHunter:
                 records = poll_result.get('results', []) or poll_result.get('records', [])
                 for r in records[:20]:
                     try:
-                        alert = LeakAlert(alert_id=str(uuid.uuid4()), target=value, target_type=target_type, source=LeakSource.BREACH_API, severity=AlertSeverity.HIGH, breach_name=f"IntelligenceX:{r.get('type', 'unknown')}", leaked_data={'bucket': r.get('bucket', ''), 'date': r.get('date', ''), 'content': r.get('content', '')[:500], 'url': r.get('url', '')}, url=r.get('url', ''))
+                        alert = LeakAlert(alert_id=str(uuid.uuid7()), target=value, target_type=target_type, source=LeakSource.BREACH_API, severity=AlertSeverity.HIGH, breach_name=f"IntelligenceX:{r.get('type', 'unknown')}", leaked_data={'bucket': r.get('bucket', ''), 'date': r.get('date', ''), 'content': r.get('content', '')[:500], 'url': r.get('url', '')}, url=r.get('url', ''))
                         alerts.append(alert)
                     except Exception:
                         continue
@@ -454,7 +454,7 @@ class DataLeakHunter:
                             file = src.get('filename', src.get('path', 'unknown'))
                             content = src.get('content', '')
                             snippet = content[:200] + ('...' if len(content) > 200 else '')
-                            alert = LeakAlert(alert_id=str(uuid.uuid4()), target=query, target_type='code_leak', source=LeakSource.BREACH_API, severity=AlertSeverity.MEDIUM, breach_name=f'grep_app:{repo}', leaked_data={'repo': repo, 'file': file, 'snippet': snippet}, url=src.get('url', ''))
+                            alert = LeakAlert(alert_id=str(uuid.uuid7()), target=query, target_type='code_leak', source=LeakSource.BREACH_API, severity=AlertSeverity.MEDIUM, breach_name=f'grep_app:{repo}', leaked_data={'repo': repo, 'file': file, 'snippet': snippet}, url=src.get('url', ''))
                             alerts.append(alert)
                         except Exception:
                             continue
@@ -473,7 +473,7 @@ class DataLeakHunter:
                         data = await resp.json()
                         for result in data.get('data', []):
                             if value.lower() in result.get('text', '').lower():
-                                alert = LeakAlert(alert_id=str(uuid.uuid4()), timestamp=datetime.now(UTC), target=value, target_type=target_type, source=LeakSource.PASTE_SITE, severity=AlertSeverity.MEDIUM, breach_name=f"Paste: {result.get('title', 'Unknown')}", leaked_data={'paste_id': result.get('id'), 'tags': result.get('tags', []), 'length': result.get('length', 0)}, url=f"https://pastebin.com/raw/{result.get('id')}")
+                                alert = LeakAlert(alert_id=str(uuid.uuid7()), timestamp=datetime.now(UTC), target=value, target_type=target_type, source=LeakSource.PASTE_SITE, severity=AlertSeverity.MEDIUM, breach_name=f"Paste: {result.get('title', 'Unknown')}", leaked_data={'paste_id': result.get('id'), 'tags': result.get('tags', []), 'length': result.get('length', 0)}, url=f"https://pastebin.com/raw/{result.get('id')}")
                                 alerts.append(alert)
             except Exception as e:
                 logger.debug(f'Paste site check failed: {e}')

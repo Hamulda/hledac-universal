@@ -9,8 +9,9 @@ Architecture:
 - batch_processor.py: Batch queue management and execution
 """
 
+# Use absolute imports within the hledac.universal package
 from hledac.universal.brain._batch.batch_processor import BatchProcessor, BatchItem
-from _core import aclose
+from hledac.universal._core import aclose
 
 __all__ = [
     "BatchProcessor",

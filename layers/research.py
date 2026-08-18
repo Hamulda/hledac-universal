@@ -529,7 +529,7 @@ class ResearchLayer:
     def create_mission(self, goal: str) -> GhostMission:
         """Create a new GhostDirector mission."""
         import uuid
-        mission_id = str(uuid.uuid4())[:8]
+        mission_id = str(uuid.uuid7())[:8]
         mission = GhostMission(
             mission_id=mission_id,
             goal=goal,

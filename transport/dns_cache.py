@@ -151,7 +151,9 @@ class DnsCache:
             return await inflight_fut
 
         # Reserve slot for new resolution (only one task per host reaches here)
-        fut: asyncio.Future[list[str] | None] = asyncio.get_event_loop().create_future()
+        # ISSUE-10 FIX: get_running_loop() instead of deprecated get_event_loop() (Python 3.12+)
+        # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+        fut: asyncio.Future[list[str] | None] = asyncio.get_running_loop().create_future(name=f"dns_cache_resolve:{host}")
         self._inflight[host] = fut
 
         # Resolution outside the lock

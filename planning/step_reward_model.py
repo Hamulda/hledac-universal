@@ -37,6 +37,7 @@ import platform
 import sys
 import time
 from dataclasses import dataclass, field
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import numpy as np
@@ -666,7 +667,7 @@ class RustPRMScorer:
     Python Fallback:
         If Rust CoreML is unavailable, falls back to PRMInference class.
     """
-    __slots__ = ('_model_id', '_model_path', '_loaded', '_rust_ane_available', '_telemetry')
+    __slots__ = ('_model_id', '_model_path', '_loaded', '_rust_ane_available', '_telemetry', '_finalizer')
 
     def __init__(self, model_id: str='prm_step', model_path: Path | None=None) -> None:
         """
@@ -682,6 +683,8 @@ class RustPRMScorer:
         self._rust_ane_available = False
         self._telemetry = {'score_calls': 0, 'batch_calls': 0, 'cache_hits': 0, 'cache_misses': 0, 'errors': 0}
         self._check_rust_ane()
+        # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
+        self._finalizer = weakref.finalize(self, _rust_prm_cleanup, self._model_id)
 
     def _check_rust_ane(self) -> bool:
         """
@@ -860,8 +863,15 @@ class RustPRMScorer:
             return {'status': 'error'}
 
     def __del__(self) -> None:
-        """Cleanup on deletion."""
-        self.unload()
+        """
+        F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
+        
+        Called only if:
+        - Finalizer wasn't triggered (interpreter shutdown order)
+        - Object was resurrected and then deleted
+        """
+        if hasattr(self, '_finalizer') and self._finalizer.detach():
+            self.unload()
 
     def __enter__(self) -> 'RustPRMScorer':
         """Context manager entry."""
@@ -871,6 +881,24 @@ class RustPRMScorer:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Context manager exit."""
         self.unload()
+
+
+def _rust_prm_cleanup(model_id: str) -> None:
+    """
+    Module-level cleanup function for weakref.finalize.
+    
+    F264: Cleanup Rust CoreML resources when RustPRMScorer is garbage collected.
+    Called automatically by weakref.finalize when the object is GC'd.
+    """
+    try:
+        from hledac.universal._core.rust_backend import rust
+        raw = rust.raw
+        if raw is not None and hasattr(raw, 'ane'):
+            if hasattr(raw.ane, 'unload_prm_model'):
+                raw.ane.unload_prm_model(model_id)
+    except Exception:  # noqa: BLE001
+        pass
+
 
 def create_rust_prm_scorer(model_id: str='prm_step', model_path: Path | None=None) -> RustPRMScorer:
     """

@@ -324,3 +324,90 @@ class AsyncIteratorContext:
 def async_iter_context(agen: AsyncIterator) -> AsyncIteratorContext:
     """Create a context manager wrapper for an async iterator."""
     return AsyncIteratorContext(agen)
+
+
+async def merge_async_iterables[T](*sources: AsyncIterator[T]) -> AsyncGenerator[T]:
+    """
+    Merge multiple async iterables into one, yielding items as they become available.
+
+    True streaming: yields items immediately when any source produces them.
+    Uses asyncio.TaskGroup for structured concurrency.
+
+    Architecture:
+        - Each source runs concurrently via separate tasks
+        - Uses an unbounded queue to collect results from all sources
+        - Yields immediately when any source produces an item (no batching)
+
+    Args:
+        *sources: Variable number of async iterators to merge
+
+    Yields:
+        Items from any source as they become available
+
+    Example:
+        async def gen1():
+            yield 1
+            yield 2
+        async def gen2():
+            yield 3
+            yield 4
+
+        async for item in merge_async_iterables(gen1(), gen2()):
+            print(item)  # Yields as fast as sources produce (e.g., 1, 3, 2, 4)
+
+    Backpressure:
+        - Downstream must consume items to unblock producers
+        - Queue is unbounded but bounded by event loop scheduling
+        - Uses await asyncio.sleep(0) to yield control between items
+    """
+    if not sources:
+        return
+
+    # Queue for collecting items from all sources
+    results_queue: asyncio.Queue[tuple[int, T]] = asyncio.Queue()
+    # Track completed sources
+    completed_count = 0
+    total_sources = len(sources)
+
+    async def source_worker(source_idx: int, source: AsyncIterator[T]) -> None:
+        """Worker that drains a single source and puts items in queue."""
+        nonlocal completed_count
+        try:
+            async for item in source:
+                await results_queue.put((source_idx, item))
+        except asyncio.CancelledError:  # noqa: BLE001
+            raise
+        except Exception:  # noqa: BLE001
+            # Swallow exceptions from individual sources
+            pass
+        finally:
+            completed_count += 1
+
+    # Start all source workers
+    async with asyncio.TaskGroup() as tg:
+        for idx, source in enumerate(sources):
+            tg.create_task(source_worker(idx, source), eager_start=True)
+
+        # Consumer: yield items as they arrive from any source
+        while completed_count < total_sources:
+            try:
+                # Use wait_for with timeout to check for completion
+                source_idx, item = await asyncio.wait_for(results_queue.get(), timeout=0.01)
+                yield item
+                # Yield to event loop - allows downstream to process
+                await asyncio.sleep(0)
+            except asyncio.TimeoutError:
+                # No items available, continue checking for completion
+                continue
+            except asyncio.CancelledError:  # noqa: BLE001
+                raise
+
+        # Drain remaining items from queue
+        while not results_queue.empty():
+            try:
+                _, item = results_queue.get_nowait()
+                yield item
+            except asyncio.QueueEmpty:
+                break
+
+    # TaskGroup exits when all tasks complete or any raises

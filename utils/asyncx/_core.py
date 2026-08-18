@@ -204,7 +204,9 @@ async def first_completed[T](
     if not tasks:
         raise ValueError("first_completed requires at least one task")
 
-    winner_future: asyncio.Future[asyncio.Task[T]] = asyncio.get_event_loop().create_future()
+    # ISSUE-10 FIX: get_running_loop() instead of deprecated get_event_loop() (Python 3.12+)
+    # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+    winner_future: asyncio.Future[asyncio.Task[T]] = asyncio.get_running_loop().create_future(name="asyncx:first_completed")
 
     def on_done(task: asyncio.Task[T]) -> None:
         if not winner_future.done():

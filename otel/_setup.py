@@ -27,7 +27,7 @@ import msgspec
 from compat.msgspec_gc_compat import Struct
 from typing import Any, TextIO
 from _core import aclose
-from _core.lock_registry import LockCategory, register_lock
+from _core.lock_registry import LockCategory, auto_register
 
 _MAX_QUEUE_SIZE: int = 2048
 _MAX_EXPORT_BATCH: int = 64
@@ -68,7 +68,7 @@ _CONFIG: TelemetryConfig | None = None
 _DUCKDB_CONN: Any = None  # TEL-01: track DuckDB conn for proper shutdown
 
 
-@register_lock(LockCategory.METRICS)
+@auto_register(LockCategory.METRICS)
 def _setup_lock() -> threading.Lock:
     """Module-level lock for OTel setup initialization."""
     return threading.Lock()

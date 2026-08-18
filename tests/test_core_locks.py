@@ -42,7 +42,7 @@ from hledac.universal._core.locks import (
 )
 
 # Unique name generator for tests — avoids id() memory address collisions
-_test_id = uuid.uuid4().hex[:8]
+_test_id = uuid.uuid7().hex[:8]
 
 
 class TestLockCategory:

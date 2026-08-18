@@ -307,7 +307,7 @@ from _core import aclose
 
 def generate_uuid() -> str:
     """Generate a unique identifier."""
-    return str(uuid.uuid4())
+    return str(uuid.uuid7())
 
 def calculate_confidence(scores: list[float]) -> float:
     """Calculate average confidence score from list."""

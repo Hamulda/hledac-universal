@@ -194,7 +194,8 @@ class ArtiNodeClient:
     )
 
             # Bootstrap (blocking, but we run in thread to not block event loop)
-            session_id = f'hledac-arti-{uuid.uuid4().hex[:8]}'
+            # ISSUE-11: uuid7 for time-ordered session IDs (Python 3.14+)
+            session_id = f'hledac-arti-{uuid.uuid7().hex[:8]}'
 
             def do_start() -> bool:
                 return self._node.start()  # type: ignore[unionattr]
@@ -264,7 +265,7 @@ class ArtiNodeClient:
                 return None
 
         if session_name is None:
-            session_name = f'hledac-arti-{uuid.uuid4().hex[:8]}'
+            session_name = f'hledac-arti-{uuid.uuid7().hex[:8]}'
 
         try:
             # Call Rust isolate_circuit
@@ -693,7 +694,7 @@ class ArtiClient:
                 return None
 
         if session_name is None:
-            session_name = f'hledac-arti-{uuid.uuid4().hex[:8]}'
+            session_name = f'hledac-arti-{uuid.uuid7().hex[:8]}'
 
         async with self._circuit_lock:
             self._circuit_count += 1
@@ -1150,7 +1151,7 @@ class ArtiTransport(Transport):
             else:
                 # Subprocess mode: destroy + create session
                 await self._client.destroy_session()
-                session_id = f'hledac-arti-{uuid.uuid4().hex[:8]}'
+                session_id = f'hledac-arti-{uuid.uuid7().hex[:8]}'
                 await self._client.create_session(session_name=session_id)
                 logger.info(
                     '[Arti/subprocess] Phase-boundary session refresh:'

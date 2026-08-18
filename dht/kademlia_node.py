@@ -308,7 +308,8 @@ class BEP5UDPProtocol(asyncio.DatagramProtocol):
         msg_dict[b't'] = tid
         data = bencode(msg_dict)
         loop = self._loop or asyncio.get_running_loop()
-        fut = loop.create_future()
+        # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+        fut = loop.create_future(name=f"kademlia:rpc:{tid.hex()}")
         self._pending[tid] = fut
         self._pending_created[tid] = time.time()
         try:
@@ -433,7 +434,7 @@ async def crawl_dht_for_keyword(keyword: str, duration_s: int=120, max_results: 
     results: list[dict] = []
     start_time = time.monotonic()
     governor = ResourceGovernor()
-    node = KademliaNode(node_id=f'hledac-crawl-{uuid.uuid4().hex[:8]}', governor=governor, bootstrap_nodes=BOOTSTRAP_PEERS)
+    node = KademliaNode(node_id=f'hledac-crawl-{uuid.uuid7().hex[:8]}', governor=governor, bootstrap_nodes=BOOTSTRAP_PEERS)
     try:
         await _bootstrap_dht_peers()
         keyword_lower = keyword.lower()
@@ -954,9 +955,10 @@ class KademliaNode:
             if pid in queried or pid == self.node_id:
                 continue
             queried.add(pid)
-            rpc_id = str(uuid.uuid4())
+            # ISSUE-11: uuid7 for time-ordered RPC IDs (Python 3.14+)
+            rpc_id = str(uuid.uuid7())
             rpc_ids.append(rpc_id)
-            fut = asyncio.get_running_loop().create_future()
+            fut = asyncio.get_running_loop().create_future(name=f"kademlia:find_value:{key[:8]}")
             self._pending_rpcs[rpc_id] = fut
             self._pending_rpcs_created[rpc_id] = time.time()
             send_tasks.append(safe_create_task(
@@ -1009,8 +1011,9 @@ class KademliaNode:
     async def _ping(self, peer_id: str) -> bool:
         if not self._transport:
             return False
-        rpc_id = str(uuid.uuid4())
-        fut = asyncio.get_running_loop().create_future()
+        # ISSUE-11: uuid7 for time-ordered RPC IDs (Python 3.14+)
+        rpc_id = str(uuid.uuid7())
+        fut = asyncio.get_running_loop().create_future(name=f"kademlia:ping:{peer_id}")
         self._pending_rpcs[rpc_id] = fut
         self._pending_rpcs_created[rpc_id] = time.time()
         await self._transport.send_message(peer_id, 'dht_ping', {'rpc_id': rpc_id}, '')

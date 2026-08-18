@@ -439,7 +439,7 @@ def create_exception_event(
     now = time.time()
 
     return ExceptionEvent(
-        event_id=uuid.uuid4().hex[:12],
+        event_id=uuid.uuid7().hex[:12],
         cascade_id=cascade_id,
         severity=severity,
         scope=scope,

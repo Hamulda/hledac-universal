@@ -49,8 +49,8 @@ from cachetools import TTLCache
 
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.asyncx import async_getaddrinfo, parallel
-from _core import aclose
-from compat.msgspec_gc_compat import Struct
+from hledac.universal._core import aclose
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
@@ -187,8 +187,10 @@ class DNSCacheService:
             sem, _ = await self._per_host_gate.acquire(host)
 
         try:
-            loop = asyncio.get_event_loop()
-            fut: asyncio.Future[list[str] | None] = loop.create_future()
+            # ISSUE-10 FIX: get_running_loop() instead of deprecated get_event_loop() (Python 3.12+)
+            # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+            loop = asyncio.get_running_loop()
+            fut: asyncio.Future[list[str] | None] = loop.create_future(name=f"fetch_service:dns:{host}")
             self._inflight[cache_key] = fut
 
             try:
@@ -657,3 +659,22 @@ class FetchServiceRegistry:
             else:
                 stats[name] = {'available': True}
         return stats
+
+    async def aclose(self) -> None:
+        """Close service registry and release all resources."""
+        # Close transports that support aclose
+        for name, transport in self._transports.items():
+            if transport is not None and hasattr(transport, 'aclose'):
+                try:
+                    await transport.aclose()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"Failed to close transport {name}: {e}")
+
+        self._dns = None
+        self._rate_limiter = None
+        self._circuit_breaker = None
+        self._retry_policy = None
+        self._robots_checker = None
+        self._transports.clear()
+        self._initialized = False
+        logger.debug("FetchServiceRegistry closed")

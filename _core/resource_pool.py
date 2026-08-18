@@ -32,10 +32,13 @@ import asyncio
 import atexit
 import contextlib
 import functools
+import logging
 import sys
 import threading
 import time
 import weakref
+
+logger = logging.getLogger(__name__)
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
@@ -248,8 +251,38 @@ class _DuckDBPool:
             self._pools.clear()
             self._round_robin.clear()
             self._total_connections = 0
+# =============================================================================
+# DEPRECATED DUCKDB POOLS - ISSUE-18
+# =============================================================================
+# WARNING: These pools are DEPRECATED in favor of _core.duckdb_pool
+#
+# The canonical DuckDB pool is now _core/duckdb_pool.py which provides:
+# - ReadCoordinator for ISSUE-17 read-write coordination
+# - asyncio.Semaphore(2) to limit concurrent reads
+# - Write barrier pattern to prevent deadlocks
+#
+# Migration:
+#   OLD: with_resource(PoolKind.DUCKDB_RO, db_path) as conn
+#   NEW: duckdb_ro_read(db_path) or duckdb_ro_acquire(db_path)
+#
+# See _core/duckdb_pool.py for the canonical implementation.
+# =============================================================================
+
 _duckdb_ro_pool = _DuckDBPool(max_size=_DUCKDB_POOL_SIZE)
 _duckdb_rw_pool = _DuckDBPool(max_size=2, max_absolute=4)
+
+
+def _warn_deprecated_duckdb_pool() -> None:
+    """Issue deprecation warning for resource_pool.py DuckDB pools."""
+    import warnings
+    warnings.warn(
+        "resource_pool.py DuckDB pools are deprecated. "
+        "Use _core.duckdb_pool.duckdb_ro_read() or duckdb_ro_acquire() instead. "
+        "See ISSUE-18.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
 
 class _CPUPool:
     """
@@ -486,6 +519,16 @@ _POOL_CONFIG = {
 
 def _acquire_pool_resource(kind: PoolKind, db_path: str | None) -> tuple[Any, str | None]:
     """Acquire resource from the appropriate pool based on kind."""
+    # ISSUE-18: Deprecation warning for DuckDB pools
+    if kind in (PoolKind.DUCKDB_RO, PoolKind.DUCKDB_RW):
+        import warnings
+        warnings.warn(
+            "PoolKind.DUCKDB_* is deprecated. "
+            "Use _core.duckdb_pool.duckdb_ro_read() or duckdb_ro_acquire() instead. "
+            "See ISSUE-18.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     if kind in _POOL_CONFIG:
         pool_name, read_only_flag = _POOL_CONFIG[kind]
         if 'duckdb' in pool_name:

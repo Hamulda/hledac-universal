@@ -152,7 +152,7 @@ def canned_feed_adapter():
             from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
             finding = CanonicalFinding(
-                finding_id=f"smoke_{uuid.uuid4().hex[:12]}",
+                finding_id=f"smoke_{uuid.uuid7().hex[:12]}",
                 source_type="rss_atom_pipeline",
                 ts=1705651200.0,
                 query=query_context or "test",

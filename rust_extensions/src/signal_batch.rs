@@ -444,12 +444,12 @@ unsafe fn aggregate_signals_neon(
 
         let chunks = out_len / 4;
 
-        // Pre-compute per-source weight * novelty multipliers.
+        // Pre-compute per-source weight multipliers.
         let weight_vecs: Vec<f32> = weights
             .iter()
             .take(n_sources)
             .map(|&w| if w > 0.0 { w } else { 0.0 })
-            );
+            .collect();
 
         for i in 0..n_sources {
             let w = weight_vecs[i];
@@ -505,8 +505,8 @@ unsafe fn aggregate_signals_neon(
 
 #[cfg(not(neon_available))]
 fn aggregate_signals_neon(signals: &[Vec<f32>], weights: &[f32], normalize: bool) -> Vec<f32> {
-    let _ = (signals, weights, normalize);
-    Vec::new()
+    // Fallback to scalar implementation on non-NEON platforms
+    aggregate_signals_inner(signals, weights, normalize)
 }
 
 // ---------------------------------------------------------------------------
@@ -537,7 +537,7 @@ pub fn batch_compute_scores(
     stats: &Bound<'_, PyList>,
     default_weight: f32,
 ) -> PyResult<Vec<f32>> {
-    let n = stats);
+    let n = stats.len();
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -713,7 +713,7 @@ pub fn batch_quality_score(
 ) -> PyResult<Vec<(f32, String, String, String, bool, Option<String>)>> {
     use rayon::prelude::*;
 
-    let n = text_lens);
+    let n = text_lens.len();
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -721,7 +721,7 @@ pub fn batch_quality_score(
     // Extract all data into owned Vecs before rayon pool (Python<'_> not Send).
     let lens: Vec<usize> = (0..n)
         .filter_map(|i| text_lens.get_item(i).ok().and_then(|v| v.extract().ok()))
-        );
+        .collect();
 
     let texts_str: Vec<String> = (0..n)
         .filter_map(|i| {
@@ -730,7 +730,7 @@ pub fn batch_quality_score(
                 .ok()
                 .and_then(|v| v.str().ok().map(|s| s.to_string()))
         })
-        );
+        .collect();
 
     let errors: Vec<Option<String>> = (0..n)
         .filter_map(|i| {
@@ -742,7 +742,7 @@ pub fn batch_quality_score(
                 }
             })
         })
-        );
+        .collect();
 
     let failures: Vec<Option<String>> = (0..n)
         .filter_map(|i| {
@@ -754,7 +754,7 @@ pub fn batch_quality_score(
                 }
             })
         })
-        );
+        .collect();
 
     // rayon parallel scoring — release GIL.
     // R6: migrated to PyO3 0.29 Python::attach + py.detach via release_gil().
@@ -867,8 +867,8 @@ fn _compute_quality_signal(text: &str, text_len: usize) -> f32 {
     }
 
     // Entropy-based signal (simple heuristic).
-    let unique_chars = text.chars().collect::<std::collections::HashSet<_>>());
-    let entropy_score = (unique_chars as f32 / 50.0_f32).min(1.0_f32);
+    let unique_chars = text.chars().collect::<std::collections::HashSet<_>>();
+    let entropy_score = (unique_chars.len() as f32 / 50.0_f32).min(1.0_f32);
 
     // Length-based signal.
     let length_score = (text_len as f32 / 5000.0_f32).min(1.0_f32);

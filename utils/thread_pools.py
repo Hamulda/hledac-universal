@@ -191,7 +191,8 @@ class PersistentActorExecutor:
             raise RuntimeError('PersistentActorExecutor.shutdown() already called')
         loop = self._loop
         assert loop is not None
-        fut = loop.create_future()
+        # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+        fut = loop.create_future(name="persistent_actor:job")
         item = (fn, args, kwargs, fut)
         with self._lock:
             # Double-check after acquiring lock

@@ -63,7 +63,7 @@ class FailureEntry:
     def create(cls, component: str, severity: FailureSeverity, error: BaseException, context: Optional[dict[str, Any]]=None, failure_path: Optional[tuple[str, ...]]=None) -> 'FailureEntry':
         """Factory to create a FailureEntry from an exception."""
         import traceback
-        return cls(id=str(uuid.uuid4())[:8], timestamp=time.monotonic(), component=component, severity=severity, error_type=type(error).__name__, error_message=str(error), stack_trace=traceback.format_exc(limit=10) if logger.isEnabledFor(logging.DEBUG) else None, context=context or {}, failure_path=failure_path or ())
+        return cls(id=str(uuid.uuid7())[:8], timestamp=time.monotonic(), component=component, severity=severity, error_type=type(error).__name__, error_message=str(error), stack_trace=traceback.format_exc(limit=10) if logger.isEnabledFor(logging.DEBUG) else None, context=context or {}, failure_path=failure_path or ())
 
 @dataclass(slots=True)
 class ComponentHealth:

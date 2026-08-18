@@ -595,7 +595,7 @@ class PivotPlanner:
                 for key, boost in hermes_boost_map.items():
                     pivot_type, ioc_type, ioc_value = key
                     info = hermes_pivot_info.get(key, {})
-                    pivots.append(Pivot(priority=-boost, pivot_id=str(uuid.uuid4()), pivot_type=pivot_type, ioc_value=ioc_value, ioc_type=ioc_type, reason=f'LLM-extracted {ioc_type} from Hermes', expected_value=boost, source_hint=info.get('source_hint', 'hermes:fallback'), evidence_pointers=(), score_reason=info.get('score_reason', 'hermes_fallback'), estimated_cost=0.5, mission_boost=1.0))
+                    pivots.append(Pivot(priority=-boost, pivot_id=str(uuid.uuid7()), pivot_type=pivot_type, ioc_value=ioc_value, ioc_type=ioc_type, reason=f'LLM-extracted {ioc_type} from Hermes', expected_value=boost, source_hint=info.get('source_hint', 'hermes:fallback'), evidence_pointers=(), score_reason=info.get('score_reason', 'hermes_fallback'), estimated_cost=0.5, mission_boost=1.0))
             if mission_intent:
                 for p in pivots:
                     boost = score_pivot_for_mission(p, mission_intent)
@@ -659,45 +659,45 @@ class PivotPlanner:
             score = _score_pivot_domain(domain, base_score, envelope, graph_stats, sqs)
             penalty = self._get_feedback_penalty(PivotType.DOMAIN, 'domain', feedback_summary)
             score = score * penalty
-            pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.DOMAIN, ioc_value=domain, ioc_type='domain', reason=f"Domain pivot from {getattr(finding, 'source_type', 'unknown')}", expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+            pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid7()), pivot_type=PivotType.DOMAIN, ioc_value=domain, ioc_type='domain', reason=f"Domain pivot from {getattr(finding, 'source_type', 'unknown')}", expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
             archive_score = _score_pivot_archive(domain, base_score, graph_stats)
             archive_penalty = self._get_feedback_penalty(PivotType.ARCHIVE, 'domain', feedback_summary)
             archive_score = archive_score * archive_penalty
-            pivots.append(Pivot(priority=-archive_score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.ARCHIVE, ioc_value=domain, ioc_type='domain', reason='Archive historical records for domain', expected_value=archive_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+            pivots.append(Pivot(priority=-archive_score, pivot_id=str(uuid.uuid7()), pivot_type=PivotType.ARCHIVE, ioc_value=domain, ioc_type='domain', reason='Archive historical records for domain', expected_value=archive_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
         elif ioc_type in ('ip', 'ipv4'):
             score = base_score * 0.7
             penalty = self._get_feedback_penalty(PivotType.DOMAIN, 'ip', feedback_summary)
             score = score * penalty
-            pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.DOMAIN, ioc_value=ioc_value, ioc_type='ip', reason='Reverse DNS / domain lookup for IP', expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+            pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid7()), pivot_type=PivotType.DOMAIN, ioc_value=ioc_value, ioc_type='ip', reason='Reverse DNS / domain lookup for IP', expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
             graph_score = _score_pivot_graph(ioc_value, ioc_type, base_score, graph_stats)
             graph_penalty = self._get_feedback_penalty(PivotType.GRAPH, 'ip', feedback_summary)
             graph_score = graph_score * graph_penalty
-            pivots.append(Pivot(priority=-graph_score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type='ip', reason='Graph traversal from IP IOC', expected_value=graph_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+            pivots.append(Pivot(priority=-graph_score, pivot_id=str(uuid.uuid7()), pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type='ip', reason='Graph traversal from IP IOC', expected_value=graph_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
         elif ioc_type in ('md5', 'sha1', 'sha256'):
             score = base_score * 0.7
             penalty = self._get_feedback_penalty(PivotType.GRAPH, ioc_type, feedback_summary)
             score = score * penalty
-            pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type=ioc_type, reason=f'Threat intelligence lookup for {ioc_type.upper()} hash', expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+            pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid7()), pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type=ioc_type, reason=f'Threat intelligence lookup for {ioc_type.upper()} hash', expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
         elif ioc_type == 'email':
             leak_score = _score_pivot_leak(ioc_value, base_score)
             leak_penalty = self._get_feedback_penalty(PivotType.LEAK, 'email', feedback_summary)
             leak_score = leak_score * leak_penalty
-            pivots.append(Pivot(priority=-leak_score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.LEAK, ioc_value=ioc_value, ioc_type='email', reason='Check email for breach/leak exposure', expected_value=leak_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+            pivots.append(Pivot(priority=-leak_score, pivot_id=str(uuid.uuid7()), pivot_type=PivotType.LEAK, ioc_value=ioc_value, ioc_type='email', reason='Check email for breach/leak exposure', expected_value=leak_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
             identity_score = _score_pivot_identity(ioc_value, ioc_type, base_score)
             identity_penalty = self._get_feedback_penalty(PivotType.IDENTITY, 'email', feedback_summary)
             identity_score = identity_score * identity_penalty
-            pivots.append(Pivot(priority=-identity_score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.IDENTITY, ioc_value=ioc_value, ioc_type='email', reason='Identity resolution for email address', expected_value=identity_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+            pivots.append(Pivot(priority=-identity_score, pivot_id=str(uuid.uuid7()), pivot_type=PivotType.IDENTITY, ioc_value=ioc_value, ioc_type='email', reason='Identity resolution for email address', expected_value=identity_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
         elif ioc_type == 'url':
             domain = self._extract_domain_from_url(ioc_value)
             if domain:
                 score = base_score * 0.6
                 penalty = self._get_feedback_penalty(PivotType.DOMAIN, 'domain', feedback_summary)
                 score = score * penalty
-                pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.DOMAIN, ioc_value=domain, ioc_type='domain', reason='Domain extracted from URL', expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+                pivots.append(Pivot(priority=-score, pivot_id=str(uuid.uuid7()), pivot_type=PivotType.DOMAIN, ioc_value=domain, ioc_type='domain', reason='Domain extracted from URL', expected_value=score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
             archive_score = _score_pivot_archive(ioc_value, base_score * 0.5, graph_stats)
             archive_penalty = self._get_feedback_penalty(PivotType.ARCHIVE, 'url', feedback_summary)
             archive_score = archive_score * archive_penalty
-            pivots.append(Pivot(priority=-archive_score, pivot_id=str(uuid.uuid4()), pivot_type=PivotType.ARCHIVE, ioc_value=ioc_value, ioc_type='url', reason='Archive historical snapshot of URL', expected_value=archive_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
+            pivots.append(Pivot(priority=-archive_score, pivot_id=str(uuid.uuid7()), pivot_type=PivotType.ARCHIVE, ioc_value=ioc_value, ioc_type='url', reason='Archive historical snapshot of URL', expected_value=archive_score, source_hint=f'finding:{fid}' if fid else 'unknown', evidence_pointers=(fid,) if fid else ()))
         return pivots
 
     def _get_feedback_penalty(self, pivot_type: str, ioc_type: str, feedback_summary: dict | None) -> float:
@@ -981,7 +981,7 @@ def generate_pivot_candidates_from_query(query: str, max_candidates: int=MAX_PIV
     if ioc_type == 'unknown':
         return []
 
-    pivot_id_base = str(uuid.uuid4())[:8]
+    pivot_id_base = str(uuid.uuid7())[:8]
     source_hint = 'query:direct'
 
     candidates = _generate_pivots_for_ioc_type(

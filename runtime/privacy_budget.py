@@ -142,8 +142,24 @@ class PrivacyBudgetAllocator(Struct):
         return 'clearnet'
 
     def get_budget_summary(self) -> dict:
-        """Return budget allocation summary for telemetry."""
-        return {'total_workers': self.total_workers, 'privacy_ratio': PRIVACY_BUDGET_RATIO, 'clearnet_budget': self._clearnet_budget, 'available_lanes': self._available_lanes, 'lane_budgets': {'tor': self._tor_sem._value if self._tor_sem else 0, 'i2p': self._i2p_sem._value if self._i2p_sem else 0, 'nym': self._nym_sem._value if self._nym_sem else 0}}
+        """
+        Return budget allocation summary for telemetry.
+
+        Note: Privacy lane semaphores are static allocations - they never change
+        after creation. Using _value for telemetry (safe since no concurrent
+        modification occurs in these semaphores).
+        """
+        return {
+            'total_workers': self.total_workers,
+            'privacy_ratio': PRIVACY_BUDGET_RATIO,
+            'clearnet_budget': self._clearnet_budget,
+            'available_lanes': self._available_lanes,
+            'lane_budgets': {
+                'tor': self._tor_sem._value if self._tor_sem else 0,
+                'i2p': self._i2p_sem._value if self._i2p_sem else 0,
+                'nym': self._nym_sem._value if self._nym_sem else 0,
+            },
+        }
 
 def make_privacy_allocator(total_workers: int) -> PrivacyBudgetAllocator:
     """Factory: create a PrivacyBudgetAllocator with the given total worker count."""

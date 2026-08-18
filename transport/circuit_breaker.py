@@ -180,10 +180,13 @@ class CircuitBreaker:
     _half_open_probes: int = dataclasses.field(default=0, init=False)
     _state_entered_at_monotonic: float = dataclasses.field(default_factory=time.monotonic, init=False)
     _state_lock: threading.RLock = dataclasses.field(default=None, init=False)
+    _rust_cb: dict = dataclasses.field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self._state_lock is None:
             self._state_lock = threading.RLock()
+        if self._rust_cb is None:
+            self._rust_cb = _get_rust_cb()
 
     def _record_state_duration(self, from_state: CBState, to_state: CBState) -> None:
         """Sprint F4: Record duration gauge when transitioning between states."""
@@ -200,6 +203,38 @@ class CircuitBreaker:
             pass
 
     def is_open(self) -> bool:
+        # A3: Fast-path lock-free Rust check — eliminates GIL contention
+        # Rust AtomicU8 is lock-free, ~20-100x faster than threading.RLock
+        # FIX-1: Rust is_open returns False for both CLOSED and HALF_OPEN states.
+        # When Rust returns False but Python is already in HALF_OPEN, we must NOT
+        # re-transition (would reset _half_open_probes counter, breaking Rust/Python sync).
+        if self._rust_cb:
+            try:
+                rust_open = self._rust_cb['is_open'](self.domain)
+                if rust_open:
+                    return True  # Circuit definitively blocked
+                # Rust says not open — check Python state to avoid HALF_OPEN double-transition
+                with self._state_lock:
+                    if self._state == CBState.HALF_OPEN:
+                        # Rust already counted probes; return False to allow without re-transition
+                        return False
+                    if self._state == CBState.OPEN:
+                        # Rust says not open but Python thinks it's OPEN:
+                        # Recovery timeout elapsed in Rust but not yet in Python
+                        # Transition Python to HALF_OPEN (probes=0 since Rust is authoritative)
+                        prev = self._state
+                        self._state = CBState.HALF_OPEN
+                        self._half_open_probes = 0
+                        self._state_entered_at_monotonic = time.monotonic()
+                        self._record_state_duration(prev, self._state)
+                        _metrics_safe_increment('circuit_breaker_state_transitions')
+                        _metrics_safe_increment('circuit_breaker_half_open_count')
+                        _emit_transport_event(TRANSPORT_CIRCUIT_HALF_OPEN, self.domain)
+                        return False
+                    return False  # CLOSED
+            except (SystemError, OSError, RuntimeError):
+                pass  # Fall through to Python for full logic
+        # Python fallback: handles half-open transitions, metrics, events
         with self._state_lock:
             if self._state == CBState.OPEN:
                 if time.monotonic() - self._last_failure_time > self.recovery_timeout:
@@ -267,6 +302,20 @@ class CircuitBreaker:
             return CircuitDecision(allowed=True, domain=self.domain, state='closed', retry_after_s=0.0, reason='circuit_closed')
 
     def record_success(self):
+        # A3: Rust lock-free record_success — fast path
+        # Rust AtomicU32 resets failure_count without GIL contention
+        # FIX-3: Also call Rust half_open_probe to count probes in HALF_OPEN state.
+        # This keeps Rust's probe counter in sync with Python.
+        if self._rust_cb:
+            try:
+                self._rust_cb['record_success'](self.domain)
+                # Count probe in HALF_OPEN if Rust is tracking this state
+                half_open_probe = self._rust_cb.get('half_open_probe')
+                if half_open_probe:
+                    half_open_probe(self.domain)
+            except (SystemError, OSError, RuntimeError):
+                pass  # Fall through to Python for full logic
+        # Python: authoritative for metrics, events, adaptive timeout
         event_to_emit: str | None = None
         _domain_for_emit: str = ''
         with self._state_lock:
@@ -290,6 +339,9 @@ class CircuitBreaker:
     def record_failure(self, is_timeout: bool=False, failure_kind: str='', *, is_warmup: bool=False, sprint_remaining_s: float | None=None):
         """Record a failure against the circuit breaker.
 
+        A3: Rust lock-free record_failure — fast path.
+        Rust AtomicU32 increments failure_count without GIL contention.
+
         Warmup failures (is_warmup=True) are tracked separately and do NOT
         contribute to the production failure threshold.
 
@@ -302,6 +354,14 @@ class CircuitBreaker:
           accumulative timeout units — so 6 timeouts at 0.5 weight = 3.0 (still below 4),
           8 timeouts = 4.0 (hits threshold), giving circuit more tolerance on slow networks
         """
+        # A3: Rust fast-path for non-warmup failures
+        # Warmup failures: Python-only (Rust has no warmup concept)
+        if not is_warmup and self._rust_cb:
+            try:
+                self._rust_cb['record_failure'](self.domain, is_timeout)
+            except (SystemError, OSError, RuntimeError):
+                pass  # Fall through to Python for full logic
+        # Python: authoritative for warmup, adaptive timeout, metrics, events
         event_to_emit: str | None = None
         _domain_for_emit: str = ''
         with self._state_lock:
@@ -363,24 +423,40 @@ class CircuitBreaker:
             return CircuitBreakerSnapshot(domain=self.domain, state=self._state.value, failure_count=self._failure_count, warmup_failure_count=self._warmup_failure_count, recovery_timeout_s=self.recovery_timeout, opened_at_monotonic=self._opened_at_monotonic, last_failure_kind=self._last_failure_kind)
 from hledac.universal.utils.cache import PyCacheDict
 from _core import aclose
-_rust_cb = None
+_rust_cb: dict | None = None
+_rust_cb_lock = threading.Lock()
+register_lock(LockCategory.NETWORK, _rust_cb_lock, 'circuit_breaker._rust_cb_lock')
 
-def _get_rust_cb():
-    """Lazy load Rust circuit breaker functions."""
+def _get_rust_cb() -> dict:
+    """Lazy load Rust circuit breaker functions — thread-safe singleton.
+
+    FIX-2: Uses double-checked locking pattern to prevent race conditions
+    during parallel imports. Multiple threads calling _get_rust_cb() simultaneously
+    will safely initialize _rust_cb exactly once.
+    """
     global _rust_cb
-    if _rust_cb is None:
-        from hledac.universal._core.rust_backend import rust
-        raw = rust.raw
-        circuit_breaker_is_open = raw.circuit_breaker_is_open
-        circuit_breaker_record_success = raw.circuit_breaker_record_success
-        circuit_breaker_record_failure = raw.circuit_breaker_record_failure
-        circuit_breaker_half_open_probe = raw.circuit_breaker_half_open_probe
-        circuit_breaker_clear_all = raw.circuit_breaker_clear_all
-        circuit_breaker_get_stats = raw.circuit_breaker_get_stats
-        if all([circuit_breaker_is_open, circuit_breaker_record_success, circuit_breaker_record_failure]):
-            _rust_cb = {'is_open': circuit_breaker_is_open, 'record_success': circuit_breaker_record_success, 'record_failure': circuit_breaker_record_failure, 'half_open_probe': circuit_breaker_half_open_probe, 'clear_all': circuit_breaker_clear_all, 'get_stats': circuit_breaker_get_stats}
-        else:
-            _rust_cb = {}
+    # Fast path: already initialized
+    if _rust_cb is not None:
+        return _rust_cb
+    # Slow path: acquire lock and double-check
+    with _rust_cb_lock:
+        if _rust_cb is None:
+            try:
+                from hledac.universal._core.rust_backend import rust
+                raw = rust.raw
+                circuit_breaker_is_open = getattr(raw, 'circuit_breaker_is_open', None)
+                circuit_breaker_record_success = getattr(raw, 'circuit_breaker_record_success', None)
+                circuit_breaker_record_failure = getattr(raw, 'circuit_breaker_record_failure', None)
+                circuit_breaker_half_open_probe = getattr(raw, 'circuit_breaker_half_open_probe', None)
+                circuit_breaker_clear_all = getattr(raw, 'circuit_breaker_clear_all', None)
+                circuit_breaker_get_stats = getattr(raw, 'circuit_breaker_get_stats', None)
+                if all([circuit_breaker_is_open, circuit_breaker_record_success, circuit_breaker_record_failure]):
+                    _rust_cb = {'is_open': circuit_breaker_is_open, 'record_success': circuit_breaker_record_success, 'record_failure': circuit_breaker_record_failure, 'half_open_probe': circuit_breaker_half_open_probe, 'clear_all': circuit_breaker_clear_all, 'get_stats': circuit_breaker_get_stats}
+                else:
+                    _rust_cb = {}
+            except Exception:
+                # Rust backend unavailable (not built, import error, etc.)
+                _rust_cb = {}
     return _rust_cb
 
 def rust_circuit_is_open(domain: str) -> bool | None:
@@ -766,6 +842,9 @@ def domain_breaker_check(domain: str) -> CircuitDecision:
     R23 FIX: Rust circuit_breaker_is_open is authoritative when available.
     Python CircuitBreaker.check_circuit() is fallback when Rust unavailable.
 
+    FIX-4: When Rust returns False (not open), check Python state for HALF_OPEN
+    reporting. Rust is_open conflates CLOSED and HALF_OPEN (both return False).
+
     Rationale: Rust uses lock-free AtomicU32/AtomicU64 atomics — ~10-100×
     faster than threading.Lock in async contexts. 512 domains = ~12KB vs
     Python's ~500KB+ dict overhead. Hot path called 100-1000× per sprint.
@@ -776,7 +855,16 @@ def domain_breaker_check(domain: str) -> CircuitDecision:
     if rust_result is not None:
         if rust_result:
             return CircuitDecision(allowed=False, domain=domain, state='open', retry_after_s=BASE_RECOVERY_TIMEOUT_S, reason='circuit_open_rust')
-        else:
+        # FIX-4: Rust says not open — check Python for accurate state reporting.
+        # Rust is_open returns False for both CLOSED and HALF_OPEN states.
+        # Use Python's state to distinguish for proper telemetry/event emission.
+        breaker = get_breaker(domain)
+        with breaker._state_lock:
+            py_state = breaker._state
+            if py_state == CBState.HALF_OPEN:
+                jittered = breaker._jittered_retry_after()
+                return CircuitDecision(allowed=True, domain=domain, state='half_open', retry_after_s=jittered, reason='circuit_half_open_recovery_probe')
+            # CLOSED or unknown (first call) — treat as closed
             return CircuitDecision(allowed=True, domain=domain, state='closed', retry_after_s=0.0, reason='circuit_closed_rust')
     breaker = get_breaker(domain)
     return breaker.check_circuit()

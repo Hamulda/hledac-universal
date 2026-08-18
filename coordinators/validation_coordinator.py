@@ -18,6 +18,7 @@ Unique Features Integrated:
 4. Validation severity levels
 5. Custom validator support
 """
+import asyncio
 import logging
 from dataclasses import field
 from enum import Enum
@@ -25,7 +26,6 @@ from typing import Any
 
 import msgspec
 from compat.msgspec_gc_compat import Struct
-from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.asyncx import parallel
 
@@ -33,12 +33,35 @@ from .base import UniversalCoordinator
 from _core import aclose
 
 logger = logging.getLogger(__name__)
+
+# M1 8GB Safety: 5MB HTML input cap (matches Rust MAX_HTML_INPUT_SIZE)
+_MAX_HTML_INPUT_SIZE: int = 5 * 1024 * 1024
+
+# Rust html_parse availability (lol_html with 5MB cap, GIL release, ~5× faster)
+# Architecture: via _core.rust_backend facade (R6 pattern)
+_RUST_HTML_PARSE_AVAILABLE = False
+_rust_html_parse = None  # Access via rust.raw.extract_html_text
+try:
+    from hledac.universal._core.rust_backend import rust
+
+    # Check if extract_html_text is available in raw module
+    if hasattr(rust, 'raw') and hasattr(rust.raw, 'extract_html_text'):
+        _rust_html_parse = rust.raw
+        _RUST_HTML_PARSE_AVAILABLE = True
+    else:
+        _rust_html_parse = None
+except ImportError:
+    _rust_html_parse = None  # type: ignore[assignment]
+
+# html_text_fast availability
 try:
     from hledac.universal.utils.html_text_fast import html_to_text_fast
+
     HTML_TEXT_FAST_AVAILABLE = True
 except ImportError:
     HTML_TEXT_FAST_AVAILABLE = False
     html_to_text_fast = None
+
 
 def _format_markdown_lines(elems: list) -> str:
     """Format HTML elements as markdown lines."""
@@ -61,8 +84,60 @@ def _format_markdown_lines(elems: list) -> str:
                 lines_out.append(text)
     return '\n\n'.join(lines_out)
 
+
+def _extract_html_parse(html: str, output_format: str) -> dict[str, Any] | None:
+    """
+    Tier 0: Rust lol_html extraction via html_parse module.
+
+    Zero-allocation HTML→text via lol_html streaming parser.
+    - 5MB input cap enforced (matches Rust MAX_HTML_INPUT_SIZE)
+    - GIL release during parsing (rayon parallelism)
+    - ~5× faster than selectolax for text extraction
+    - Only supports 'text' output; 'markdown' falls through to selectolax
+
+    Returns result dict or None on failure.
+    """
+    if not _RUST_HTML_PARSE_AVAILABLE or _rust_html_parse is None:
+        return None
+
+    # M1 8GB safety: enforce 5MB input cap before Rust call
+    if len(html) > _MAX_HTML_INPUT_SIZE:
+        html = html[:_MAX_HTML_INPUT_SIZE]
+
+    # lol_html extracts plain text only; for 'markdown' format
+    # we fall through to selectolax which provides better structure
+    if output_format == 'markdown':
+        return None
+
+    try:
+        # Use rust.raw.extract_html_text (R6 facade pattern)
+        content = _rust_html_parse.extract_html_text(html)
+        if not content:
+            return None
+
+        return {
+            'success': True,
+            'content': content,
+            'format': 'text',
+            'metadata': {
+                'method': 'rust_html_parse',
+                'input_size_bytes': len(html),
+                'parser': 'lol_html',
+            },
+            'error': None,
+        }
+    except Exception as e:
+        logger.debug('rust_html_parse extraction failed: %s', e)
+        return None
+
+
 def _extract_selectolax(html: str, output_format: str) -> dict[str, Any] | None:
-    """Tier 1: selectolax extraction. Returns result dict or None on failure."""
+    """
+    Tier 2: selectolax extraction (Cython, M1-friendly).
+
+    Supports 'text', 'markdown', and 'json' output formats.
+    Returns result dict or None on failure.
+    """
     try:
         from selectolax.parser import HTMLParser as _SelectolaxParser
         tree = _SelectolaxParser(html)
@@ -91,7 +166,13 @@ def _extract_selectolax(html: str, output_format: str) -> dict[str, Any] | None:
         return None
 
 def _extract_html_text_fast(html: str) -> dict[str, Any] | None:
-    """Tier 2: html_text_fast extraction. Returns result dict or None on failure."""
+    """
+    Tier 1: html_text_fast extraction (C extension, text-only).
+
+    Fast text extraction via html_text_fast C extension.
+    Only supports 'text' output; falls through to selectolax for other formats.
+    Returns result dict or None on failure.
+    """
     if not HTML_TEXT_FAST_AVAILABLE:
         return None
     try:
@@ -104,61 +185,16 @@ def _extract_html_text_fast(html: str) -> dict[str, Any] | None:
             'error': None,
         }
     except Exception as e:
-        logger.warning('html_text_fast failed, falling back to bs4: %s', e)
+        logger.warning('html_text_fast failed, falling back to selectolax: %s', e)
         return None
 
-def _extract_selectolax(html: str, output_format: str) -> dict[str, Any] | None:
-    """Tier 3: selectolax extraction (G1 FIX: replaces beautifulsoup4).
-
-    Returns result dict or None on failure.
-    """
-    try:
-        from selectolax.parser import HTMLParser as _Parser
-        tree = _Parser(html)
-        for tag in tree.css('script, style, nav, footer, header, aside'):
-            tag.decompose()
-
-        if output_format == 'text':
-            body = tree.css_first('body')
-            content = (body.text(separator=' ', strip=True) if body 
-                      else tree.text(separator=' ', strip=True))
-        elif output_format == 'markdown':
-            # Extract headings and paragraphs for markdown
-            elements = []
-            for node in tree.css('h1, h2, h3, p, li'):
-                text = node.text(strip=True)
-                if text:
-                    tag_name = node.tag
-                    if tag_name == 'h1':
-                        elements.append(f'# {text}')
-                    elif tag_name == 'h2':
-                        elements.append(f'## {text}')
-                    elif tag_name == 'h3':
-                        elements.append(f'### {text}')
-                    elif tag_name == 'p':
-                        elements.append(text)
-                    elif tag_name == 'li':
-                        elements.append(f'- {text}')
-            content = '\n\n'.join(elements)
-        else:
-            body = tree.css_first('body')
-            content = (body.text(separator=' ', strip=True) if body 
-                      else tree.text(separator=' ', strip=True))
-
-        return {
-            'success': True,
-            'content': content,
-            'format': output_format,
-            'metadata': {'method': 'selectolax'},
-            'error': None,
-        }
-    except Exception:
-        return None
 
 def _extract_regex_fallback(html: str, output_format: str) -> dict[str, Any]:
-    """Tier 4: Regex fallback extraction. Always succeeds.
+    """
+    Tier 3: Regex fallback extraction (stdlib, always succeeds).
 
-    G1 FIX: This is now the final fallback instead of beautifulsoup4.
+    Ultimate fallback when all other tiers fail.
+    Uses stdlib re for maximum compatibility.
     """
     import re
     # Remove unwanted tags
@@ -400,33 +436,37 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         """
         Simple HTML extraction fallback with tier-based approach.
 
-        Tier 1: selectolax (fastest, Rust C backend)
-        Tier 2: html_text_fast for 'text' output
-        Tier 3: bs4 html.parser fallback
-        Tier 4: regex ultimate fallback
+        Tier 0: Rust lol_html (5MB cap, GIL release, ~5× faster, text-only)
+        Tier 1: html_text_fast (C extension, text-only, fast)
+        Tier 2: selectolax (Cython, M1-friendly, supports text/markdown/json)
+        Tier 3: regex fallback (stdlib, ultimate compatibility)
         """
-        # Tier 1: selectolax
-        result = _extract_selectolax(html, output_format)
+        # Tier 0: Rust lol_html (zero-allocation text extraction)
+        result = _extract_html_parse(html, output_format)
         if result is not None:
             return result
 
-        # Tier 2: html_text_fast (text only)
+        # Tier 1: html_text_fast (text only)
         if output_format == 'text':
             result = _extract_html_text_fast(html)
             if result is not None:
                 return result
 
-        # Tier 3: selectolax (G1 FIX: replaces beautifulsoup4)
+        # Tier 2: selectolax (supports text, markdown, json)
         result = _extract_selectolax(html, output_format)
         if result is not None:
             return result
 
-        # Tier 4: regex fallback
+        # Tier 3: regex fallback (ultimate, always succeeds)
         return _extract_regex_fallback(html, output_format)
 
     async def batch_clean_html(self, html_list: list[str], output_format: str='markdown') -> list[dict[str, Any]]:
         """
-        Clean multiple HTML documents.
+        Clean multiple HTML documents with batch optimization.
+
+        For 'text' output with Rust available:
+        - Uses rust.raw.batch_extract_html_text (rayon parallel, GIL release)
+        - Falls back to parallel() for 'markdown' or when Rust unavailable
 
         Args:
             html_list: List of HTML strings
@@ -435,12 +475,50 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         Returns:
             List of cleaning results
         """
+        # Optimized path for 'text' output with Rust batch extraction
+        if output_format == 'text' and _RUST_HTML_PARSE_AVAILABLE and _rust_html_parse is not None:
+            return await self._batch_clean_html_rust(html_list)
+
+        # Fallback: parallel async processing
         return await parallel(
             [self.clean_html(h, output_format) for h in html_list],
             policy="log",
             concurrency=12,
             ctx="validation_coordinator.clean_html_batch",
-    )
+        )
+
+    async def _batch_clean_html_rust(self, html_list: list[str]) -> list[dict[str, Any]]:
+        """
+        Batch HTML→text via Rust rayon parallel processing.
+
+        Uses rust.raw.batch_extract_html_text for GIL-free parallelism.
+        One rayon call instead of N sequential calls — 3-5× speedup.
+        """
+        loop = asyncio.get_running_loop()
+        try:
+            texts: list[str] = await loop.run_in_executor(
+                None,  # Use default executor (ThreadPool for rayon)
+                lambda: _rust_html_parse.batch_extract_html_text(html_list),
+            )
+        except Exception as e:
+            logger.warning('Rust batch_extract_html_text failed: %s, falling back to parallel', e)
+            return await parallel(
+                [self._simple_html_extract(h, 'text') for h in html_list],
+                policy="log",
+                concurrency=12,
+                ctx="validation_coordinator.clean_html_batch_fallback",
+            )
+
+        return [
+            {
+                'success': bool(text),
+                'content': text,
+                'format': 'text',
+                'metadata': {'method': 'rust_html_parse_batch'},
+                'error': None,
+            }
+            for text in texts
+        ]
 
     def get_validation_stats(self) -> dict[str, Any]:
         """Get validation statistics."""

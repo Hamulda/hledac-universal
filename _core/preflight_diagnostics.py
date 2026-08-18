@@ -157,8 +157,8 @@ def _check_lmdb_wal_roundtrip() -> PreflightResult:
 
         # Use temp directory for isolated test
         with tempfile.TemporaryDirectory(prefix="hledac_preflight_lmdb_") as tmpdir:
-            test_key = f"preflight_wal_test_{uuid.uuid4().hex[:8]}"
-            test_value = {"timestamp": time.time(), "uuid": uuid.uuid4().hex, "check": "wal_roundtrip"}
+            test_key = f"preflight_wal_test_{uuid.uuid7().hex[:8]}"
+            test_value = {"timestamp": time.time(), "uuid": uuid.uuid7().hex, "check": "wal_roundtrip"}
 
             # Open LMDB env with WAL-friendly settings
             # FIX: metasync=False for M1 8GB (per NEW-C2 pattern from lmdb_subdb.py:536,558)

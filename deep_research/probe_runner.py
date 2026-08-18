@@ -409,7 +409,7 @@ async def _scan_dht(query: str) -> list[CanonicalFinding]:
         lgs = _DHT_LGS_CACHE[cache_key]
         query_bytes = query.encode()[:256]
         info_hash = hashlib.sha256(query_bytes).hexdigest()[:40]
-        node = KademliaNode(node_id=f'hledac-probe-{uuid.uuid4().hex[:8]}', governor=ResourceGovernor(), local_graph_store=lgs)
+        node = KademliaNode(node_id=f'hledac-probe-{uuid.uuid7().hex[:8]}', governor=ResourceGovernor(), local_graph_store=lgs)
         await node.start_udp()
         try:
             async with asyncio.timeout(120.0):

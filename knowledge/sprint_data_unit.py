@@ -565,7 +565,7 @@ class SprintTransaction:
             finding = self._state.unit.finding
             import time as _time
             import uuid as _uuid
-            finding_id = finding.get('id') or finding.get('finding_id') or str(_uuid.uuid4())
+            finding_id = finding.get('id') or finding.get('finding_id') or str(_uuid.uuid7())
             query = finding.get('query', '')
             source_type = finding.get('source_type', 'unknown')
             confidence = float(finding.get('confidence', 0.5))

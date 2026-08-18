@@ -77,7 +77,7 @@ class DempsterShafer:
             evidence_id: Unique identifier for this evidence (for retract)
         """
         # Generate evidence ID
-        evidence_id = f"ev_{uuid.uuid4().hex[:12]}"
+        evidence_id = f"ev_{uuid.uuid7().hex[:12]}"
         if source_id is None:
             source_id = "anonymous"
 

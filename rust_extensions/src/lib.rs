@@ -23,7 +23,6 @@
 // - tracing: Tracing infrastructure - no direct callers (internal only)
 // - deobfuscate: Deobfuscation - no callers
 // - mpsc_pool: Multi-producer single-consumer - no callers
-// - pipeline_compose: Pipeline composition - no callers
 // - spsc_queue: Single-producer single-consumer - no callers
 // - adaptive_scheduler: Adaptive scheduling - no callers
 // - circuit_breaker: Circuit breaker - no callers
@@ -88,7 +87,7 @@
 // - native_db: Native DB wire protocols - no callers
 // - content_hasher: Content hasher - no callers
 // - dedup_bloom: Dedup bloom - no callers
-// - graph_cache: Graph cache - no callers
+// - graph_cache: Graph cache - no callers (ACTIVE: B3 integration)
 // - collections_backup: Dead module (never declared in lib.rs)
 // - regex_lz4: Marked as REMOVED but kept for potential future use
 //
@@ -96,6 +95,7 @@
 // - rust.memory: Memory monitoring (RSS, pressure, Metal memory)
 // - rust.rate_limit: Rate limiting
 // - rust.bloom: BloomFilter, UrlSet
+// - rust.pipeline_compose: MAP/FILTER/FOLD operators, asyncio.to_thread bridge (B5)
 // - rust.sprint_policies: LaneBudgetPool, FeedDominanceGuard
 // - rust.ioc_dedup: IocDedupStore
 // - rust.rolling_hash: RollingHashEngine
@@ -179,12 +179,11 @@ mod consistency_verifier;
 #[allow(dead_code)]
 mod content_hasher;
 
-// ZOMBIE: No Python callers
+// C6: Wired to secrets_vault/vault.py via rust.raw
 #[allow(dead_code)]
 mod crypto_accelerate;
 
-// ZOMBIE: No Python callers
-#[allow(dead_code)]
+// B4: DedupBloom - Distributed BloomFilter for cross-instance URL dedup
 mod dedup_bloom;
 
 // ZOMBIE: No Python callers
@@ -223,8 +222,7 @@ mod git_forensics;
 #[allow(dead_code)]
 mod graph_analytics;
 
-// ZOMBIE: No Python callers
-#[allow(dead_code)]
+// B3: Graph Cache - shared LRU cache for graph traversal queries
 mod graph_cache;
 
 mod graph_centrality;
@@ -281,8 +279,8 @@ mod memory;
 #[allow(dead_code)]
 mod native_db;
 
-// ZOMBIE: No Python callers
-#[allow(dead_code)]
+// B5: Pipeline composition - wired via pipeline_compose_wiring.py
+// Provides MAP/FILTER/FOLD operators with asyncio.to_thread bridge
 mod pipeline_compose;
 
 // ZOMBIE: No Python callers
@@ -674,6 +672,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Always-compiled modules with register() functions (no feature gate needed)
     accelerate::register(&m)?;
     bloom::register(&m)?;
+    dedup_bloom::register(&m)?;
     feed_pipeline::register(&m)?;
     h2_safari_preset::register(&m)?;
     health::register(&m)?;
@@ -756,6 +755,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ffi_safe::register_functions(&m)?;
     graph_centrality::register_functions(&m)?;
     graph_traverse::register_functions(&m)?;
+    // B3: Graph Cache - shared LRU cache for graph traversal queries
+    graph_cache::add_module(&m)?;
     hot_edges_rs::register_functions(&m)?;
     html_parse::register_functions(&m)?;
     int_counter_layout::register_functions(&m)?;

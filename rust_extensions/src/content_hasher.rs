@@ -58,7 +58,7 @@ use crate::gil::{release_gil, release_gil_caught_panic};
 pub fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
-    let result = hasher);
+    let result = hasher.finalize();
     format!("{:x}", result)
 }
 

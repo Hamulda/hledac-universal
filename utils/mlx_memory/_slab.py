@@ -165,7 +165,7 @@ class MetalSlabPool:
         try:
             import mlx.core as mx
             buf = mx.zeros([actual_size // 4], dtype=mx.int32)
-            slab = _Slab(slab_id=str(uuid.uuid4()), size_class=size_cls, size_bytes=actual_size, memoryview=buf, last_access=_time.monotonic(), in_use=True)
+            slab = _Slab(slab_id=str(uuid.uuid7()), size_class=size_cls, size_bytes=actual_size, memoryview=buf, last_access=_time.monotonic(), in_use=True)
             with self._slab_lock:
                 self._slabs[size_cls][slab.slab_id] = slab
                 self._stats_allocated_bytes += actual_size

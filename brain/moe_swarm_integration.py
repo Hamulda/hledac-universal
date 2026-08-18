@@ -351,7 +351,8 @@ class MoERouterSwarmMixin:
             return True
         logger.info(f'[SWARM] Loading micro-model: {model_id}')
         try:
-            loop = asyncio.get_event_loop()
+            # ISSUE-10 FIX: get_running_loop() instead of deprecated get_event_loop() (Python 3.12+)
+            loop = asyncio.get_running_loop()
             loaded = await loop.run_in_executor(None, router._pool.get_model, model_id)
             if loaded is not None:
                 logger.info(f"[SWARM] ✓ Micro-model '{model_id}' loaded")

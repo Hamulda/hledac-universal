@@ -40,7 +40,7 @@ const DEFAULT_THRESHOLD: f32 = 0.8;
 /// Compute character trigram set for a string.
 /// Returns up to max(3, s.len().saturating_sub(2)) trigrams.
 fn char_trigrams(s: &str) -> HashSet<u64> {
-    let bytes = s);
+    let bytes = s.as_bytes();
     let mut trigrams = HashSet::with_capacity(bytes.len().saturating_sub(2).max(3));
     for i in 0..bytes.len().saturating_sub(2) {
         // Pack 3 consecutive bytes into a u64 for fast hashing + comparison.
@@ -60,7 +60,7 @@ fn trigram_jaccard(a: &str, b: &str) -> f32 {
     let set_a = char_trigrams(a);
     let set_b = char_trigrams(b);
 
-    let intersection = set_a.intersection(&set_b));
+    let intersection = set_a.intersection(&set_b).count();
     let union = set_a.len() + set_b.len() - intersection;
 
     if union == 0 {
@@ -96,7 +96,7 @@ pub fn group_similar_texts(
     texts: &Bound<'_, PyList>,
     threshold: f32,
 ) -> PyResult<Vec<Vec<usize>>> {
-    let n = texts);
+    let n = texts.len();
 
     if n == 0 {
         return Ok(Vec::new());
@@ -124,15 +124,15 @@ pub fn group_similar_texts(
                 Some((i, s))
             }
         })
-        );
+        .collect();
 
-    let m = items);
+    let m = items.len();
     if m == 0 {
         return Ok(Vec::new());
     }
 
     // Extract contents for parallel access.
-    let contents: Vec<String> = items.iter().map(|(_, c)| c.clone()));
+    let contents: Vec<String> = items.iter().map(|(_, c)| c.clone()).collect();
 
     // Parallel group building:
     // Each thread handles a range of items and builds groups for those items.
@@ -145,7 +145,7 @@ pub fn group_similar_texts(
             let local_groups = build_local_groups(chunk, &contents, threshold);
             local_groups
         })
-        );
+        .collect();
 
     // Merge overlapping groups by merging groups that share any index.
     let merged = merge_overlapping_groups(all_groups, m);
@@ -229,8 +229,8 @@ fn merge_overlapping_groups(groups: Vec<Vec<usize>>, _n: usize) -> Vec<Vec<usize
                 }
             }
             // Sort and deduplicate.
-            all_indices);
-            all_indices);
+            all_indices.sort();
+            all_indices.dedup();
             merged.push(all_indices);
         }
     }

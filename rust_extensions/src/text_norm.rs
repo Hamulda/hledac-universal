@@ -341,6 +341,67 @@ pub fn batch_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, Py
     Ok(out)
 }
 
+/// Combined NFC normalize + strip diacritics in a single pass.
+///
+/// This is an optimization for URL normalization where both operations are always needed.
+/// Does both in one rayon parallel iteration (vs two separate calls).
+///
+/// Strategy:
+/// - ASCII-only strings: case-fold (OR 0x20) and return — no NFC needed, no diacritics possible
+/// - Non-ASCII: NFC compose, then strip combining marks
+#[pyfunction]
+pub fn batch_nfc_and_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
+    if texts.is_empty() {
+        return Ok(Vec::new());
+    }
+    if texts.len() > BATCH_HARD_CAP {
+        return Err(PyValueError::new_err(format!(
+            "batch_nfc_and_strip_diacritics_fast: {} items exceeds hard cap {}",
+            texts.len(),
+            BATCH_HARD_CAP
+        )));
+    }
+
+    const MARK_RANGES: &[(char, char)] = &[('\u{0300}', '\u{036F}'), ('\u{1AB0}', '\u{1AFF}')];
+
+    let n = texts.len();
+    let out = Python::attach(|py| {
+        release_gil(py, move || {
+            crate::mixed_pool(n).install(|| {
+                texts
+                    .into_par_iter()
+                    .map(|s| {
+                        let bytes = s.as_bytes();
+                        // SAFETY: is_ascii_only_neon and ascii_case_fold_neon are
+                        // deterministic and side-effect free.
+                        unsafe {
+                            if is_ascii_only_neon(bytes) {
+                                // ASCII: case-fold only (NFC is identity for ASCII)
+                                let folded = ascii_case_fold_neon(bytes);
+                                String::from_utf8_unchecked(folded)
+                            } else {
+                                // Non-ASCII: NFC compose, then strip combining marks
+                                // This is more efficient than two separate passes
+                                s.nfc()
+                                    .filter(|c| {
+                                        !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi)
+                                    })
+                                    .collect()
+                            }
+                        }
+                    })
+                    .collect()
+            })
+        })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_nfc_and_strip_diacritics_fast",
+        ));
+    }
+    Ok(out)
+}
+
 /// Register all text_norm functions under the `hledac_rust_extensions` module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(nfc_normalize))?;
@@ -350,6 +411,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(strip_diacritics))?;
     m.add_function(wrap_pyfunction!(batch_strip_diacritics))?;
     m.add_function(wrap_pyfunction!(batch_strip_diacritics_fast))?;
+    m.add_function(wrap_pyfunction!(batch_nfc_and_strip_diacritics_fast))?;
     Ok(())
 }
 
@@ -511,5 +573,64 @@ mod tests {
                 "ECLAIR".to_string()
             ]
         );
+    }
+
+    // ---- Combined NFC + strip tests -------------------------------------------
+
+    #[test]
+    fn test_batch_nfc_and_strip_diacritics_fast_empty() {
+        let out = batch_nfc_and_strip_diacritics_fast(vec![]);
+        assert!(out.is_ok());
+        assert!(out.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_batch_nfc_and_strip_diacritics_fast_cap() {
+        let texts: Vec<String> = (0..BATCH_HARD_CAP + 1).map(|i| i.to_string()));
+        let result = batch_nfc_and_strip_diacritics_fast(texts);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_batch_nfc_and_strip_diacritics_fast_ascii_case_fold() {
+        // ASCII: case-fold only (NFC is identity, no diacritics possible)
+        let texts = vec!["HELLO".to_string(), "World".to_string()];
+        let out = batch_nfc_and_strip_diacritics_fast(texts).unwrap();
+        assert_eq!(out, vec!["hello".to_string(), "world".to_string()]);
+    }
+
+    #[test]
+    fn test_batch_nfc_and_strip_diacritics_fast_mixed() {
+        // Mixed: ASCII case-fold, non-ASCII NFC + strip
+        let texts = vec![
+            "Brněnská".to_string(),  // Non-ASCII: NFC compose, strip diacritics
+            "hello".to_string(),       // ASCII: case-fold
+            "ÉCLAIR".to_string(),     // Non-ASCII: NFC compose, strip diacritics
+        ];
+        let out = batch_nfc_and_strip_diacritics_fast(texts).unwrap();
+        assert_eq!(
+            out,
+            vec![
+                "Brnenska".to_string(),  // NFC + strip
+                "hello".to_string(),       // case-fold
+                "ECLAIR".to_string()       // NFC + strip
+            ]
+        );
+    }
+
+    #[test]
+    fn test_batch_nfc_and_strip_diacritics_fast_nfc_equivalent() {
+        // Combined function should be equivalent to separate NFC + strip calls
+        let texts = vec![
+            "Brněnská".to_string(),
+            "café".to_string(),
+            "HELLO".to_string(),
+        ];
+
+        let combined = batch_nfc_and_strip_diacritics_fast(texts.clone()).unwrap();
+        let nfcd = batch_nfc_normalize_fast(texts.clone()).unwrap();
+        let stripped = batch_strip_diacritics_fast(nfcd).unwrap();
+
+        assert_eq!(combined, stripped);
     }
 }

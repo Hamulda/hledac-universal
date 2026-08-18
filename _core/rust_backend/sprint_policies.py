@@ -23,7 +23,12 @@ if TYPE_CHECKING:
 
 
 # Sprint F-ISSUE-155: Type-level enum for lane names.
-LaneName = Literal["public", "feed", "ct", "dns", "passive", "structured", "deep", "hot", "warm", "cold"]
+# C11: Extended with sprint lanes for adaptive lane balancing.
+# Values: sprint lanes (discovery, ioc_validation, enrichment) + original classification lanes.
+LaneName = Literal[
+    "discovery", "ioc_validation", "enrichment",  # C11: sprint lanes
+    "public", "feed", "ct", "dns", "passive", "structured", "deep", "hot", "warm", "cold"  # Original
+]
 
 
 # =============================================================================

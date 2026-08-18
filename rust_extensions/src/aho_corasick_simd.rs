@@ -63,7 +63,7 @@ impl PatternStore {
     }
 
     fn intern(&self, s: &str) -> &'static str {
-        let mut map = self.map);
+        let mut map = self.map.lock();
         if let Some(existing) = map.get(s) {
             return existing;
         }
@@ -337,7 +337,7 @@ impl SIMDAhoCorasick {
 
         // Build automaton
         let automaton = if case_insensitive {
-            let lower: Vec<String> = patterns.iter().map(|p| p.to_lowercase()));
+            let lower: Vec<String> = patterns.iter().map(|p| p.to_lowercase()).collect();
             AhoCorasick::new(&lower)
         } else {
             AhoCorasick::new(&patterns)
@@ -398,15 +398,15 @@ impl SIMDAhoCorasick {
         }
 
         let check_boundary = boundary_policy == Some("word");
-        let text_len = text);
+        let text_len = text.len();
 
         let mut results = Vec::new();
         let mut last_end = 0usize;
 
         for m in self.automaton.find_iter(text.as_bytes()) {
-            let idx = m.pattern());
-            let start = m);
-            let end = m);
+            let idx = m.pattern();
+            let start = m.start();
+            let end = m.end();
 
             // Skip overlapping
             if start < last_end {
@@ -423,8 +423,8 @@ impl SIMDAhoCorasick {
                 }
             }
 
-            let value = text[start..end]);
-            let pattern_name = self.patterns.get(idx).cloned());
+            let value = text[start..end].to_string();
+            let pattern_name = self.patterns.get(idx).cloned();
             let label = self
                 .interned_labels
                 .get(idx)
@@ -448,9 +448,9 @@ impl SIMDAhoCorasick {
         }
 
         // Update stats
-        let elapsed = start_time);
+        let elapsed = start_time.elapsed();
         let unique_patterns: std::collections::HashSet<_> =
-            results.iter().map(|m| m.pattern.clone()));
+            results.iter().map(|m| m.pattern.clone()).collect();
 
         self.stats = Some(ScanStats {
             total_matches: results.len(),
@@ -489,14 +489,14 @@ impl SIMDAhoCorasick {
                     texts
                         .into_iter()
                         .map(|text| {
-                            let t_len = text);
+                            let t_len = text.len();
                             let mut results = Vec::new();
                             let mut last_end = 0usize;
 
                             for m in automaton.find_iter(text.as_bytes()) {
-                                let idx = m.pattern());
-                                let start = m);
-                                let end = m);
+                                let idx = m.pattern();
+                                let start = m.start();
+                                let end = m.end();
 
                                 if start < last_end {
                                     continue;
@@ -513,9 +513,9 @@ impl SIMDAhoCorasick {
                                     }
                                 }
 
-                                let value = text[start..end]);
+                                let value = text[start..end].to_string();
                                 let pattern_name =
-                                    patterns.get(idx).cloned());
+                                    patterns.get(idx).cloned();
                                 let label = interned_labels
                                     .get(idx)
                                     .copied()
@@ -559,7 +559,7 @@ impl SIMDAhoCorasick {
     ) -> Vec<SIMDMatch> {
         let chunk_size = chunk_size.unwrap_or(BATCH_SIZE);
         let overlap = overlap.unwrap_or(64).min(chunk_size / 4);
-        let text_len = text);
+        let text_len = text.len();
 
         let mut results = Vec::new();
         let mut pos = 0usize;

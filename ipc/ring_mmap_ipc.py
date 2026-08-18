@@ -181,7 +181,7 @@ class RingMMap:
             (ring_buffer, shm_name) tuple
         """
         size = min(size, _MAX_RING_SIZE)
-        name = f"/hldx-{name_prefix}-{uuid.uuid4().hex[:8]}"
+        name = f"/hldx-{name_prefix}-{uuid.uuid7().hex[:8]}"
         ring = cls(name, size)
         return ring, name
 
@@ -383,8 +383,8 @@ class RingMMapIPC:
         ipc._pending_seq = 0
 
         # Create shared memory objects
-        shm_name = f"/hldx-{name_prefix}-{uuid.uuid4().hex[:8]}"
-        result_shm_name = f"/hldx-{name_prefix}-{uuid.uuid4().hex[:8]}"
+        shm_name = f"/hldx-{name_prefix}-{uuid.uuid7().hex[:8]}"
+        result_shm_name = f"/hldx-{name_prefix}-{uuid.uuid7().hex[:8]}"
         sem_name = f"/hldx-{name_prefix}-sem"
         result_sem_name = f"/hldx-{name_prefix}-res-sem"
         ready_sem_name = f"/hldx-{name_prefix}-ready"

@@ -45,6 +45,12 @@ htmlcov/
 *.bak_*
 *_bak_*
 .bak_*
+# F350M-R refactoring snapshots (obsolete, tracked 2026)
+*.bak_core_keyword
+# Issue-driven refactoring backups (F234S, F235D, F206AQ, etc.)
+*.bak_F*
+*.bak_ic_*
+*_bak_ic_*
 # Artifact hygiene — srclight backup
 .srclight/
 .srclight_bak/

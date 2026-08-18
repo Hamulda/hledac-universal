@@ -930,3 +930,20 @@ mod tests {
         assert!(filter.contains(b"https://example0.com"));
     }
 }
+
+// ============================================================================
+// Python Module Registration
+// ============================================================================
+
+/// Register DedupBloom (DistributedBloomFilter) in the parent module.
+///
+/// B4: Lock-free bloom filter for cross-instance URL deduplication.
+/// Capacity: 1M items across 3 tiers (100K fine / 500K coarse / 1M macro).
+/// False positive rates: 0.01%, 0.1%, 1% per tier.
+///
+/// Use case: Multiple hledac instances dedup URLs without centralized coordinator.
+#[pyo3::pymodule]
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyDistributedBloomFilter>()?;
+    Ok(())
+}

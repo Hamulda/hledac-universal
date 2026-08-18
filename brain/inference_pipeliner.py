@@ -113,7 +113,8 @@ class InferencePipeliner:
             asyncio.Future[str] — resolve with generated text or error string
         """
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
+        # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+        future: asyncio.Future[str] = loop.create_future(name="pipeliner:request")
         request = PendingRequest(future=future, prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg, thinking=thinking, submitted_at=time.monotonic())
         if not self._started:
             self._dispatch_task = safe_create_task(self._dispatch_loop(), name='pipeliner:dispatch')

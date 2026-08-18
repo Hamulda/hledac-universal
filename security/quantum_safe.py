@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import base64
-
-
 import logging
 import secrets
+import weakref
 from dataclasses import dataclass
 import msgspec
 from compat.msgspec_gc_compat import Struct
@@ -31,6 +30,7 @@ except ImportError:
 
 if not REAL_PQ_AVAILABLE:
     logger.warning("PQ crypto running in SIMULATION mode — NOT cryptographically secure. Install liboqs-python: pip install oqs")
+
 
 class SecurityLevel(Enum):
     """Úrovně zabezpečení"""
@@ -61,13 +61,21 @@ class QuantumSafeVault:
     Používá ML-KEM (Kyber) pro šifrování a ML-DSA (Dilithium)
     pro digitální podpisy. Odolné vůči kvantovým útokům.
     """
-    __slots__ = tuple(('_initialized', '_keypair', '_signing_keypair', 'security_level'))
+    __slots__ = tuple(('_initialized', '_keypair', '_signing_keypair', 'security_level', '_finalizer'))
 
     def __init__(self, security_level: SecurityLevel=SecurityLevel.HIGH):
         self.security_level = security_level
         self._keypair = None
         self._signing_keypair = None
         self._initialized = False
+        # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
+        # Capture keypairs at init time for cleanup
+        self._finalizer = weakref.finalize(
+            self,
+            _quantum_vault_cleanup,
+            self._keypair,
+            self._signing_keypair,
+        )
 
     async def initialize(self) -> None:
         """Inicializovat vault - vygenerovat klíče"""
@@ -105,11 +113,17 @@ class QuantumSafeVault:
                     _secure_zero(_wipe)
 
     def __del__(self) -> None:
-        """F350M-R G1: wipe keys at GC time as last-resort safety net."""
-        try:
+        """
+        F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
+        
+        F350M-R G1: wipe keys at GC time as last-resort safety net.
+        
+        Called only if:
+        - Finalizer wasn't triggered (interpreter shutdown order)
+        - Object was resurrected and then deleted
+        """
+        if hasattr(self, '_finalizer') and self._finalizer.detach():
             self.wipe_keys()
-        except Exception:  # noqa: BLE001
-            pass  # swallow during GC — prevent logging in destructor
 
     async def encrypt(self, plaintext: bytes, associated_data: bytes | None=None) -> EncryptedContainer:
         """Zašifrovat data pomocí ML-KEM."""
@@ -168,3 +182,23 @@ class QuantumSafeVault:
         else:
             logger.warning('PQ crypto SIMULATION MODE — not cryptographically secure')
             return True
+
+
+def _quantum_vault_cleanup(keypair: Any, signing_keypair: Any) -> None:
+    """
+    Module-level cleanup function for weakref.finalize.
+    
+    F264: Wipe keys at GC time as last-resort safety net.
+    Called automatically by weakref.finalize when the object is GC'd.
+    """
+    try:
+        for kp in (keypair, signing_keypair):
+            if kp is not None and "secret" in kp:
+                secret = kp["secret"]
+                if isinstance(secret, bytearray):
+                    _secure_zero(secret)
+                elif isinstance(secret, bytes):
+                    _wipe = bytearray(secret)
+                    _secure_zero(_wipe)
+    except Exception:  # noqa: BLE001
+        pass

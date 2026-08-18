@@ -17,6 +17,7 @@ Key Features:
 - Memory-aware execution management
 - Performance monitoring and optimization
 - Async-first architecture optimization
+- C13: AIMD adaptive concurrency via Rust lock-free controller
 """
 import asyncio
 import gc
@@ -50,6 +51,40 @@ logger = logging.getLogger(__name__)
 from hledac.universal._core.sys_metrics import get_memory_usage_mb
 from hledac.universal.utils.asyncx import safe_wait_for
 from _core import aclose
+
+# C13: AIMD controller for adaptive HTTP fetch concurrency
+try:
+    from rust_extensions.wiring.aimd_wiring import (
+        aimd_wired,
+        acquire_fetch_slot,
+        record_fetch_success,
+        record_fetch_failure,
+        release_fetch_slot,
+        get_aimd_telemetry,
+        is_aimd_available,
+    )
+    _AIMD_AVAILABLE = True
+except ImportError:
+    _AIMD_AVAILABLE = False
+    logger.debug("[performance_coordinator] AIMD controller unavailable")
+
+# B1 FIX: Use RayonPoolManager from isolated_executors.py as single source of truth
+# Previously used elastic_pool_wiring.py which duplicated functionality and caused race conditions
+# RayonPoolManager provides:
+#   - Elastic pool initialization
+#   - Adaptive CPU pool sizing via Rust adaptive_scheduler
+#   - Periodic MLX memory pressure sync (_mlx_sync_loop)
+#   - Thread budget enforcement for M1 8GB
+try:
+    from _core.isolated_executors import get_rayon_pool_manager, RayonPoolManager
+    _RAYON_MANAGER_AVAILABLE = True
+except ImportError:
+    _RAYON_MANAGER_AVAILABLE = False
+    logger.debug("[performance_coordinator] RayonPoolManager unavailable")
+
+# B1 FIX: Removed elastic_pool_wiring imports
+# Previously imported: elastic_pool_wired, get_pool_stats, get_all_pool_threads, adaptive_resize
+# These are now consolidated into RayonPoolManager
 
 
 class AgentMetrics(Struct):
@@ -91,7 +126,7 @@ class AgentPool:
     Maintains pools of initialized agents for reuse, reducing initialization
     overhead and memory churn for 8GB constraint systems.
     """
-    __slots__ = ('_cleanup_event', '_cleanup_task', '_metrics', '_pool_locks', '_pools', '_weak_refs', 'config')
+    __slots__ = ('_cleanup_event', '_cleanup_task', '_metrics', '_pool_locks', '_pools', '_rayon_manager', '_weak_refs', 'config')
 
     def __init__(self, config: LoadBalancingConfig) -> None:
         self.config = config
@@ -99,6 +134,7 @@ class AgentPool:
         self._pool_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._metrics: dict[str, AgentMetrics] = {}
         self._weak_refs: dict[str, set[ref]] = defaultdict(set)
+        self._rayon_manager: RayonPoolManager | None = None  # B1 FIX: Use RayonPoolManager
         self._cleanup_event: asyncio.Event = asyncio.Event()
         self._cleanup_task: asyncio.Task | None = None
 
@@ -106,10 +142,37 @@ class AgentPool:
         """Initialize the agent pool system."""
         self._cleanup_event.clear()
         self._cleanup_task = safe_create_task(self._periodic_cleanup(), name='performance_coordinator:cleanup')
+        
+        # B1 FIX: Use RayonPoolManager as single source of truth for elastic pools
+        # RayonPoolManager already has:
+        #   - Periodic MLX memory pressure sync (_mlx_sync_loop)
+        #   - Adaptive CPU pool sizing via Rust adaptive_scheduler
+        #   - Thread budget enforcement for M1 8GB
+        # This eliminates race conditions from duplicate resize operations
+        if _RAYON_MANAGER_AVAILABLE:
+            try:
+                self._rayon_manager = get_rayon_pool_manager()
+                if self._rayon_manager.is_available:
+                    stats = self._rayon_manager.get_stats()
+                    logger.info(
+                        f"Elastic pools (via RayonPoolManager): cpu={stats.get('cpu_threads', 'N/A')}, "
+                        f"io={stats.get('io_threads', 'N/A')}, phase={stats.get('phase', 'N/A')}, "
+                        f"budget={stats.get('budget_pressure_pct', 'N/A')}%"
+                    )
+                else:
+                    logger.warning("[AgentPool] RayonPoolManager initialized but unavailable")
+            except Exception as e:
+                logger.warning(f"[AgentPool] RayonPoolManager initialization failed: {e}")
+                self._rayon_manager = None
+        else:
+            logger.debug("[AgentPool] RayonPoolManager unavailable")
+        
         logger.info('Agent pool initialized with strategy: %s', self.config.load_balance_strategy)
 
     async def shutdown(self) -> None:
         """Shutdown the agent pool system."""
+        # B1 FIX: RayonPoolManager manages its own periodic sync, no task to cancel here
+
         if self._cleanup_task:
             self._cleanup_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -121,6 +184,10 @@ class AgentPool:
         self._weak_refs.clear()
         gc.collect()
         logger.info('Agent pool shutdown complete')
+
+    # B1 FIX: Removed _periodic_elastic_resize() method
+    # RayonPoolManager._mlx_sync_loop() handles periodic adaptive resize
+    # This prevents race conditions from duplicate resize operations
 
     @asynccontextmanager
     async def get_agent(self, agent_name: str, agent_factory: Callable[[], Any]):
@@ -255,7 +322,25 @@ class AgentPool:
 
     def get_pool_stats(self) -> dict[str, Any]:
         """Get pool statistics."""
-        stats = {'total_pools': len(self._pools), 'pooled_agents': {name: len(pool) for name, pool in self._pools.items()}, 'weak_refs_count': {name: len(refs) for name, refs in self._weak_refs.items()}, 'memory_usage_mb': get_memory_usage_mb()}
+        stats: dict[str, Any] = {
+            'total_pools': len(self._pools),
+            'pooled_agents': {name: len(pool) for name, pool in self._pools.items()},
+            'weak_refs_count': {name: len(refs) for name, refs in self._weak_refs.items()},
+            'memory_usage_mb': get_memory_usage_mb()
+        }
+        # B1 FIX: Include RayonPoolManager stats if available
+        if self._rayon_manager is not None and self._rayon_manager.is_available:
+            try:
+                rayon_stats = self._rayon_manager.get_stats()
+                stats['elastic_pools'] = {
+                    'cpu_threads': rayon_stats.get('cpu_threads'),
+                    'io_threads': rayon_stats.get('io_threads'),
+                    'phase': rayon_stats.get('phase'),
+                    'budget_pressure_pct': rayon_stats.get('budget_pressure_pct'),
+                    'mlx_sync_active': self._rayon_manager.mlx_sync_active,
+                }
+            except Exception:
+                pass
         return stats
 
 class IntelligentLoadBalancer:
@@ -424,14 +509,21 @@ class AgentPerformanceOptimizer:
 
     Coordinates agent pooling, load balancing, and async optimization
     with real-time performance monitoring and automatic optimization.
+
+    C13: Integrates Rust AIMD controller for adaptive HTTP fetch concurrency.
     """
-    __slots__ = ('_initialized', '_last_optimization', '_optimization_interval', 'agent_pool', 'async_optimizer', 'config', 'load_balancer')
+    __slots__ = (
+        '_aimd', '_initialized', '_last_optimization', '_optimization_interval',
+        'agent_pool', 'async_optimizer', 'config', 'load_balancer'
+    )
 
     def __init__(self, config: LoadBalancingConfig | None=None) -> None:
         self.config = config or LoadBalancingConfig()
         self.agent_pool = AgentPool(self.config)
         self.load_balancer = IntelligentLoadBalancer(self.config)
         self.async_optimizer = AsyncExecutionOptimizer(self.config)
+        # C13: Initialize AIMD controller
+        self._aimd = aimd_wired() if _AIMD_AVAILABLE else None
         self._initialized = False
         self._last_optimization = 0.0
         self._optimization_interval = 300
@@ -442,7 +534,10 @@ class AgentPerformanceOptimizer:
             return
         await self.agent_pool.initialize()
         self._initialized = True
-        logger.info('Agent performance optimizer initialized')
+        logger.info(
+            f'Agent performance optimizer initialized '
+            f'(AIMD={"Rust" if (self._aimd and is_aimd_available()) else "Python fallback"})'
+        )
 
     async def shutdown(self) -> None:
         """Shutdown the performance optimizer."""
@@ -596,6 +691,120 @@ class AgentPerformanceOptimizer:
                 metric.circuit_breaker_open = False
                 logger.info(f'Auto-reset circuit breaker for agent {agent_name}')
 
+    # =========================================================================
+    # C13: AIMD HTTP Fetch Concurrency Control
+    # =========================================================================
+
+    def acquire_aimd_slot(self) -> tuple[float, int] | tuple[None, None]:
+        """
+        Acquire an AIMD slot for HTTP fetch.
+
+        Call before initiating an HTTP fetch to participate in adaptive concurrency.
+
+        Returns:
+            Tuple of (window, active_count) or (None, None) if AIMD unavailable
+        """
+        if self._aimd is None:
+            return (None, None)
+        return acquire_fetch_slot()
+
+    def record_fetch_success(self) -> tuple[float, int] | tuple[None, None]:
+        """
+        Record successful HTTP fetch.
+
+        Call after successful fetch completion.
+
+        Returns:
+            Tuple of (new_window, active_count) or (None, None) if AIMD unavailable
+        """
+        if self._aimd is None:
+            return (None, None)
+        return record_fetch_success()
+
+    def record_fetch_failure(self, uma_state: str = "ok") -> tuple[float, int] | tuple[None, None]:
+        """
+        Record failed HTTP fetch.
+
+        Call after fetch failure.
+
+        Args:
+            uma_state: Current UMA state for decrease factor selection
+
+        Returns:
+            Tuple of (new_window, active_count) or (None, None) if AIMD unavailable
+        """
+        if self._aimd is None:
+            return (None, None)
+        return record_fetch_failure(uma_state)
+
+    def release_aimd_slot(self) -> tuple[float, int] | tuple[None, None]:
+        """
+        Release AIMD slot without recording outcome.
+
+        Use for cancelled/timeout fetches.
+
+        Returns:
+            Tuple of (window, active_count) or (None, None) if AIMD unavailable
+        """
+        if self._aimd is None:
+            return (None, None)
+        return release_fetch_slot()
+
+    def apply_aimd_backpressure(self, window: float) -> None:
+        """
+        Apply external backpressure to clamp AIMD window.
+
+        Args:
+            window: New window ceiling
+        """
+        if self._aimd is not None:
+            from rust_extensions.wiring.aimd_wiring import apply_backpressure
+            apply_backpressure(window)
+
+    def get_aimd_telemetry(self) -> dict[str, Any]:
+        """
+        Get comprehensive AIMD telemetry for monitoring.
+
+        Returns:
+            Dict with window, active, rust_available, and stats
+        """
+        if self._aimd is None:
+            return {"available": False}
+        return get_aimd_telemetry()
+
+    @property
+    def aimd_available(self) -> bool:
+        """Check if AIMD controller is available."""
+        return self._aimd is not None and is_aimd_available()
+
+    @property
+    def aimd_window(self) -> float | None:
+        """Get current AIMD window size."""
+        if self._aimd is None:
+            return None
+        return self._aimd.window
+
+    @property
+    def aimd_active(self) -> int | None:
+        """Get current active slot count."""
+        if self._aimd is None:
+            return None
+        return self._aimd.active
+
     def get_comprehensive_metrics(self) -> dict[str, Any]:
         """Get comprehensive performance metrics."""
-        return {'agent_metrics': self.agent_pool.get_metrics(), 'pool_stats': self.agent_pool.get_pool_stats(), 'active_tasks': self.async_optimizer.get_active_tasks_count(), 'load_balancer_weights': dict(self.load_balancer._agent_weights), 'memory_usage_mb': get_memory_usage_mb(), 'config': {'max_concurrent_agents': self.config.max_concurrent_agents, 'memory_threshold_mb': self.config.memory_threshold_mb, 'agent_timeout_seconds': self.config.agent_timeout_seconds}}
+        metrics = {
+            'agent_metrics': self.agent_pool.get_metrics(),
+            'pool_stats': self.agent_pool.get_pool_stats(),
+            'active_tasks': self.async_optimizer.get_active_tasks_count(),
+            'load_balancer_weights': dict(self.load_balancer._agent_weights),
+            'memory_usage_mb': get_memory_usage_mb(),
+            'config': {
+                'max_concurrent_agents': self.config.max_concurrent_agents,
+                'memory_threshold_mb': self.config.memory_threshold_mb,
+                'agent_timeout_seconds': self.config.agent_timeout_seconds,
+            },
+            # C13: AIMD telemetry
+            'aimd': self.get_aimd_telemetry(),
+        }
+        return metrics

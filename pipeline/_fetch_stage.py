@@ -14,6 +14,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ._stage_protocol import BoundedStageQueue, Stage, StageContext
+from hledac.universal.utils.concurrency import AtomicAdaptiveSemaphore  # ISSUE-008: safe AIMD resize
 from _core import aclose
 
 if TYPE_CHECKING:
@@ -48,6 +49,7 @@ class FetchStage:
         "_fetch_max_bytes",
         "_effective_concurrency",
         "_running",
+        "_sem_init_lock",
     )
 
     def __init__(
@@ -73,14 +75,27 @@ class FetchStage:
         self._uma_state = uma_state
 
         # Semaphore controlled by AIMD window
+        # ISSUE-008: Use AtomicAdaptiveSemaphore for safe resize() in Python 3.14+
+        # PEP 789: lazy init in async context
         effective = max(1, min(fetch_concurrency, int(self._aimd.window)))
-        self._semaphore = asyncio.Semaphore(effective)
+        self._semaphore: AtomicAdaptiveSemaphore | None = None
         self._effective_concurrency = effective
         self._running = False
+        self._sem_init_lock = asyncio.Lock()
 
     @property
     def aimd_window(self) -> float:
         return self._aimd.window
+
+    async def _ensure_semaphore(self) -> AtomicAdaptiveSemaphore:
+        """PEP 789: Create AtomicAdaptiveSemaphore lazily in event loop context."""
+        if self._semaphore is not None:
+            return self._semaphore
+        async with self._sem_init_lock:
+            if self._semaphore is not None:
+                return self._semaphore
+            self._semaphore = AtomicAdaptiveSemaphore(initial=self._effective_concurrency)
+            return self._semaphore
 
     async def run(
         self,
@@ -132,7 +147,9 @@ class FetchStage:
                     effective = max(1, min(int(new_window), 25))
                     if effective != self._effective_concurrency:
                         self._effective_concurrency = effective
-                        # Note: can't resize Semaphore, but AIMD window affects new tasks
+                        # ISSUE-008: Use resize() instead of recreating Semaphore
+                        if self._semaphore is not None:
+                            await self._semaphore.resize(effective)
                     metrics.update_aimd_window(new_window)
 
                 # Put result do output (drop if full)
@@ -160,7 +177,9 @@ class FetchStage:
         discovery_score = None
         discovery_reason = None
 
-        async with self._semaphore:
+        # ISSUE-008: Use lazy semaphore init for PEP 789 compatibility
+        sem = await self._ensure_semaphore()
+        async with sem:
             try:
                 result = await _fetch_and_process_page(
                     semaphore=asyncio.Semaphore(1),  # inner semaphore není potřeba

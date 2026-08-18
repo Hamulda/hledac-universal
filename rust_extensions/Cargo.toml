@@ -309,6 +309,16 @@ default = ["core", "data", "ane", "metal", "metal_shared", "iosurface", "swarm_d
 # SILICON-02: Added whisper to default — ANE-based speech-to-text via whisper.cpp.
 # Only tiny (39 MB) and base (74 MB) models for M1 8GB safety.
 # Provides: rust.whisper.transcribe() for CoreML/ANE-accelerated transcription.
+#
+# whisper_medium: Enable medium model (148 MB) — opt-in for M1 8GB+.
+# Requires: ~150 MB model + ~50 MB ANE memory for CoreML encoder.
+# Warning: Medium model may cause OOM on 8GB M1 under heavy load.
+whisper_medium = []
+
+# batch_transcribe: Enable batch transcription for multi-page PDF audio.
+# Adds: batch_transcribe() with bounded concurrent processing.
+# M1 8GB: max 2 concurrent to avoid ANE memory pressure.
+batch_transcribe = []
 
 # core: IOC extraction, URL ops, hashing, compression, HTML parsing
 # Always compiled. No heavy deps. Available even with --no-default-features.

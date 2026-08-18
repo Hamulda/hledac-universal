@@ -32,6 +32,7 @@ M1 8GB Optimized:
 """
 import asyncio
 import logging
+import weakref
 import time
 from pathlib import Path
 from typing import Any
@@ -96,7 +97,7 @@ class MemoryManager:
     Provides session-based storage for entities, queries, and files.
     Each session has its own key namespace with automatic expiration.
     """
-    __slots__ = tuple(('_sub_db', '_env', '_lock', '_map_size', '_max_keys_per_session', '_max_sessions', '_session_ttl_days'))
+    __slots__ = tuple(('_sub_db', '_env', '_lock', '_map_size', '_max_keys_per_session', '_max_sessions', '_session_ttl_days', '_finalizer'))
 
     def __init__(self, db_path: str | None=None, map_size: int=DEFAULT_MAP_SIZE, max_keys_per_session: int=MAX_KEYS_PER_SESSION, max_sessions: int=MAX_SESSIONS, session_ttl_days: int=SESSION_TTL_DAYS):
         """
@@ -132,6 +133,8 @@ class MemoryManager:
             self._sub_db = None
         self._lock = asyncio.Lock()
         logger.info('MemoryManager initialized (UnifiedLMDB)' if self._sub_db is not None else f'MemoryManager initialized at fallback path')
+        # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
+        self._finalizer = weakref.finalize(self, _memory_manager_cleanup, self._env)
 
     def _make_session_key(self, session_id: str, key: str) -> bytes:
         """Create a full LMDB key from session_id and key."""
@@ -432,10 +435,31 @@ class MemoryManager:
         self.close()
 
     def __del__(self) -> None:
-        try:
+        """
+        F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
+        
+        Called only if:
+        - Finalizer wasn't triggered (interpreter shutdown order)
+        - Object was resurrected and then deleted
+        """
+        if hasattr(self, '_finalizer') and self._finalizer.detach():
             self.close()
-        except Exception:  # noqa: BLE001
-            pass
+
+
+def _memory_manager_cleanup(env: Any) -> None:
+    """
+    Module-level cleanup function for weakref.finalize.
+    
+    F264: Close LMDB environment when MemoryManager is garbage collected.
+    Called automatically by weakref.finalize when the object is GC'd.
+    """
+    try:
+        if env is not None:
+            env.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 _memory_manager: MemoryManager | None = None
 
 async def get_memory_manager() -> MemoryManager:

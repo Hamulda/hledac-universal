@@ -168,7 +168,7 @@ from dataclasses import dataclass as _dataclass
 _SUBMODULE_NAMES: tuple[str, ...] = (
     "bloom", "hash", "ip", "ioc", "ioc_dedup", "quality",
     "rolling_hash", "simhash", "url", "lsh",
-    "graph", "hot_edges", "aho", "evidence", "madvise",
+    "graph", "graph_cache", "hot_edges", "aho", "evidence", "madvise",
     "memory", "json", "spsc", "query", "text", "xml",
     "int_counter", "simd", "sprint_policies", "html", "metal",
     # TLS 1.3 JA4 fingerprinting (rustls-based)
@@ -760,11 +760,14 @@ class _TlsMetadataWrapper:
     
     C4 fix: Defined at module level instead of inside property to avoid
     class recreation on every tls property access.
-    """
-    __slots__ = ("_fn",)
     
-    def __init__(self, fn: object) -> None:
+    A11: Also exposes connect_and_ja4 from tls13 module for TLS fingerprinting.
+    """
+    __slots__ = ("_fn", "_tls13")
+    
+    def __init__(self, fn: object, tls13: object | None = None) -> None:
         self._fn = fn
+        self._tls13 = tls13
     
     def extract_tls_metadata(
         self,
@@ -776,6 +779,26 @@ class _TlsMetadataWrapper:
             return self._fn(san_entries, issuer_org, der_bytes)  # type: ignore
         except (OSError, RuntimeError):  # C1 fix: Only catch FFI errors
             return ([], None, None)
+    
+    def connect_and_ja4(
+        self,
+        host: str,
+        port: int = 443,
+        sni: str | None = None,
+        alpn: list[str] | None = None,
+        timeout_ms: int = 5000,
+    ) -> Any:
+        """A11: TLS fingerprinting via Rust tls13 module.
+        
+        Returns dict with keys: ja4, ech_detected, tls_version, server_ciphers,
+        server_extensions, alpn, cert_verified, error
+        """
+        if self._tls13 is not None:
+            try:
+                return self._tls13.connect_and_ja4(host, port, sni=sni, alpn=alpn, timeout_ms=timeout_ms)
+            except (OSError, RuntimeError):  # noqa: BLE001
+                pass
+        return None
 
 
 # =============================================================================
@@ -1074,6 +1097,57 @@ class _RustCompatShim:
         return getattr(self.raw, "batch_extract_titles", None)
 
     @property
+    def batch_encrypt_aes_gcm(self) -> Any:
+        """Batch AES-256-GCM encryption via Rust crypto_accelerate.
+        
+        M1 8GB: Uses ARM AES-NI via aes-gcm crate.
+        Bounded parallelism: >= 32 items → rayon parallel, < 32 → serial.
+        PyO3 releases GIL during rayon parallel sections.
+        
+        Args:
+            password: Encryption password
+            salt: 16-byte salt (prepended with zeros if shorter)
+            items: List of plaintext strings
+        
+        Returns:
+            List of encrypted blobs: nonce(12) || tag(16) || ciphertext
+        """
+        return getattr(self.raw, "batch_encrypt_aes_gcm", None)
+
+    @property
+    def batch_decrypt_aes_gcm(self) -> Any:
+        """Batch AES-256-GCM decryption via Rust crypto_accelerate.
+        
+        M1 8GB: Uses ARM AES-NI via aes-gcm crate.
+        Bounded parallelism: >= 32 items → rayon parallel, < 32 → serial.
+        PyO3 releases GIL during rayon parallel sections.
+        
+        Args:
+            password: Decryption password
+            salt: 16-byte salt (same processing as encrypt)
+            items: List of encrypted blobs
+        
+        Returns:
+            List of decrypted plaintext strings (None on decryption failure)
+        """
+        return getattr(self.raw, "batch_decrypt_aes_gcm", None)
+
+    @property
+    def batch_sha256_hw(self) -> Any:
+        """Batch SHA-256 hardware-accelerated via Rust crypto_accelerate.
+        
+        M1 8GB: Uses ARM NEON crypto instructions (sha256g, sha256h).
+        Bounded parallelism: >= 128 items → rayon parallel, < 128 → serial.
+        
+        Args:
+            items: List of strings to hash
+        
+        Returns:
+            List of SHA-256 hex strings (64 chars each)
+        """
+        return getattr(self.raw, "batch_sha256_hw", None)
+
+    @property
     def int_counter(self) -> Any:
         return self._accel.int_counter
 
@@ -1141,6 +1215,39 @@ class _RustCompatShim:
     @property
     def lsh(self) -> Any:
         return self._accel.lsh
+
+    # ISSUE-026: Text similarity trigram Jaccard clustering
+    @property
+    def text_similarity(self) -> "_RustTextSimilarityDomain":
+        """ISSUE-026: Trigram Jaccard text similarity clustering.
+
+        Provides:
+        - group_similar_texts: Parallel O(n²) grouping via rayon
+
+        Registered in: rust_extensions/src/text_similarity.rs
+        """
+        return _RustTextSimilarityDomain(self.raw)
+
+
+class _RustTextSimilarityDomain:
+    """Domain wrapper for text_similarity Rust module."""
+
+    __slots__ = ("_raw",)
+
+    def __init__(self, raw: Any) -> None:
+        self._raw = raw
+
+    @property
+    def group_similar_texts(self) -> Any:
+        return getattr(self._raw, "group_similar_texts", None)
+
+    def __repr__(self) -> str:
+        fn = self.group_similar_texts
+        status = "available" if fn is not None else "None"
+        return f"TextSimilarityDomain({status})"
+
+    def __bool__(self) -> bool:
+        return self.group_similar_texts is not None
 
     # NEXTGEN-03: ANE submodule for face/voice embeddings and cross-modal LSH
     @property
@@ -1252,17 +1359,35 @@ class _RustCompatShim:
         """Issue B5: TLS cert metadata — wraps extract_tls_metadata as rust.tls.extract_tls_metadata(...).
         
         C4 fix: Uses module-level _TlsMetadataWrapper class instead of inline definition.
+        A11: Also exposes connect_and_ja4 from tls13 module for TLS fingerprinting.
+        
+        FIX: Return wrapper when EITHER extract_tls_metadata OR tls13 is available,
+        not just when both are present.
         """
         probe = self._accel._ensure_probe()
         raw_fn = getattr(probe.ext, "extract_tls_metadata", None)
-        if raw_fn is not None:
+        tls13 = getattr(probe.ext, "tls13", None)
+        # A11 FIX: Return wrapper if either module is available
+        if raw_fn is not None or tls13 is not None:
             # C4 fix: Use module-level class (defined above)
-            return _TlsMetadataWrapper(raw_fn)
+            return _TlsMetadataWrapper(raw_fn, tls13)
         return None
 
     def set_container(self, container: Any) -> None:
         """F350M-R (A3): Attach ServiceContainer for rust.force resolution."""
         self._accel.set_container(container)
+
+    @property
+    def TLS13_AVAILABLE(self) -> bool:
+        """A11: Check if Rust TLS 1.3 module is available.
+        
+        Returns True if the tls13 feature was compiled with TLS 1.3 support.
+        """
+        probe = self._accel._ensure_probe()
+        tls13_module = getattr(probe.ext, "tls13", None)
+        if tls13_module is not None:
+            return getattr(tls13_module, "TLS13_AVAILABLE", False)
+        return False
 
 
 _rust_compat_instance: "RustBackend | None" = None

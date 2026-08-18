@@ -190,7 +190,8 @@ class I2PSAMv3Client:
 
         async with self._lock:
             if session_name is None:
-                session_name = f'hledac-{uuid.uuid4().hex[:8]}'
+                # ISSUE-11: uuid7 for time-ordered session IDs (Python 3.14+)
+                session_name = f'hledac-{uuid.uuid7().hex[:8]}'
             self._session_name = session_name
 
             try:
@@ -655,7 +656,7 @@ class I2PTransport(Transport):
                 return False
 
             # Create persistent streaming session
-            session_id = f'hledac-samv3-{uuid.uuid4().hex[:8]}'
+            session_id = f'hledac-samv3-{uuid.uuid7().hex[:8]}'
             dest = await self._sam_v3_client.create_session(
                 session_name=session_id,
                 destination='TRANSIENT',
@@ -943,7 +944,7 @@ class I2PTransport(Transport):
             if self.transport_mode == 'sam' and self._sam_v3_client:
                 # Destroy old session and create fresh one
                 await self._sam_v3_client.destroy_session()
-                session_id = f'hledac-samv3-{uuid.uuid4().hex[:8]}'
+                session_id = f'hledac-samv3-{uuid.uuid7().hex[:8]}'
                 dest = await self._sam_v3_client.create_session(
                     session_name=session_id,
                     destination='TRANSIENT',

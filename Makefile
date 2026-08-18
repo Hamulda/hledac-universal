@@ -271,6 +271,25 @@ scripts:
 test:
 	$(PYTEST) tests/ -x --timeout=30 -q
 
+# ── Legacy test scripts (deprecated — use Make targets instead) ─────────────────
+# These scripts exist for backward compatibility. Their functionality is
+# available via standard Make targets or pytest invocation.
+
+.PHONY: test-rust test-import test-specific
+test-rust: run_tests.sh
+	@echo "[DEPRECATED] Use: make test-ci"
+	@echo "  Falling back to pytest test_rust_backend.py..."
+	$(PYTEST) tests/test_rust_backend.py -v --timeout=120
+
+test-import: _run_import_test.sh
+	@echo "[DEPRECATED] Use: make test-ci"
+	@echo "  Falling back to import test..."
+	$(PYTHON) _test_imports.py
+
+test-specific: _run_test.sh
+	@echo "[DEPRECATED] Use: pytest tests/test_storage_router.py -k test_invalidation"
+	@echo "  Run: uv run pytest tests/test_storage_router.py -k test_invalidation -v"
+
 # =============================================================================
 # Individual tool shortcuts
 # =============================================================================

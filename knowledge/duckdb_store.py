@@ -9162,23 +9162,22 @@ class DuckDBShadowStore:
         url_fingerprints: list[str],
     ) -> None:
         """
-        Batch URL fingerprint computation — replaces depth-5 if/for nested block.
+        C2 FIX: Batch URL fingerprint computation with CONSISTENT format.
 
         Reads from url_texts (aligned with url_indices) and writes directly to
         url_fingerprints at the corresponding indices.
-        """
-        if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_url_fingerprints is not None:
-            try:
-                batch_urls: list[str] = _rust_batch_url_fingerprints(url_texts)
-                for j, idx in enumerate(url_indices):
-                    url_fingerprints[idx] = batch_urls[j]
-                return  # F360M-R: Early exit on Rust success — avoid duplicate loop
-            except Exception:  # noqa: BLE001 — best-effort; Rust unavailable/failed; non-critical
-                pass  # Fall through to Python fallback
 
-        # F360M-R: Python fallback — shared path for Rust unavailable OR Rust failure
+        CRITICAL: Uses _compute_url_fingerprints_batch() from quality_assessment.py
+        to ensure 16-char xxHash64 format consistent with single-item assess().
+        The old code used rust.quality.batch_url_fingerprints() which produces
+        32-char SHA256 - causing fingerprint mismatch between batch and single modes.
+        """
+        # Lazy import to break circular dependency
+        from .quality_assessment import _compute_url_fingerprints_batch as _batch_fp
+
+        batch_fps = _batch_fp(url_texts)
         for j, idx in enumerate(url_indices):
-            url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
+            url_fingerprints[idx] = batch_fps[j]
 
     # ---------------------------------------------------------------------------
     # F360M-R: Batch quality preprocessing helpers — reduce CC from 38 to target ≤15

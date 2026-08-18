@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._stage_protocol import BoundedStageQueue, Stage, StageContext
 from hledac.universal.utils.asyncx import parallel, safe_create_task  # ISSUE-006, E4: parallel() + OTel trace context
+from hledac.universal.utils.concurrency import AtomicAdaptiveSemaphore  # ISSUE-008: safe AIMD resize
 from _core import aclose
 
 if TYPE_CHECKING:
@@ -50,6 +51,7 @@ class EnrichStage:
         "_effective_workers",
         "_running",
         "_sem",
+        "_sem_init_lock",
     )
 
     def __init__(
@@ -66,11 +68,24 @@ class EnrichStage:
         self._uma_state = uma_state
         self._effective_workers = max(1, int(self._aimd.window))
         self._running = False
-        self._sem: asyncio.Semaphore = asyncio.Semaphore(self._effective_workers)
+        # ISSUE-008: Use AtomicAdaptiveSemaphore for safe AIMD resize in Python 3.14+
+        # PEP 789: lazy init in async context
+        self._sem: AtomicAdaptiveSemaphore | None = None
+        self._sem_init_lock = asyncio.Lock()
 
     @property
     def aimd_window(self) -> float:
         return self._aimd.window
+
+    async def _ensure_semaphore(self) -> AtomicAdaptiveSemaphore:
+        """PEP 789: Create AtomicAdaptiveSemaphore lazily in event loop context."""
+        if self._sem is not None:
+            return self._sem
+        async with self._sem_init_lock:
+            if self._sem is not None:
+                return self._sem
+            self._sem = AtomicAdaptiveSemaphore(initial=self._effective_workers)
+            return self._sem
 
     async def _drain_batch(
         self,
@@ -135,7 +150,9 @@ class EnrichStage:
         new_workers = max(1, min(int(new_window), 16))
         if new_workers != self._effective_workers:
             self._effective_workers = new_workers
-            self._sem = asyncio.Semaphore(new_workers)
+            # ISSUE-008: Use resize() instead of creating new Semaphore
+            if self._sem is not None:
+                await self._sem.resize(new_workers)
             metrics.update_aimd_window(new_window)
 
     async def run(
@@ -169,7 +186,9 @@ class EnrichStage:
                     continue
 
                 # Process batch concurrently with AIMD-gated semaphore
-                async with self._sem:
+                # ISSUE-008: Use lazy semaphore init for PEP 789 compatibility
+                sem = await self._ensure_semaphore()
+                async with sem:
                     tasks = [self._enrich_one(pr, hits, ctx) for pr, hits in batch]
                     gather_result = await parallel(tasks, policy="collect")
 

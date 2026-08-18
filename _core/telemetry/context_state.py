@@ -277,8 +277,12 @@ def get_current_sprint_id() -> str:
 
 
 def generate_sprint_id() -> str:
-    """Generate a new sprint ID (UUID8 for time-ordering on M1)."""
-    return uuid.uuid8().hex[:16]
+    """Generate a new sprint ID (UUIDv7 for time-ordering on M1).
+
+    ISSUE-11 FIX: uuid.uuid8() does not exist in Python's uuid module.
+    Changed to uuid.uuid7() (Python 3.14+) for time-ordered sprint IDs.
+    """
+    return uuid.uuid7().hex[:16]
 
 
 # ─── Issue #046: Request ID ContextVar ──────────────────────────────────────
@@ -294,12 +298,12 @@ def set_request_id(request_id: str | None = None) -> str:
     """Set the current request ID.
 
     Args:
-        request_id: Optional ID to set. If None, generates a UUID8 hex (16 chars).
+        request_id: Optional ID to set. If None, generates a UUIDv7 hex (16 chars).
 
     Returns:
         The request_id that was set.
     """
-    rid = request_id if request_id else uuid.uuid8().hex[:16]
+    rid = request_id if request_id else uuid.uuid7().hex[:16]
     _request_id_var.set(rid)
     return rid
 

@@ -69,6 +69,7 @@ import gc
 import logging
 import os
 import threading
+import weakref
 from abc import abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -690,6 +691,7 @@ class ModelPool:
         "_eviction_count",
         "_hits",
         "_misses",
+        "_finalizer",
     )
 
     def __init__(self, max_size: int | None = None) -> None:
@@ -701,6 +703,8 @@ class ModelPool:
         self._eviction_count: int = 0
         self._hits: int = 0
         self._misses: int = 0
+        # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
+        self._finalizer = weakref.finalize(self, _model_pool_cleanup)
 
     def get(self, key: str) -> tuple[Any, Any] | None:
         """Get model + tokenizer from cache. Returns None if not cached. Thread-safe."""
@@ -798,32 +802,48 @@ class ModelPool:
             pass
         logger.debug(f"[ModelPool] MLX cache cleared ({reason})")
 
+    def _cleanup_model_pool(self) -> None:
+        """
+        Cleanup method for weakref.finalize.
+        
+        Clears the model cache and forces MLX Metal cache cleanup.
+        """
+        try:
+            if hasattr(self, "_cache") and self._cache:
+                self._cache.clear()
+                self._clear_mlx_cache_internal("gc_cleanup")
+        except Exception:  # noqa: BLE001
+            pass
+
     def __del__(self) -> None:
         """
-        Destructor — ensures MLX Metal cache is freed when ModelPool is GC'd.
-
+        F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
+        
         M7 FIX: When ModelPool is garbage collected (e.g. memory pressure,
         module reload), Python's refcount releases the model objects, but MLX
         GPU memory is NOT automatically returned to the Metal allocator without
         an explicit mx.eval([]) barrier + clear_cache() call.
-
-        This __del__ is fail-safe: swallows all exceptions since finalizers
-        run in an unpredictable state (interpreter shutdown, locks held).
-        GC of the _cache OrderedDict alone does NOT trigger mlx_cleanup_sync().
+        
+        Called only if:
+        - Finalizer wasn't triggered (interpreter shutdown order)
+        - Object was resurrected and then deleted
         """
-        try:
-            if hasattr(self, "_cache") and self._cache:
-                # Clear cache dict first — this drops Python refs to model objects
-                self._cache.clear()
-                # Then force-eval + clear Metal cache
-                try:
-                    from hledac.universal.utils.mlx_cache import mlx_cleanup_sync
-                    mlx_cleanup_sync()
-                except Exception:  # noqa: BLE001
-                    pass
-        except Exception:  # noqa: BLE001
-            # Never raise from __del__ — interpreter shutdown is unpredictable
-            pass
+        if hasattr(self, '_finalizer') and self._finalizer.detach():
+            self._cleanup_model_pool()
+
+
+def _model_pool_cleanup() -> None:
+    """
+    Module-level cleanup function for weakref.finalize.
+    
+    F264: Clear MLX Metal cache when ModelPool is garbage collected.
+    Called automatically by weakref.finalize when the object is GC'd.
+    """
+    try:
+        from hledac.universal.utils.mlx_cache import mlx_cleanup_sync
+        mlx_cleanup_sync()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # Global singleton

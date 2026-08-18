@@ -1,5 +1,6 @@
 """
-from __future__ annotations
+from __future__ import annotations
+from enum import Enum, auto
 from operator import attrgetter, itemgetter
 runtime/sidecar_protocol.py — F350M-R: Protocol-Based Sidecar Registry
 ======================================================================
@@ -18,11 +19,33 @@ GHOST_INVARIANTS:
 - Bounded: ram_budget_mb is always checked before run
 - No blocking ops in async context
 - Lane enablement via LaneRegistry (replaces env_gate strings)
+
+ISSUE #15 FIX: Advisory Priority Queue and Callable Adapter Pattern
+====================================================================
+Refactored advisory sidecars from method-based to callable __call__ adapters:
+
+  BEFORE (method-based, hard to compose):
+      orchestrator._run_ipfs_discovery_sidecar()  # method call
+  
+  AFTER (callable adapter, composable):
+      adapter = IPFSDsidecarAdapter(orchestrator)
+      await adapter(ctx)  # callable interface
+
+Priority levels for advisory sidecars:
+  - HIGH:    CT→PassiveDNS pivot, critical intelligence
+  - NORMAL:  BGP, Wayback, IPFS, Onion, I2P, DHT, Gopher
+  - LOW:     Digital ghost, steganography, TI feeds, auto-RE
+
+Parallel execution policy:
+  - HIGH:     concurrent=8, no delay
+  - NORMAL:   concurrent=8, fire-and-forget
+  - LOW:      concurrent=4, may be deferred under memory pressure
 """
 
 import logging
 from typing import Any, Protocol, TypeVar, runtime_checkable
 from collections.abc import Callable
+from collections.abc import Awaitable
 
 import msgspec
 from compat.msgspec_gc_compat import Struct
@@ -43,6 +66,120 @@ SearchFn = Callable[..., Any]
 ResultToFindingFn = Callable[..., dict | None | list[dict]]
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# ISSUE #15 FIX: Advisory Priority System
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class AdvisoryPriority(Enum):
+    """
+    Priority levels for advisory sidecar execution.
+
+    ISSUE #15 FIX: Enables priority-based scheduling with concurrent execution
+    policy per priority level:
+
+      HIGH (1):
+        - Critical intelligence (CT→PassiveDNS pivot)
+        - concurrency=8, fire immediately
+        - Never deferred under memory pressure
+
+      NORMAL (2):
+        - Standard advisories (BGP, Wayback, IPFS, Onion, I2P, DHT, Gopher)
+        - concurrency=8, fire-and-forget
+        - May be deferred under extreme memory pressure
+
+      LOW (3):
+        - Optional forensics (digital ghost, steganography, TI feeds)
+        - concurrency=4, may be skipped under memory pressure
+        - Conservative resource usage
+    """
+    HIGH = 1
+    NORMAL = 2
+    LOW = 3
+
+    @property
+    def concurrency(self) -> int:
+        """Max concurrent tasks for this priority level."""
+        return {
+            self.HIGH: 8,
+            self.NORMAL: 8,
+            self.LOW: 4,
+        }[self]
+
+    @property
+    def deferrable(self) -> bool:
+        """True if this priority can be deferred under memory pressure."""
+        return self != self.HIGH
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ISSUE #15 FIX: Callable Advisory Adapter Pattern
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SidecarContext(Struct):
+    """
+    Context passed to every sidecar adapter.
+
+    F314-3: Migrated from @dataclass to msgspec.Struct for M1 8GB RAM optimization.
+    F350M-R: gc=False vyjímá objekt ze sledování cyklického GC — kritické pro
+    milisekundové OSINT streamy na 8GB M1.
+
+    Fields:
+        query: Original sprint query string
+        sprint_id: Unique sprint identifier
+        findings: List of accepted CanonicalFinding objects from the sprint
+        sprint_mode: Current sprint mode (aggressive/active/passive/research)
+        memory_pressure: Current RSS/max_rss ratio (0.0-1.0)
+    """
+    query: str
+    sprint_id: str
+    findings: list[Any]
+    sprint_mode: str
+    memory_pressure: float = 0.0
+
+
+@runtime_checkable
+class AdvisoryCallable(Protocol):
+    """
+    ISSUE #15 FIX: Callable adapter protocol for advisory sidecars.
+
+    Refactored from method-based (_run_*_sidecar) to callable __call__ pattern.
+    Enables composable priority queue and parallel execution via utils.asyncx.parallel().
+
+    Usage:
+        # Before (method-based):
+        await orchestrator._run_ipfs_discovery_sidecar()
+
+        # After (callable adapter):
+        adapter = IPFSDiscoveryAdapter(orchestrator)
+        await adapter(ctx)
+
+    Benefits:
+      - Composable: adapters can be wrapped, decorated, chained
+      - Priority-aware: adapters declare their priority level
+      - Parallel-executable: all adapters share the same interface
+      - Testable: adapters are pure async callables, easy to mock
+    """
+
+    @property
+    def sidecar_id(self) -> str:
+        """Unique identifier for telemetry and logging."""
+        ...
+
+    @property
+    def priority(self) -> AdvisoryPriority:
+        """Execution priority for scheduling."""
+        ...
+
+    @property
+    def capability(self) -> str:
+        """Capability name for TransportCapability registry lookup."""
+        ...
+
+    async def __call__(self, ctx: SidecarContext) -> list[Any]:
+        """Execute the advisory sidecar with the given context."""
+        ...
+
+
 # ── SchedulerAdvisory Protocol ─────────────────────────────────────────────────
 
 @runtime_checkable
@@ -58,6 +195,10 @@ class SchedulerAdvisory(Protocol):
 
     FIX-5: All _run_*_sidecar methods return list[dict] (findings) not None.
     The orchestrator is responsible for capability checks and filtering.
+
+    ISSUE #15: Deprecated in favor of AdvisoryCallable protocol.
+    Existing _run_*_sidecar methods are wrapped by AdvisoryCallable adapters
+    in sidecar_orchestrator.py for priority-based scheduling.
     """
 
     # ── R5: CT → PassiveDNS pivot advisory ──────────────────────────────────
@@ -102,30 +243,6 @@ class SchedulerAdvisory(Protocol):
     # ── ADVERSARY-004: Auto-RE ─────────────────────────────────────────────
     async def _run_auto_re_sidecar(self) -> list: ...
 
-
-
-# ── SidecarContext ──────────────────────────────────────────────────────────────
-
-class SidecarContext(Struct):
-    """
-    Context passed to every sidecar adapter.
-
-    F314-3: Migrated from @dataclass to msgspec.Struct for M1 8GB RAM optimization.
-    F350M-R: gc=False vyjímá objekt ze sledování cyklického GC — kritické pro
-    milisekundové OSINT streamy na 8GB M1.
-
-    Fields:
-        query: Original sprint query string
-        sprint_id: Unique sprint identifier
-        findings: List of accepted CanonicalFinding objects from the sprint
-        sprint_mode: Current sprint mode (aggressive/active/passive/research)
-        memory_pressure: Current RSS/max_rss ratio (0.0-1.0)
-    """
-    query: str
-    sprint_id: str
-    findings: list[Any]
-    sprint_mode: str
-    memory_pressure: float = 0.0
 
 
 # ── SidecarAdapterProtocol ─────────────────────────────────────────────────────

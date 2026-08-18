@@ -340,7 +340,7 @@ class FederatedSidecarAdapter:
             lane = str(finding.get("source_lane", "surface") or "surface")
             finding_id = (
                 finding.get("finding_id")
-                or f"fed-{sprint_id}-{uuid.uuid4().hex[:12]}"
+                or f"fed-{sprint_id}-{uuid.uuid7().hex[:12]}"
             )
             payload_text = (
                 finding.get("payload_text")

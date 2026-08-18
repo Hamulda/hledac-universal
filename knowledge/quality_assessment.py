@@ -33,7 +33,6 @@ import collections.abc
 from dataclasses import dataclass
 import msgspec
 from compat.msgspec_gc_compat import Struct
-from hledac.universal.compat.msgspec_gc_compat import Struct
 from logging import Logger
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urlencode, urlparse
@@ -54,6 +53,9 @@ __all__ = [
     "_normalize_osint_url",
     "_compute_dedup_fingerprint",
     "_compute_url_fingerprint",
+    "_compute_url_fingerprints_batch",
+    "_build_rust_findings_input",
+    "assess_findings_quality_batch",
 ]
 
 
@@ -288,6 +290,104 @@ def _compute_url_fingerprint(url: str) -> str:
     if normalized_url:
         return hashlib.blake2b(normalized_url.encode("utf-8"), digest_size=16).hexdigest()
     return ""
+
+
+# Batch threshold for using Rust batch_fingerprint (M1 8GB optimized)
+_BATCH_FP_THRESHOLD = 100
+
+
+def _compute_url_fingerprints_batch(urls: list[str]) -> list[str]:
+    """
+    C2: Batch URL fingerprinting for 100+ URLs using Rust batch_fingerprint.
+
+    Uses Rust url_engine.batch_fingerprint (rayon-parallel, M1 NEON-accelerated)
+    when available, falls back to sequential _compute_url_fingerprint.
+
+    M1 8GB safe: pure Rust batch, no additional Python overhead.
+
+    Args:
+        urls: List of URL strings to fingerprint
+
+    Returns:
+        List of 16-char hex fingerprint strings (same order as input)
+    """
+    n = len(urls)
+    if n < _BATCH_FP_THRESHOLD:
+        # Small batch: use sequential single-fingerprint (avoids batch overhead)
+        return [_compute_url_fingerprint(url) for url in urls]
+
+    # C2: Use rayon batch API (single O(n) scan, M1 NEON-accelerated)
+    if _url_engine_available() and _rust_backend.url is not None:
+        try:
+            return _rust_backend.url.batch_fingerprint(urls)
+        except Exception:  # noqa: BLE001
+            pass  # Fall through to Python fallback
+
+    # Python fallback: normalize then BLAKE2b for each
+    return [_compute_url_fingerprint(url) for url in urls]
+
+
+def _build_rust_findings_input(findings: list) -> list[dict]:
+    """
+    ISSUE-022: Convert CanonicalFinding objects to PyFindingInput dicts for Rust.
+
+    PyFindingInput mirrors the Rust struct:
+      - finding_id: str
+      - source_type: str
+      - provenance: Option<String>
+      - payload_text: Option<String>
+      - query: str
+
+    Provenance tuple is flattened to a single string (first URL if present,
+    else the tuple repr) since Rust expects Option<String>.
+    """
+    result = []
+    for f in findings:
+        # Flatten provenance tuple to a single string for Rust
+        provenance: str | None = None
+        if f.provenance:
+            # Extract first URL from provenance if present
+            for p in f.provenance:
+                if p.startswith("url:"):
+                    provenance = p[4:].strip()
+                    break
+            if provenance is None:
+                provenance = str(f.provenance) if f.provenance else None
+
+        result.append({
+            "finding_id": f.finding_id,
+            "source_type": f.source_type,
+            "provenance": provenance,
+            "payload_text": f.payload_text,
+            "query": f.query,
+        })
+    return result
+
+
+def assess_findings_quality_batch(findings: list[dict]) -> list[dict] | None:
+    """
+    ISSUE-022: Parallel batch quality assessment via Rust assess_findings_quality_batch.
+
+    Calls Rust assess_findings_quality_batch() which does pure-compute
+    in one rayon-parallel call per chunk: URL fp, normalize, entropy,
+    dedup fp — all in a single pass through rayon, no Python overhead
+    between stages.
+
+    Returns list[dict] with keys: accepted(bool), reason(str|None),
+    rejection_reason(str|None), entropy(float), normalized_hash(str),
+    duplicate(bool), is_url(bool).
+
+    Returns None on exception (caller should use fallback path).
+
+    Stateful checks (hot_cache, LMDB, semantic dedup) remain in Python
+    after this call — this function only provides pure-compute decisions.
+    """
+    if not _quality_gate_rust_available() or _rust_backend.quality is None:
+        return None
+    try:
+        return _rust_backend.quality.assess_findings_quality_batch(findings)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # Sprint F216G: Quality Rejection Ledger
@@ -660,15 +760,118 @@ class QualityAssessor:
         """
         Sprint P1-2: Batch quality gate — rayon-parallel via Rust batch APIs.
 
-        Applies identical decision logic as per-finding assess(), but in a single
-        batch call per chunk. Phase 1 pre-computes all fingerprints + entropies via
-        Rust batch APIs; Phase 2 walks findings applying URL-first → hot_cache →
-        LMDB → short_string → entropy → semantic_dedup.
+        ISSUE-022: Uses assess_findings_quality_batch Rust fast path which combines
+        URL fp, normalize, entropy, dedup fp into a single rayon-parallel call.
+        Falls back to individual batch APIs if Rust batch is unavailable.
+
+        Phase 1: pre-compute all fingerprints + entropies via Rust batch
+        Phase 2: walks findings applying URL-first → hot_cache → LMDB →
+                 short_string → entropy → semantic_dedup.
 
         Bounded: caller should chunk at 4096 max (Rust BATCH_HARD_CAP).
-        Below 100 items falls through to sequential Rust single-call (avoids rayon overhead).
         Returns list[FindingQualityDecision] in same order as findings.
-        Fail-soft: any exception in batch pre-compute falls back to per-finding assess().
+        Fail-soft: any exception falls back to per-finding assess().
+        """
+        n = len(findings)
+        if n == 0:
+            return []
+
+        results: list[FindingQualityDecision] = [None] * n  # type: ignore[list-item]
+        _batch_logger: Logger = _logging.getLogger(__name__)
+
+        # --- ISSUE-022: Try Rust assess_findings_quality_batch fast path ---
+        rust_results = assess_findings_quality_batch(_build_rust_findings_input(findings))
+
+        if rust_results is not None:
+            # Fast path: Rust computed fingerprints, entropy, and pure decisions
+            # Rust handles: URL fp, normalize, entropy, dedup fp, and pure-compute rejection
+            # Phase 2 handles: stateful checks (hot_cache, LMDB, semantic dedup)
+            for idx, rust_dec in enumerate(rust_results):
+                f = findings[idx]
+                entropy = rust_dec.get("entropy", 0.0)
+
+                # ISSUE-022: Consolidate is_url check (was duplicated above)
+                is_url_finding = rust_dec.get("is_url", False)
+                if is_url_finding:
+                    url_fp = rust_dec.get("normalized_hash", "")
+                    fp = ""  # URL findings don't use payload fingerprint
+                else:
+                    url_fp = ""
+                    fp = rust_dec.get("normalized_hash", "")
+
+                # Check if Rust rejected based on pure-compute criteria (low entropy)
+                rust_accepted = rust_dec.get("accepted", True)
+
+                if rust_accepted:
+                    # Rust accepted → run Phase 2 for stateful checks (hot_cache, LMDB, semantic dedup)
+                    is_feed_source = f.source_type in _FEED_SOURCE_TYPES
+                    text_for_embed = url_fp or (f.payload_text or f.query)
+                    is_high_conf_ioc = (
+                        text_for_embed is not None
+                        and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
+                    )
+                    results[idx] = self._assess_batch_item_phase2(
+                        f=f,
+                        url_fp=url_fp,
+                        fp=fp,
+                        entropy=entropy,
+                        is_feed_source=is_feed_source,
+                        is_high_conf_ioc=is_high_conf_ioc,
+                        text_for_embed=text_for_embed,
+                        _logger=_batch_logger,
+                    )
+                else:
+                    # Rust rejected (e.g., low_entropy_rejected) → respect decision
+                    # but still check stateful duplicates for accurate counting
+                    rust_reason = rust_dec.get("rejection_reason") or rust_dec.get("reason") or "rust_rejected"
+
+                    # Phase 2: check hot_cache/LMDB for duplicate counting even after Rust rejection
+                    # This ensures accurate duplicate metrics regardless of Rust's pure-compute rejection
+                    if fp:  # Only check if we have a fingerprint (skip for URL-only findings)
+                        dup_hit = self._state.hot_cache_lookup(fp)
+                        if dup_hit is not None:
+                            self._state._quality_duplicate_count += 1
+                            results[idx] = self._make_decision(
+                                False, "persistent_duplicate", entropy, fp, True,
+                            )
+                            continue
+
+                        if self._lmdb_lookup_fn is not None:
+                            stored_id = self._lmdb_lookup_fn(fp)
+                            if stored_id is not None:
+                                self._state.add_to_hot_cache(fp, stored_id)
+                                self._state._persistent_duplicate_count += 1
+                                results[idx] = self._make_decision(
+                                    False, "persistent_duplicate", entropy, fp, True,
+                                )
+                                continue
+
+                    # Rust's pure-compute rejection takes precedence (e.g., low entropy)
+                    self._state._quality_rejected_count += 1
+                    _batch_logger.debug(
+                        "[QUALITY] rust_rejected reason=%s entropy=%.3f fp=%s finding_id=%s",
+                        rust_reason, entropy, fp[:16] if fp else "",
+                        f.finding_id[:16] if f.finding_id else "",
+                    )
+                    results[idx] = self._make_decision(
+                        False, rust_reason, entropy, fp or url_fp, False,
+                    )
+        else:
+            # Fallback: individual batch calls (legacy path)
+            results = self._assess_batch_legacy(findings)
+
+        assert None not in results, "assess_batch: 1:1 invariant violated"
+        return results  # type: ignore[return-value]
+
+    def _assess_batch_legacy(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> list[FindingQualityDecision]:
+        """
+        Legacy batch assessment path — individual Rust batch calls.
+
+        Used as fallback when assess_findings_quality_batch is unavailable.
+        Identical decision logic to assess_batch().
         """
         n = len(findings)
         results: list[FindingQualityDecision] = [None] * n  # type: ignore[list-item]
@@ -695,16 +898,16 @@ class QualityAssessor:
                 payload_indices.append(idx)
 
         # Batch URL fingerprints (URL-first items skip entropy)
+        # C2 FIX: Use _compute_url_fingerprints_batch() to ensure consistent
+        # fingerprint format with single-item assess() which uses rust.url.fingerprint()
+        # (16-char xxHash64). The old code used rust.quality.batch_url_fingerprints()
+        # which produces 32-char SHA256 - a CRITICAL BUG causing inconsistent dedup.
         if url_indices:
             url_texts = [url_fingerprints[i] for i in url_indices]
-            batch_urls = self._rust_batch_str(
-                url_texts,
-                batch_fn=lambda lst: _rust_backend.quality.batch_url_fingerprints(lst),
-                single_fn=lambda s: _rust_backend.quality.url_fingerprint(s),
-                py_fn=_compute_url_fingerprint,
-    )
+            # C2: Use Rust batch_fingerprint for consistency (same format as single-item)
+            batch_fps = _compute_url_fingerprints_batch(url_texts)
             for j, idx in enumerate(url_indices):
-                url_fingerprints[idx] = batch_urls[j]
+                url_fingerprints[idx] = batch_fps[j]
 
         # Batch payload fingerprints + entropies
         if payload_indices:
@@ -763,8 +966,7 @@ class QualityAssessor:
                 _logger=_batch_logger,
     )
 
-        assert None not in results, "assess_batch: 1:1 invariant violated"
-        return results  # type: ignore[return-value]
+        return results
 
     # ---------------------------------------------------------------------------
     # Rust batch fallback helper — CC = 3

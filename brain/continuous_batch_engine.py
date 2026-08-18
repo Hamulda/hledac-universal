@@ -115,7 +115,8 @@ class ContinuousBatchEngine:
         """
         req_id = self._next_id
         self._next_id += 1
-        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+        fut: asyncio.Future = asyncio.get_running_loop().create_future(name=f"continuous_batch:request:{req_id}")
         req = _BatchRequest(id=req_id, prompt=prompt, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg, priority=priority, future=fut)
         # S1-12 FIX: put() can block indefinitely when queue is full (maxsize=128).
         # Wrap with wait_for so caller gets TimeoutError instead of deadlock.

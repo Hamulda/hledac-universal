@@ -234,7 +234,7 @@ class ExceptionPolicy:
                     pass  # Location extraction failure is non-critical
 
                 event = ExceptionEvent(
-                    event_id=uuid.uuid4().hex[:12],
+                    event_id=uuid.uuid7().hex[:12],
                     cascade_id=cascade_id,
                     severity=severity_obj,
                     scope=context or "unknown",

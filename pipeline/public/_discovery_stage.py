@@ -7,7 +7,7 @@ Responsibilities:
 - Run discovery search (DuckDuckGo adapter)
 
 Input: query string
-Output: PageBatch with urls, titles, snippets, ranks, discovery_scores
+Output: DiscoveryPhaseResult with enriched hits and telemetry
 """
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
+
+from compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
@@ -24,6 +26,36 @@ from hledac.universal.pipeline._soa_types import PageBatch
 from _core import aclose
 
 logger = logging.getLogger(__name__)
+
+# ----------------------------------------------------------------------
+# Types
+# ----------------------------------------------------------------------
+
+
+class DiscoveryPhaseResult(Struct, frozen=True, gc=False):
+    """Structured discovery output for downstream phases.
+
+    F363: Replaces 13-element tuple return from DiscoveryEngine.run().
+    F364: Converted from dataclass to msgspec.Struct for consistency with codebase.
+    Provides named access to all discovery results with type hints.
+
+    Note: Named DiscoveryPhaseResult to avoid conflict with DiscoveryResult
+    in discovery/base.py which represents a single discovery hit.
+    """
+    hits: tuple
+    discovery_result: Any
+    discovery_error: str | None
+    discovery_error_type: str | None
+    discovery_elapsed_s: float | None
+    discovery_attempted: bool
+    discovery_telemetry: dict
+    academic_findings_count: int
+    ct_injected: int
+    cc_injected: int
+    onion_findings_count: int
+    pastebin_findings_count: int
+    github_secrets_count: int
+    keyword_seed_fallback_triggered: bool
 
 # Re-use constants from live_public_pipeline
 _MAX_BOOTSTRAP_URLS: int = 5

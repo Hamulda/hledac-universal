@@ -1080,7 +1080,7 @@ class SharedMemoryManager:
         try:
             if len(data) > self.max_memory_bytes:
                 raise ValueError(f'Data size {len(data)} exceeds maximum {self.max_memory_bytes}')
-            block_id = str(uuid.uuid4())
+            block_id = str(uuid.uuid7())
             shared_mem = shm.SharedMemory(create=True, size=len(data))
             shared_mem.buf[:len(data)] = data
             block_info = SharedMemoryBlock(block_id=block_id, size=len(data), created_at=time.time(), process_id=mp.current_process().pid, data_type=data_type, metadata=metadata or {})
@@ -1172,7 +1172,7 @@ class EntropyMaskingManager:
     Reduces Shannon entropy to make encrypted operations appear
     as normal application activity to EDR scanners.
     """
-    __slots__ = tuple(('active_masking', 'noise_blocks', 'noise_content', 'noise_size_bytes'))
+    __slots__ = tuple(('active_masking', 'noise_blocks', 'noise_content', 'noise_size_bytes', '_finalizer'))
 
     def __init__(self, noise_size_mb: int=50):
         self.noise_size_bytes = noise_size_mb * 1024 * 1024
@@ -1180,6 +1180,14 @@ class EntropyMaskingManager:
         self.noise_content = self._generate_noise_content()
         self.active_masking = False
         logger.info("EntropyMaskingManager initialized with %sMB noise buffer", noise_size_mb)
+
+        # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
+        # Primary cleanup path; __del__ is fallback for interpreter shutdown edge cases
+        self._finalizer = weakref.finalize(
+            self,
+            _cleanup_entropy_noise,
+            self.noise_blocks,
+        )
 
     def _generate_noise_content(self) -> bytes:
         """Generate repetitive content that appears as normal application data."""
@@ -1266,6 +1274,48 @@ class EntropyMaskingManager:
         logger.info('All entropy noise blocks cleared')
 
     def __del__(self):
-        """Cleanup on deletion"""
+        """Fallback destructor — weakref.finalize is primary, __del__ is last resort.
+
+        In Python 3.14+ __del__ is not guaranteed to run, so _finalizer (via
+        weakref.finalize) is the canonical cleanup path.
+        """
+        # Detach finalizer to prevent double-cleanup
+        if hasattr(self, '_finalizer') and self._finalizer.detach():
+            # We took ownership — run cleanup now
+            self.clear_noise_blocks()
+
+    def close(self) -> None:
+        """Explicit cleanup — preferred over relying on __del__."""
+        if hasattr(self, '_finalizer'):
+            self._finalizer.detach()
         self.clear_noise_blocks()
+
+
+def _cleanup_entropy_noise(noise_blocks: dict[str, mmap.mmap]) -> None:
+    """Module-level cleanup function for weakref.finalize.
+
+    Separated from class method to avoid reference cycle and ensure
+    the cleanup function is callable after the instance is collected.
+    """
+    import glob
+    import os
+
+    for _block_id, noise_mmap in list(noise_blocks.items()):
+        try:
+            noise_mmap.close()
+        except Exception:  # noqa: BLE001
+            pass
+    noise_blocks.clear()
+
+    try:
+        temp_files = glob.glob('/tmp/hledac_entropy_*.bin')
+    except Exception:  # noqa: BLE001
+        temp_files = []
+    for temp_file in temp_files:
+        try:
+            os.unlink(temp_file)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 __all__ = ['MemoryLayer', 'RAMDiskManager', 'RAMDiskConfig', 'SharedMemoryManager', 'EntropyMaskingManager', 'SharedMemoryBlock']

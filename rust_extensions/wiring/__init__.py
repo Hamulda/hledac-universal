@@ -2,7 +2,7 @@
 Rust Extensions Wiring Package
 ============================
 
-This package contains integration wiring for zombie Rust modules.
+This package contains integration wiring for Rust modules.
 
 Each module provides a fallback-safe facade that uses the Rust module
 when available and falls back to pure Python when not.
@@ -23,9 +23,12 @@ url_engine_wiring         - URL normalization and fingerprinting
 content_hasher_wiring     - Fast content hashing (BLAKE3, xxh3)
 tls_metadata_wiring       - TLS certificate metadata extraction
 ioc_dedup_wiring          - mmap-backed IOC deduplication
+dedup_bloom_wiring        - Distributed BloomFilter for URL queue dedup (B4)
+signal_batch_wiring       - NEON batch signal processing for feeds
 fulltext_index_wiring     - Tantivy BM25 fulltext search
 html_parse_wiring         - lol_html zero-copy HTML parsing
 serde_json_wiring         - Fast JSON serialization for STIX
+pipeline_compose_wiring   - Functor-style MAP/FILTER/FOLD pipeline composition
 
 Usage:
 ------
@@ -95,6 +98,13 @@ from rust_extensions.wiring.graph_analytics_wiring import (
     analyze_ioc_graph,
 )
 
+# Graph Cache (B3)
+from rust_extensions.wiring.graph_cache_wiring import (
+    GraphCache,
+    get_graph_cache,
+    reset_graph_cache,
+)
+
 # Claims Extraction
 from rust_extensions.wiring.claims_extraction_wiring import (
     claims_extraction_wired,
@@ -155,6 +165,15 @@ from rust_extensions.wiring.ioc_dedup_wiring import (
     ioc_dedup_available,
 )
 
+# DedupBloom (B4: Distributed BloomFilter for URL dedup)
+from rust_extensions.wiring.dedup_bloom_wiring import (
+    DedupBloom,
+    get_dedup_bloom,
+    bloom_check,
+    bloom_skip,
+    bloom_add,
+)
+
 # Fulltext Index (Tantivy)
 from rust_extensions.wiring.fulltext_index_wiring import (
     create_index,
@@ -186,6 +205,33 @@ from rust_extensions.wiring.serde_json_wiring import (
     batch_dumps,
     is_available as serde_json_available,
     dumps_stix_bundle,
+)
+
+# Signal Batch
+from rust_extensions.wiring.signal_batch_wiring import (
+    signal_batch_wired,
+    batch_compute_scores,
+    batch_aggregate_signals,
+    batch_quality_score,
+)
+
+# Pipeline Compose (B5 - Functor-style composition)
+from rust_extensions.wiring.pipeline_compose_wiring import (
+    BATCH_SIZE,
+    BatchStats,
+    RustPipelineComposer,
+    pipeline_map_async,
+    pipeline_filter_async,
+    pipeline_filter_map_async,
+    pipeline_fold_async,
+    pipeline_count_async,
+    pipeline_compose_two_async,
+    pipeline_batch_stats_async,
+    batch_process_map,
+    batch_process_filter,
+    batch_process_filter_map,
+    prep_batch_stats,
+    run_stage_with_stats,
 )
 
 __all__ = [
@@ -285,4 +331,29 @@ __all__ = [
     "batch_dumps",
     "serde_json_available",
     "dumps_stix_bundle",
+    # Signal Batch
+    "signal_batch_wired",
+    "batch_compute_scores",
+    "batch_aggregate_signals",
+    "batch_quality_score",
+    # Graph Cache (B3)
+    "GraphCache",
+    "get_graph_cache",
+    "reset_graph_cache",
+    # Pipeline Compose (B5)
+    "BATCH_SIZE",
+    "BatchStats",
+    "RustPipelineComposer",
+    "pipeline_map_async",
+    "pipeline_filter_async",
+    "pipeline_filter_map_async",
+    "pipeline_fold_async",
+    "pipeline_count_async",
+    "pipeline_compose_two_async",
+    "pipeline_batch_stats_async",
+    "batch_process_map",
+    "batch_process_filter",
+    "batch_process_filter_map",
+    "prep_batch_stats",
+    "run_stage_with_stats",
 ]

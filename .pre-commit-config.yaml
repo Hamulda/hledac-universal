@@ -12,9 +12,23 @@ default_language_version:
 
 default_install_hook_types: [pre-commit, commit-msg]
 
-# ── Stage 1: Fast hooks (< 5s total) ────────────────────────────────────────
+# ── Stage 0: Hygiene blockers (< 1s) ─────────────────────────────────────────
 
 repos:
+  # ── Block .bak* snapshot artifacts (F350M-R cleanup) ─────────────────────
+  # Blocks ALL .bak* files including: .bak_core_keyword, .bak_F*, .bak_ic_fix, etc.
+  - repo: local
+    hooks:
+      - id: block-bak-snapshots
+        name: block .bak* snapshots
+        entry: python -c "import sys, re; pattern=re.compile(r'\.bak'); files=[f for f in sys.argv[1:] if pattern.search(f)]; sys.exit(len(files) and print('ERROR: Found .bak* snapshot files:\n' + '\n'.join(files) + '\nRemove them before committing.') or 1)"
+        language: system
+        types: [file]
+        pass_filenames: true
+        require_serial: true
+        stages: [pre-commit]
+
+  # ── Ruff: format + lint (Python, ~3-5s) ─────────────────────────────────
   # ── Ruff: format + lint (Python, ~3-5s) ─────────────────────────────────
   - repo: local
     hooks:

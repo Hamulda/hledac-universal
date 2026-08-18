@@ -29,6 +29,7 @@ Example:
 import logging
 import math
 import time
+import weakref
 from dataclasses import dataclass
 from collections import OrderedDict
 import msgspec
@@ -792,7 +793,7 @@ class MmapBloomFilter(BloomFilter):
     Falls back to regular BloomFilter if mmap unavailable.
     """
     
-    __slots__ = ('_path', '_mmap_obj', '_mmap_mode')
+    __slots__ = ('_path', '_mmap_obj', '_mmap_mode', '_finalizer')
     
     def __init__(
         self,
@@ -838,6 +839,9 @@ class MmapBloomFilter(BloomFilter):
             logger.debug('MmapBloomFilter falling back to non-mmap mode: %s', path)
             self._mmap_obj = None
             self._mmap_mode = False
+        
+        # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
+        self._finalizer = weakref.finalize(self, _mmap_bloom_filter_cleanup, self._mmap_obj)
     
     @property
     def is_mmap(self) -> bool:
@@ -850,12 +854,37 @@ class MmapBloomFilter(BloomFilter):
             self._mmap_obj.flush(flags)
     
     def __del__(self) -> None:
-        """Clean up mmap."""
+        """
+        F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
+        
+        Called only if:
+        - Finalizer wasn't triggered (interpreter shutdown order)
+        - Object was resurrected and then deleted
+        """
+        if hasattr(self, '_finalizer') and self._finalizer.detach():
+            self._cleanup_mmap()
+
+    def _cleanup_mmap(self) -> None:
+        """Cleanup method for weakref.finalize."""
         if self._mmap_obj is not None:
             try:
                 self._mmap_obj.close()
             except Exception:  # noqa: BLE001
                 pass
+
+
+def _mmap_bloom_filter_cleanup(mmap_obj: Any) -> None:
+    """
+    Module-level cleanup function for weakref.finalize.
+    
+    F264: Close mmap when MmapBloomFilter is garbage collected.
+    Called automatically by weakref.finalize when the object is GC'd.
+    """
+    try:
+        if mmap_obj is not None:
+            mmap_obj.close()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _stats_to_dict(stats: BloomFilterStats) -> dict[str, Any]:

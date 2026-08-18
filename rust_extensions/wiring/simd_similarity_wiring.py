@@ -94,6 +94,34 @@ def rerank_embeddings(
     ]
 
 
+def batch_hamming_scores(
+    query_packed: list[int],
+    candidates_packed: list[int],
+    num_candidates: int,
+    num_bytes: int,
+) -> list[float]:
+    """
+    Compute Hamming similarity scores between query and candidates.
+
+    Hamming similarity = 1.0 - (hamming_distance / max_bits)
+    where max_bits = num_bytes * 8.
+
+    Uses SIMD acceleration when available (NEON on M1, SSE3 on x86).
+
+    Args:
+        query_packed: Query as list of bytes (0-255)
+        candidates_packed: Flat list of bytes for all candidates
+        num_candidates: Number of candidate vectors
+        num_bytes: Bytes per vector (must be 1-256)
+
+    Returns:
+        List of similarity scores in [0.0, 1.0]
+    """
+    return _simd_similarity.batch_hamming_scores(
+        query_packed, candidates_packed, num_candidates, num_bytes
+    )
+
+
 def similarity_matrix(
     embeddings_a: list[list[float]],
     embeddings_b: list[list[float]] | None = None,

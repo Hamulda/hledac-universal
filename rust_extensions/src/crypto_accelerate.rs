@@ -32,7 +32,7 @@ pub fn sha256_hw_hex(data: &[u8]) -> String {
 /// Uses cpu_pool() for large batches (>= 128 items).
 #[pyfunction]
 pub fn batch_sha256_hw(items: Vec<String>) -> Vec<String> {
-    let n = items);
+    let n = items.len();
     if n < 128 {
         items.iter().map(|s| sha256_hw_hex(s.as_bytes())).collect()
     } else {
@@ -119,7 +119,7 @@ pub fn batch_encrypt_aes_gcm(password: String, salt: Vec<u8>, items: Vec<String>
     salt16[16 - copy_len..].copy_from_slice(&salt[salt.len() - copy_len..]);
 
     let key = derive_key(&password, &salt16);
-    let n = items);
+    let n = items.len();
     if n < 32 {
         items
             .iter()
@@ -162,7 +162,7 @@ pub fn batch_decrypt_aes_gcm(
     salt16[16 - copy_len..].copy_from_slice(&salt[salt.len() - copy_len..]);
 
     let key = derive_key(&password, &salt16);
-    let n = items);
+    let n = items.len();
     if n < 32 {
         items
             .iter()

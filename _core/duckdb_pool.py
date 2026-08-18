@@ -10,23 +10,45 @@ This module provides:
 3. All connections pre-configured with M1 8GB safe defaults
 4. Health validation on acquire (prevents stale connections)
 5. CI guard: grep for duckdb.connect( outside this module
+6. Read-Write coordination via ReadCoordinator (ISSUE-17 fix)
 
 M1 8GB Safety:
 - RO pool: io_threads (2) from ConcurrencyPreset
 - RW pool: 1 connection (serial writes via asyncio.Lock)
 - Memory: 1GB limit per connection, 2 threads
+- Read concurrency: limited to 2 concurrent reads via semaphore
+
+ISSUE-17 Fix:
+- Added ReadCoordinator with asyncio.Semaphore(2) to limit concurrent reads
+- Write barrier pattern: new reads blocked during writes
+- Prevents 5× concurrent reads + 1 write deadlock scenario
+- Reduces busy_timeout impact by limiting read saturation
 
 Usage:
-    from _core.duckdb_pool import duckdb_ro_pool, duckdb_rw_pool
+    from _core.duckdb_pool import duckdb_ro_pool, duckdb_rw_pool, read_coordinator
 
-    # Read (RO)
+    # Sync read (RO) - uses pool directly, no write coordination
     with duckdb_ro_pool.acquire(db_path) as conn:
         rows = conn.execute("SELECT * FROM table").fetchall()
+
+    # Async read with write coordination (ISSUE-17 fix)
+    async with read_coordinator.acquire_read(db_path) as handle:
+        conn = handle.conn
+        rows = await asyncio.to_thread(conn.execute, "SELECT * FROM table").fetchall()
+
+    # Shortcut for async read
+    async with duckdb_ro_read(db_path) as handle:
+        rows = await asyncio.to_thread(handle.conn.execute, "SELECT ...").fetchall()
+
+    # Coordinated write (blocks reads during write)
+    async with duckdb_coordinated_write(db_path) as conn:
+        await asyncio.to_thread(conn.execute, "INSERT INTO ...")
 
     # Write (MUST use DuckDBShadowStore.async_ingest_findings_batch for canonical path)
     # RW pool only for ad-hoc scripts that cannot use the store
 
 Sprint ISSUE-04 (2026-08-14)
+Sprint ISSUE-17 (2026-08-18) - Read-Write Coordination
 """
 
 from __future__ import annotations
@@ -36,11 +58,12 @@ import contextlib
 import functools
 import logging
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from _core._util import aclose
-from _core.lock_registry import LockCategory, register_lock
+from _core.lock_registry import LockCategory, auto_register
 
 if TYPE_CHECKING:
     pass
@@ -74,6 +97,206 @@ _M1_DUCKDB_SETTINGS: tuple[tuple[str, Any], ...] = (
     ("preserve_insertion_order", False),
     ("busy_timeout", "30s"),
     )
+
+
+# =============================================================================
+# ISSUE-17: Read-Write Coordination
+# =============================================================================
+#
+# Problem: Concurrent reads (DuckDB allows this) can saturate the RO pool while
+# a write is pending, causing busy_timeout delays. Additionally, reads during
+# writes can see inconsistent data.
+#
+# Solution: ReadCoordinator implements:
+# 1. asyncio.Semaphore(2) - limits concurrent reads to 2 for M1 8GB
+# 2. Write barrier pattern - new reads blocked during active writes
+# 3. Read versioning - detect stale reads after writes
+#
+# This prevents:
+# - 5× concurrent reads + 1 write deadlock scenario
+# - busy_timeout saturation from read queue buildup
+# - Inconsistent reads during writes
+#
+
+_READ_CONCURRENCY_LIMIT = 2  # M1 8GB safe default
+
+
+class ReadCoordinator:
+    """
+    Coordinates read-write access to DuckDB to prevent deadlocks and inconsistencies.
+
+    ISSUE-17 Fix: Prevents 5× concurrent reads + 1 write deadlock by:
+    1. Limiting concurrent reads to 2 via asyncio.Semaphore
+    2. Blocking new reads during active writes (write barrier)
+    3. Providing version markers to detect stale reads
+
+    Usage:
+        # Async read with write coordination
+        async with read_coordinator.acquire_read(db_path) as conn:
+            rows = await asyncio.to_thread(conn.execute, "SELECT ...").fetchall()
+
+        # Signal write started (called by writer)
+        await read_coordinator.write_started()
+
+        # Signal write completed (called by writer)
+        await read_coordinator.write_completed()
+    """
+
+    __slots__ = (
+        "_read_semaphore",
+        "_write_barrier",
+        "_active_reads",
+        "_write_version",
+        "_lock",
+        "_stats",
+    )
+
+    def __init__(self, max_concurrent_reads: int = _READ_CONCURRENCY_LIMIT) -> None:
+        self._read_semaphore = asyncio.Semaphore(max_concurrent_reads)
+        self._write_barrier = asyncio.Event()
+        self._write_barrier.set()  # No write in progress initially
+        self._active_reads = 0
+        self._write_version = 0
+        self._lock = asyncio.Lock()
+        self._stats = {
+            "reads_total": 0,
+            "reads_blocked_by_write": 0,
+            "reads_waited_for_semaphore": 0,
+            "writes_total": 0,
+            "write_barrier_waits": 0,
+        }
+
+    async def acquire_read(self, db_path: str) -> _CoordinatedReadHandle:
+        """
+        Acquire a read connection with write coordination.
+
+        This method:
+        1. Waits for any ongoing writes to complete (via write barrier)
+        2. Acquires the read semaphore (limits concurrent reads to 2)
+        3. Returns a coordinated read handle
+
+        Args:
+            db_path: Path to DuckDB database
+
+        Returns:
+            _CoordinatedReadHandle with connection and version
+        """
+        self._stats["reads_total"] += 1
+
+        # Step 1: Wait for write barrier (no writes in progress)
+        if not self._write_barrier.is_set():
+            self._stats["reads_blocked_by_write"] += 1
+            self._stats["write_barrier_waits"] += 1
+            await self._write_barrier.wait()
+
+        # Step 2: Acquire read semaphore (limits concurrent reads)
+        acquired = self._read_semaphore.locked()
+        if acquired:
+            self._stats["reads_waited_for_semaphore"] += 1
+        await self._read_semaphore.acquire()
+
+        async with self._lock:
+            self._active_reads += 1
+            version = self._write_version
+
+        # Get connection from pool
+        conn = duckdb_ro_acquire(db_path)
+
+        return _CoordinatedReadHandle(
+            conn=conn,
+            coordinator=self,
+            version=version,
+        )
+
+    async def _release_read(self, version: int) -> None:
+        """Release a read (called by _CoordinatedReadHandle.__aexit__)."""
+        async with self._lock:
+            self._active_reads -= 1
+        self._read_semaphore.release()
+
+    async def write_started(self) -> None:
+        """
+        Signal that a write operation is starting.
+
+        Called by writer BEFORE beginning the write transaction.
+        This sets the write barrier, blocking new reads.
+        Existing reads are allowed to complete.
+        """
+        self._stats["writes_total"] += 1
+        self._write_barrier.clear()  # Block new reads
+
+    async def write_completed(self) -> None:
+        """
+        Signal that a write operation has completed.
+
+        Called by writer AFTER the write transaction commits.
+        This clears the write barrier, allowing new reads.
+        Increments the version to invalidate stale reads.
+        """
+        async with self._lock:
+            self._write_version += 1
+            self._active_reads = 0  # Force any stuck reads to re-acquire
+
+        self._write_barrier.set()
+
+    async def get_active_reads(self) -> int:
+        """Get the number of currently active reads."""
+        async with self._lock:
+            return self._active_reads
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return coordinator statistics."""
+        return {
+            **self._stats,
+            "active_reads": self._active_reads,
+            "write_version": self._write_version,
+            "write_in_progress": not self._write_barrier.is_set(),
+            "semaphore_available": self._read_semaphore._value,  # noqa: SLF001
+        }
+
+
+class _CoordinatedReadHandle:
+    """Handle for a coordinated read operation."""
+
+    __slots__ = ("conn", "coordinator", "version")
+
+    def __init__(
+        self,
+        conn: Any,
+        coordinator: ReadCoordinator,
+        version: int,
+    ) -> None:
+        self.conn = conn
+        self.coordinator = coordinator
+        self.version = version
+
+    async def __aenter__(self) -> Any:
+        return self.conn
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        await self.coordinator._release_read(self.version)
+
+    def is_stale(self, current_version: int | None = None) -> bool:
+        """Check if this read is stale (a write happened after it started)."""
+        if current_version is None:
+            current_version = self.coordinator._write_version
+        return current_version > self.version
+
+
+# Global read coordinator instance
+_read_coordinator: ReadCoordinator | None = None
+
+
+def get_read_coordinator() -> ReadCoordinator:
+    """Get the global ReadCoordinator singleton."""
+    global _read_coordinator
+    if _read_coordinator is None:
+        _read_coordinator = ReadCoordinator()
+    return _read_coordinator
+
+
+# Convenience alias
+read_coordinator = get_read_coordinator()
 
 
 @functools.cache
@@ -465,7 +688,7 @@ _ro_pool: _DuckDBROPool | None = None
 _rw_pool: _DuckDBRWPool | None = None
 
 
-@register_lock(LockCategory.GRAPH)
+@auto_register(LockCategory.GRAPH)
 def _pools_lock() -> threading.Lock:
     """Module-level lock for DuckDB pool singletons."""
     return threading.Lock()
@@ -590,6 +813,78 @@ async def duckdb_serial_write(db_path: str) -> Any:
             pass  # Connection stays alive for reuse
 
 
+async def duckdb_ro_read(db_path: str) -> _CoordinatedReadHandle:
+    """
+    Async context manager for coordinated RO DuckDB reads.
+
+    ISSUE-17: This is the recommended way to perform async reads.
+    It coordinates with the ReadCoordinator to prevent deadlocks.
+
+    Features:
+    - Blocks if max concurrent reads (2) reached
+    - Waits for any ongoing writes to complete
+    - Provides version tracking for stale read detection
+
+    Usage:
+        async with duckdb_ro_read("/path/to/db.duckdb") as handle:
+            conn = handle.conn
+            version = handle.version
+            rows = await asyncio.to_thread(
+                conn.execute, "SELECT * FROM table"
+            ).fetchall()
+
+        # Check if read is stale
+        if handle.is_stale():
+            print("Warning: Write occurred during read")
+
+    Args:
+        db_path: Path to DuckDB database
+
+    Returns:
+        _CoordinatedReadHandle with connection and version
+    """
+    return await get_read_coordinator().acquire_read(db_path)
+
+
+@contextlib.asynccontextmanager
+async def duckdb_coordinated_write(db_path: str) -> Any:
+    """
+    Async context manager for coordinated RW DuckDB writes.
+
+    ISSUE-17: This coordinates writes with the ReadCoordinator to:
+    1. Block new reads during the write
+    2. Ensure consistent reads after the write completes
+
+    Usage:
+        async with duckdb_coordinated_write("/path/to/db.duckdb") as conn:
+            await asyncio.to_thread(conn.execute, "INSERT INTO ...")
+
+        # New reads will see the committed data
+
+    Args:
+        db_path: Path to DuckDB database
+
+    Yields:
+        DuckDB connection (auto-commits on exit)
+    """
+    coordinator = get_read_coordinator()
+
+    # Signal write started (blocks new reads)
+    await coordinator.write_started()
+
+    try:
+        pool = _get_rw_pool()
+        async with pool.serial_lock:
+            conn = pool.acquire(db_path)
+            try:
+                yield conn
+            finally:
+                pass
+    finally:
+        # Signal write completed (allows new reads)
+        await coordinator.write_completed()
+
+
 def close_all_pools() -> None:
     """Close all DuckDB pools. Call on process shutdown."""
     _get_ro_pool().close_all()
@@ -601,6 +896,7 @@ def get_pool_stats() -> dict[str, Any]:
     return {
         "ro": _get_ro_pool().get_stats(),
         "rw": _get_rw_pool().get_stats(),
+        "read_coordinator": get_read_coordinator().get_stats(),
     }
 
 

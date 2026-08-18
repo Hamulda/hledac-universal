@@ -94,7 +94,7 @@ class CCSearchResult(Struct):
         try:
             payload_text = self._build_payload()
             ts = self._parse_timestamp()
-            finding_id = str(uuid.uuid4())
+            finding_id = str(uuid.uuid7())
             return CanonicalFinding(finding_id=finding_id, query=query, source_type=_SOURCE_TYPE, confidence=0.45, ts=ts, provenance=(_SOURCE_TYPE,), payload_text=payload_text)
         except Exception as e:
             logger.debug(f'[commoncrawl] to_canonical_finding failed: {e}')
@@ -144,7 +144,7 @@ class WARCReplayResult:
                     ts = datetime.strptime(self.timestamp[:14], '%Y%m%d%H%M%S').timestamp()
                 except Exception:  # noqa: BLE001
                     pass
-            finding_id = str(uuid.uuid4())
+            finding_id = str(uuid.uuid7())
             payload_parts = [
                 f'[CommonCrawl WARC] {self.url}',
                 f'Archived: {self.timestamp}',

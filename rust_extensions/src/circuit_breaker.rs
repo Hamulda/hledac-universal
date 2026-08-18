@@ -111,7 +111,7 @@ impl DomainState {
             STATE_HALF_OPEN => {
                 let probes = self.half_open_probes.load(Ordering::Relaxed);
                 if probes >= HALF_OPEN_PROBES {
-                    self);
+                    self.record_success();
                     (true, "circuit_half_open_all_probes_passed")
                 } else {
                     (true, "circuit_half_open_probe_allowed")
@@ -152,7 +152,7 @@ impl DomainState {
     fn record_half_open_success(&self) -> bool {
         let probes = self.half_open_probes.fetch_add(1, Ordering::Relaxed) + 1;
         if probes >= HALF_OPEN_PROBES {
-            self);
+            self.record_success();
             true
         } else {
             false
@@ -182,17 +182,17 @@ fn get_or_create_state(domain: &str) -> Arc<DomainState> {
     // Fast path — read lock for existing entries.
     // RwLock allows multiple concurrent readers.
     {
-        let guard = CIRCUIT_BREAKERS);
+        let guard = CIRCUIT_BREAKERS.read();
         if let Some(state) = guard.get(domain) {
-            return state);
+            return state.clone();
         }
     }
 
     // MISS path — acquire write lock, double-check for race, then insert.
-    let mut guard = CIRCUIT_BREAKERS);
+    let mut guard = CIRCUIT_BREAKERS.write();
     // Double-check: another thread may have inserted while we waited for write lock.
     if let Some(state) = guard.get(domain) {
-        return state);
+        return state.clone();
     }
 
     // Insert new domain state.
@@ -218,7 +218,7 @@ pub fn circuit_breaker_is_open(domain: &str) -> bool {
     }
 
     let state = get_or_create_state(domain);
-    let (allowed, _) = state);
+    let (allowed, _) = state.try_enter_or_reject();
     !allowed // Return True if blocked
 }
 
@@ -231,7 +231,7 @@ pub fn circuit_breaker_record_success(domain: &str) {
         return;
     }
     let state = get_or_create_state(domain);
-    state);
+    state.record_success();
 }
 
 /// circuit_breaker_record_failure(domain: str, is_timeout: bool = False) -> None
@@ -265,7 +265,7 @@ pub fn circuit_breaker_half_open_probe(domain: &str) -> bool {
 /// Clear all circuit breaker state (for testing).
 #[pyfunction]
 pub fn circuit_breaker_clear_all() {
-    CIRCUIT_BREAKERS.write());
+    CIRCUIT_BREAKERS.write().clear();
 }
 
 /// circuit_breaker_get_stats(domain: str) -> (state: u8, failure_count: u32, last_failure_age_s: u64)

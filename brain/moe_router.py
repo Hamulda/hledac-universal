@@ -262,7 +262,8 @@ class MoERouter:
             
             # Preload priority models in background
             import asyncio
-            loop = asyncio.get_event_loop()
+            # ISSUE-10 FIX: get_running_loop() instead of deprecated get_event_loop() (Python 3.12+)
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._swarm_router.preload_priority_models)
             logger.info('[SWARM-001] Priority micro-models preloading...')
             

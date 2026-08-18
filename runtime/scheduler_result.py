@@ -690,11 +690,11 @@ class SprintResultBuilder:
                         "transitions": []
                     }
                 except RuntimeError:
-                    # No running loop - safe to use run_until_complete
+                    # No running loop - safe to use asyncio.Runner() (Python 3.11+)
+                    # ISSUE-10 FIX: Use asyncio.Runner() instead of deprecated get_event_loop().run_until_complete()
                     try:
-                        summary = asyncio.get_event_loop().run_until_complete(
-                            ledger.get_health_summary()
-    )
+                        with asyncio.Runner() as runner:
+                            summary = runner.run(ledger.get_health_summary())
                     except RuntimeError:
                         summary = {
                             "registry": {"total_failures": 0, "high_critical_count": 0, "component_details": {}},

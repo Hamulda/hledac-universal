@@ -365,7 +365,7 @@ class ContradictionFeedbackBridge:
             if hypothesis_engine is None:
                 return None
             verifier = AdversarialVerifier(hypothesis_engine=hypothesis_engine)
-            evidence_list = [Evidence(evidence_id=f'ev_{uuid.uuid4().hex[:12]}', source=f.get('source_type', 'unknown'), content=f.get('payload_text', '') or '', timestamp=datetime.now(UTC), reliability=f.get('confidence', 0.5)) for f in findings if f.get('payload_text')][:MAX_FINDINGS_PER_AUDIT]
+            evidence_list = [Evidence(evidence_id=f'ev_{uuid.uuid7().hex[:12]}', source=f.get('source_type', 'unknown'), content=f.get('payload_text', '') or '', timestamp=datetime.now(UTC), reliability=f.get('confidence', 0.5)) for f in findings if f.get('payload_text')][:MAX_FINDINGS_PER_AUDIT]
             if not evidence_list:
                 return None
             contradictions = verifier.detect_contradictions(evidence_list)

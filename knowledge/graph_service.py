@@ -32,7 +32,28 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+import msgspec
+
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
+
+# B3. Graph Cache Integration - TTL-aware query cache
+# Uses the singleton from query_cache.py to avoid duplicate cache instances
+# NOTE: This import is deferred to avoid circular dependencies
+
+
+def _get_query_cache() -> "QueryCache":
+    """
+    Lazy singleton for query cache.
+    
+    Delegates to get_query_cache() from query_cache.py to ensure
+    a single shared cache instance across the application.
+    """
+    from hledac.universal.knowledge.graph.query_cache import get_query_cache
+    return get_query_cache()
+
+
+# Type alias for QueryCache (avoid circular import at module level)
+QueryCache: Any = None
 # Rust backend — strict import
 try:
     from hledac.universal._core.rust_backend import rust
@@ -200,6 +221,13 @@ class GraphService:
                     except Exception as _e:
                         logger.debug(f"[GraphService] LanceDB entity upsert skipped: {_e}")
 
+                # B3: Invalidate graph cache on IOC add (graph structure changed)
+                try:
+                    cache = _get_query_cache()
+                    cache.invalidate_on_ioc_add()
+                except Exception:
+                    pass  # Non-fatal
+
                 return True
             return False
         except Exception as e:
@@ -308,9 +336,21 @@ class GraphService:
         if graph is None:
             return 0
         try:
+            result = 0
             if has_ts_rows:
-                return graph.upsert_ioc_batch(unique_with_ts)
-            return graph.upsert_ioc_batch(unique)
+                result = graph.upsert_ioc_batch(unique_with_ts)
+            else:
+                result = graph.upsert_ioc_batch(unique)
+            
+            # B3: Invalidate graph cache on batch IOC add (graph structure changed)
+            if result > 0:
+                try:
+                    cache = _get_query_cache()
+                    cache.invalidate_on_ioc_add()
+                except Exception:
+                    pass  # Non-fatal
+            
+            return result
         except Exception as e:
             logger.warning(f"[GraphService] upsert_ioc_batch failed: {e}")
             return 0
@@ -387,6 +427,14 @@ class GraphService:
                                 logger.debug("[GraphService] relationship_callback failed: %s", cb_e)
                 except Exception as cb_e:
                     logger.debug("[GraphService] relationship_callback failed: %s", cb_e)
+
+            # B3: Invalidate graph cache on relation add (graph structure changed)
+            try:
+                cache = _get_query_cache()
+                cache.invalidate_on_ioc_add()
+            except Exception:
+                pass  # Non-fatal
+
             return True
         except Exception as e:
             logger.warning(f"[GraphService] upsert_relation failed: {e}")
@@ -434,12 +482,36 @@ class GraphService:
         hot-edges LMDB cache, returns top-N hot neighbors first (O(1) lookup)
         and falls back to DuckPGQ recursive CTE only on cache miss. This
         avoids the O(V+E) CTE scan on dense graphs for high-degree nodes.
+        NOTE: Hot-edges results are returned directly without caching, since
+        hot-edges is already a fast O(1) LMDB lookup. This is intentional
+        to avoid redundant caching overhead.
+
+        B3: Graph Cache Integration - Tier 0 cache lookup before DuckDB query.
+        TTL: 5 minutes. Cache invalidated on IOC/relation upsert.
         """
+        # B3: Tier 0 - Check query cache first
+        try:
+            cache = _get_query_cache()
+        except Exception:
+            cache = None
+        
+        if cache is not None and cache.available:
+            try:
+                cached = cache.get_history(value, max_hops)
+                if cached is not None:
+                    try:
+                        return msgspec.json.decode(cached)
+                    except Exception:
+                        pass  # Decode failed, fall through to fresh query
+            except Exception:
+                pass  # Cache error, continue with fresh query
+
         graph = _get_graph()
         if graph is None:
             return []
         # Sprint P1-3 + F265-U6: try hot-edges cache first
         # F265-U6: try denormalized path first (single LMDB O(1) — no DuckDB round-trip)
+        hot_result: list[dict] | None = None
         try:
             from hledac.universal.knowledge import hot_edges_cache
             src_id = hot_edges_cache.get_node_id_by_value(value)
@@ -449,7 +521,7 @@ class GraphService:
                     # F265-U6: at least one entry has value+ioc_type embedded
                     has_denorm_data = any(val and ioc for _, _, val, ioc in denorm_neighbors)
                     if has_denorm_data:
-                        hot_result: list[dict] = []
+                        hot_result = []
                         for _, _, val, ioc in denorm_neighbors:
                             if val and ioc:
                                 hot_result.append({
@@ -480,7 +552,15 @@ class GraphService:
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # fall through to DuckPGQ
         try:
-            return graph.find_connected(value, max_hops)
+            result = graph.find_connected(value, max_hops)
+            # B3: Cache the result (Tier 0 fallback complete)
+            if cache is not None and cache.available and result:
+                try:
+                    encoded = msgspec.json.encode(result)
+                    cache.put_history(value, max_hops, encoded)
+                except Exception:
+                    pass  # Cache put failed, non-fatal
+            return result
         except Exception as e:
             logger.warning(f"[GraphService] find_entity_history failed for {value}: {e}")
             return []
@@ -616,9 +696,30 @@ class GraphService:
         Returns:
             Dict mapping each input value to its list of connected node dicts.
             Falls back to individual find_entity_history calls on error.
+
+        B3: Graph Cache Integration - Tier 0 cache lookup before DuckDB query.
+        TTL: 5 minutes. Cache invalidated on IOC/relation upsert.
         """
         if not values:
             return {}
+
+        # B3: Tier 0 - Check query cache first
+        try:
+            cache = _get_query_cache()
+        except Exception:
+            cache = None
+        
+        if cache is not None and cache.available:
+            try:
+                cached = cache.get_batch(values, max_hops)
+                if cached is not None:
+                    try:
+                        return msgspec.json.decode(cached)
+                    except Exception:
+                        pass  # Decode failed, fall through to fresh query
+            except Exception:
+                pass  # Cache error, continue with fresh query
+
         graph = _get_graph()
         if graph is None:
             return {}
@@ -626,6 +727,13 @@ class GraphService:
             # DuckPGQGraph.find_connected_batch does one CTE with IN(values) — O(1) vs N×O(V+E)
             batch_result = graph.find_connected_batch(values, max_hops)
             if batch_result:
+                # B3: Cache the batch result
+                if cache is not None and cache.available:
+                    try:
+                        encoded = msgspec.json.encode(batch_result)
+                        cache.put_batch(values, max_hops, encoded)
+                    except Exception:
+                        pass  # Cache put failed, non-fatal
                 return batch_result
         except Exception as e:
             logger.debug(f"[GraphService] find_connected_batch failed, falling back: {e}")
@@ -673,6 +781,13 @@ class GraphService:
         self._seen_iocs.clear()
         self._seen_rels.clear()
         _DUCKPGQ_GRAPH = None
+        
+        # B3: Invalidate graph cache on session reset (graph may have new data)
+        try:
+            cache = _get_query_cache()
+            cache.invalidate_on_ioc_add()
+        except Exception:
+            pass  # Non-fatal
 
     # ── Analytics ─────────────────────────────────────────────────────────────
 

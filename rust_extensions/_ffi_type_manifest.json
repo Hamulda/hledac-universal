@@ -1,9 +1,9 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-08-16T21:47:21.416854+00:00",
+  "generated_at": "2026-08-18T22:47:18.387566+00:00",
   "capability": "NEXTGEN-05",
   "description": "Build-time FFI type-safety manifest",
-  "__source_hash__": "bc78bb9198dd4b0c9ab08bfd32990e6d84e959452aca54099561b25073996837",
+  "__source_hash__": "175e8bfde1b8d7cd6e3b863720f1f350105ff50135815cb8f14e2db17c81ff92",
   "classes": {
     "warc_parser.WarcCertificate": {
       "module": "warc_parser",
@@ -2734,6 +2734,14 @@
       "is_async": false,
       "doc_comment": null
     },
+    "text_norm.batch_nfc_and_strip_diacritics_fast": {
+      "module": "text_norm",
+      "name": "batch_nfc_and_strip_diacritics_fast",
+      "signature": "(texts: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
     "metal_shared_buf.get_shared_buf_telemetry": {
       "module": "metal_shared_buf",
       "name": "get_shared_buf_telemetry",
@@ -5086,6 +5094,22 @@
       "is_async": false,
       "doc_comment": null
     },
+    "binary_matryoshka.batch_compute_simhash": {
+      "module": "binary_matryoshka",
+      "name": "batch_compute_simhash",
+      "signature": "(binaries: list[list[int]])",
+      "return_type": "tuple[list[int], list[int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.batch_simhash_from_embeddings": {
+      "module": "binary_matryoshka",
+      "name": "batch_simhash_from_embeddings",
+      "signature": "(embeddings: list[list[float]])",
+      "return_type": "tuple[list[int], list[int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
     "binary_matryoshka.quantize_to_binary": {
       "module": "binary_matryoshka",
       "name": "quantize_to_binary",
@@ -5155,6 +5179,14 @@
       "name": "get_text_hash_at",
       "signature": "(path: str, index: int)",
       "return_type": "str | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.search_binary_database_candidates": {
+      "module": "binary_matryoshka",
+      "name": "search_binary_database_candidates",
+      "signature": "(path: str, query: list[float], candidate_indices: list[int], top_k: int, min_similarity: float)",
+      "return_type": "HashMap<String, Py<PyAny>>>>",
       "is_async": false,
       "doc_comment": null
     },
@@ -5334,6 +5366,14 @@
       "is_async": false,
       "doc_comment": null
     },
+    "whisper.get_available_models": {
+      "module": "whisper",
+      "name": "get_available_models",
+      "signature": "()",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
     "whisper.get_cache_dir": {
       "module": "whisper",
       "name": "get_cache_dir",
@@ -5347,6 +5387,14 @@
       "name": "speaker_similarity",
       "signature": "(embedding_a: list[float], embedding_b: list[float])",
       "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "whisper.verify_ane": {
+      "module": "whisper",
+      "name": "verify_ane",
+      "signature": "()",
+      "return_type": "dict[str, Any]",
       "is_async": false,
       "doc_comment": null
     },

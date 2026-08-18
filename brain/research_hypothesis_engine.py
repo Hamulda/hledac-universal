@@ -745,7 +745,7 @@ class HypothesisEngine:
 
     def _create_hypothesis_from_explanation(self, explanation: dict[str, Any]) -> Hypothesis:
         """Create a hypothesis from an inference engine explanation."""
-        return Hypothesis(id=str(uuid.uuid4())[:8], statement=explanation.get('statement', 'Unknown hypothesis'), hypothesis_type=explanation.get('type', HypothesisType.EXISTENCE.value), prior_probability=explanation.get('probability', 0.5), posterior_probability=explanation.get('probability', 0.5), metadata=explanation.get('metadata', {}))
+        return Hypothesis(id=str(uuid.uuid7())[:8], statement=explanation.get('statement', 'Unknown hypothesis'), hypothesis_type=explanation.get('type', HypothesisType.EXISTENCE.value), prior_probability=explanation.get('probability', 0.5), posterior_probability=explanation.get('probability', 0.5), metadata=explanation.get('metadata', {}))
 
     def _generate_hypotheses_from_patterns(self, observations: list[Evidence], context: dict[str, Any]) -> list[Hypothesis]:
         """Generate hypotheses by analyzing observation patterns."""
@@ -758,7 +758,7 @@ class HypothesisEngine:
             by_topic[topic].append(obs)
         for topic, evidence_list in by_topic.items():
             if len(evidence_list) >= 2:
-                h = Hypothesis(id=str(uuid.uuid4())[:8], statement=f"Entity '{topic}' exists based on multiple observations", hypothesis_type=HypothesisType.EXISTENCE.value, prior_probability=0.6, posterior_probability=0.6, supporting_evidence=[e.evidence_id for e in evidence_list[:3]])
+                h = Hypothesis(id=str(uuid.uuid7())[:8], statement=f"Entity '{topic}' exists based on multiple observations", hypothesis_type=HypothesisType.EXISTENCE.value, prior_probability=0.6, posterior_probability=0.6, supporting_evidence=[e.evidence_id for e in evidence_list[:3]])
                 generated.append(h)
                 self._hypotheses[h.id] = h
         topics = list(by_topic.keys())
@@ -766,14 +766,14 @@ class HypothesisEngine:
             for topic_b in topics[i + 1:]:
                 co_occur = self._check_co_occurrence(by_topic[topic_a], by_topic[topic_b])
                 if co_occur > 0.5:
-                    h = Hypothesis(id=str(uuid.uuid4())[:8], statement=f"'{topic_a}' is related to '{topic_b}'", hypothesis_type=HypothesisType.RELATIONSHIP.value, prior_probability=co_occur, posterior_probability=co_occur, supporting_evidence=[e.evidence_id for e in by_topic[topic_a][:2] + by_topic[topic_b][:2]])
+                    h = Hypothesis(id=str(uuid.uuid7())[:8], statement=f"'{topic_a}' is related to '{topic_b}'", hypothesis_type=HypothesisType.RELATIONSHIP.value, prior_probability=co_occur, posterior_probability=co_occur, supporting_evidence=[e.evidence_id for e in by_topic[topic_a][:2] + by_topic[topic_b][:2]])
                     generated.append(h)
                     self._hypotheses[h.id] = h
         temporal_obs = [o for o in observations if 'timestamp' in o.metadata]
         if len(temporal_obs) >= 2:
             temporal_obs.sort(key=attrgetter("metadata").get('timestamp', ''))
             for obs_a, obs_b in zip(temporal_obs, temporal_obs[1:]):
-                h = Hypothesis(id=str(uuid.uuid4())[:8], statement=f"'{obs_a.content[:30]}...' may cause '{obs_b.content[:30]}...'", hypothesis_type=HypothesisType.CAUSAL.value, prior_probability=0.3, posterior_probability=0.3, supporting_evidence=[obs_a.evidence_id, obs_b.evidence_id])
+                h = Hypothesis(id=str(uuid.uuid7())[:8], statement=f"'{obs_a.content[:30]}...' may cause '{obs_b.content[:30]}...'", hypothesis_type=HypothesisType.CAUSAL.value, prior_probability=0.3, posterior_probability=0.3, supporting_evidence=[obs_a.evidence_id, obs_b.evidence_id])
                 generated.append(h)
                 self._hypotheses[h.id] = h
         return generated
@@ -1055,7 +1055,7 @@ class HypothesisEngine:
         statement_similarity = self._statement_similarity(h1.statement, h2.statement)
         if statement_similarity < 0.5:
             return None
-        merged = Hypothesis(id=str(uuid.uuid4())[:8], statement=f'Merged: {h1.statement[:50]} + {h2.statement[:50]}', hypothesis_type=h1.hypothesis_type, prior_probability=max(h1.prior_probability, h2.prior_probability), posterior_probability=(h1.posterior_probability + h2.posterior_probability) / 2, confidence=(h1.confidence + h2.confidence) / 2, supporting_evidence=list(total_evidence), conflicting_evidence=list(set(h1.conflicting_evidence) | set(h2.conflicting_evidence)), test_results=h1.test_results + h2.test_results, status=HypothesisStatus.ACTIVE.value, parent_hypotheses=[h1.id, h2.id])
+        merged = Hypothesis(id=str(uuid.uuid7())[:8], statement=f'Merged: {h1.statement[:50]} + {h2.statement[:50]}', hypothesis_type=h1.hypothesis_type, prior_probability=max(h1.prior_probability, h2.prior_probability), posterior_probability=(h1.posterior_probability + h2.posterior_probability) / 2, confidence=(h1.confidence + h2.confidence) / 2, supporting_evidence=list(total_evidence), conflicting_evidence=list(set(h1.conflicting_evidence) | set(h2.conflicting_evidence)), test_results=h1.test_results + h2.test_results, status=HypothesisStatus.ACTIVE.value, parent_hypotheses=[h1.id, h2.id])
         h1.status = HypothesisStatus.MERGED.value
         h2.status = HypothesisStatus.MERGED.value
         self._hypotheses[h1.id] = h1

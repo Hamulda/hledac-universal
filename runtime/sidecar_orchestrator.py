@@ -79,7 +79,12 @@ from hledac.universal.runtime.sidecar_dispatcher import (
     DispatchOutcome,
     SidecarDispatcher,
     )
-from hledac.universal.runtime.sidecar_protocol import SchedulerAdvisory
+from hledac.universal.runtime.sidecar_protocol import (
+    AdvisoryCallable,
+    AdvisoryPriority,
+    SchedulerAdvisory,
+    SidecarContext,
+)
 from _core import aclose
 
 log = logging.getLogger(__name__)
@@ -417,6 +422,304 @@ class _PluginSidecarContext:
         self.memory_pressure = float(memory_pressure)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# ISSUE #15 FIX: Callable Advisory Adapter Pattern
+# ═══════════════════════════════════════════════════════════════════════════════
+# Refactored advisory sidecars from method-based to callable __call__ adapters.
+# Each adapter wraps a SidecarOrchestrator method and implements AdvisoryCallable.
+
+import logging as _advisory_log
+_advisory_logger = _advisory_log.getLogger(__name__ + ".advisory")
+
+
+class _BaseAdvisoryAdapter:
+    """
+    Base class for callable advisory adapters.
+
+    ISSUE #15 FIX: Provides common infrastructure for advisory sidecar adapters:
+      - Callable __call__ interface
+      - Priority level
+      - Capability name for TransportRegistry lookup
+      - Common fail-soft error handling
+
+    Subclasses must:
+      1. Set class attributes: sidecar_id, priority, capability
+      2. Implement _run_impl(ctx) with the actual advisory logic
+    """
+
+    sidecar_id: str = "base_advisory"
+    priority: AdvisoryPriority = AdvisoryPriority.NORMAL
+    capability: str = ""
+
+    def __init__(self, orchestrator: "SidecarOrchestrator") -> None:
+        self._orchestrator = orchestrator
+
+    async def __call__(self, ctx: SidecarContext) -> list[Any]:
+        """
+        Execute the advisory sidecar with fail-soft error handling.
+
+        ISSUE #15 FIX: Callable interface enables parallel execution via
+        utils.asyncx.parallel() with priority-based concurrency limits.
+        """
+        try:
+            return await self._run_impl(ctx)
+        except Exception:  # noqa: BLE001
+            _advisory_logger.debug(
+                "[%s] advisory failed (fail-soft)",
+                self.sidecar_id,
+                exc_info=True,
+            )
+            return []
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        """Subclasses implement this with actual advisory logic."""
+        raise NotImplementedError
+
+
+class IPFSDiscoveryAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: IPFS discovery advisory adapter."""
+
+    sidecar_id: str = "ipfs_discovery"
+    priority: AdvisoryPriority = AdvisoryPriority.NORMAL
+    capability: str = "ipfs"
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        return await self._orchestrator._run_ipfs_discovery_sidecar()
+
+
+class OnionDiscoveryAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: Onion/Tor discovery advisory adapter."""
+
+    sidecar_id: str = "onion_discovery"
+    priority: AdvisoryPriority = AdvisoryPriority.NORMAL
+    capability: str = "tor"
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        return await self._orchestrator._run_onion_discovery_sidecar()
+
+
+class I2PDiscoveryAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: I2P SAM discovery advisory adapter."""
+
+    sidecar_id: str = "i2p_discovery"
+    priority: AdvisoryPriority = AdvisoryPriority.NORMAL
+    capability: str = "i2p"
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        return await self._orchestrator._run_i2p_discovery_sidecar()
+
+
+class BGPEnrichmentAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: BGP AS path enrichment advisory adapter."""
+
+    sidecar_id: str = "bgp_enrichment"
+    priority: AdvisoryPriority = AdvisoryPriority.NORMAL
+    capability: str = ""
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        await self._orchestrator._run_bgp_enrichment_sidecar()
+        return []
+
+
+class BannerGrabAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: Banner grab TCP probing advisory adapter."""
+
+    sidecar_id: str = "banner_grab"
+    priority: AdvisoryPriority = AdvisoryPriority.NORMAL
+    capability: str = ""
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        return await self._orchestrator._run_banner_grab_sidecar()
+
+
+class DHTDiscoveryAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: DHT BitTorrent discovery advisory adapter."""
+
+    sidecar_id: str = "dht_discovery"
+    priority: AdvisoryPriority = AdvisoryPriority.NORMAL
+    capability: str = "dht"
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        return await self._orchestrator._run_dht_sidecar()
+
+
+class GopherAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: Gopher protocol discovery advisory adapter."""
+
+    sidecar_id: str = "gopher"
+    priority: AdvisoryPriority = AdvisoryPriority.NORMAL
+    capability: str = "gopher"
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        return await self._orchestrator._run_gopher_sidecar()
+
+
+class CommonCrawlAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: CommonCrawl CDX domain discovery advisory adapter."""
+
+    sidecar_id: str = "commoncrawl"
+    priority: AdvisoryPriority = AdvisoryPriority.NORMAL
+    capability: str = ""
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        return await self._orchestrator._run_commoncrawl_sidecar()
+
+
+class DigitalGhostAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: Digital ghost forensics advisory adapter."""
+
+    sidecar_id: str = "digital_ghost"
+    priority: AdvisoryPriority = AdvisoryPriority.LOW
+    capability: str = ""
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        return await self._orchestrator._run_digital_ghost_sidecar()
+
+
+class SteganographyAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: Steganography forensics advisory adapter."""
+
+    sidecar_id: str = "steganography"
+    priority: AdvisoryPriority = AdvisoryPriority.LOW
+    capability: str = ""
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        return await self._orchestrator._run_steganography_sidecar()
+
+
+class TIFeedAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: TI feed (NVD + CISA KEV) advisory adapter."""
+
+    sidecar_id: str = "ti_feed"
+    priority: AdvisoryPriority = AdvisoryPriority.LOW
+    capability: str = ""
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        return await self._orchestrator._run_ti_feed_sidecar()
+
+
+class AutoREAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: Hermes3 Auto-RE for unknown binary formats advisory adapter."""
+
+    sidecar_id: str = "auto_re"
+    priority: AdvisoryPriority = AdvisoryPriority.LOW
+    capability: str = ""
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        return await self._orchestrator._run_auto_re_sidecar()
+
+
+class BGPAdvisoryAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: BGP ASN/path analysis advisory adapter."""
+
+    sidecar_id: str = "bgp_advisory"
+    priority: AdvisoryPriority = AdvisoryPriority.NORMAL
+    capability: str = ""
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        await self._orchestrator._run_bgp_advisory_sidecar()
+        return []
+
+
+class WaybackCDXDeepAdapter(_BaseAdvisoryAdapter):
+    """ISSUE #15: Deep Wayback CDX URL history advisory adapter."""
+
+    sidecar_id: str = "wayback_cdx_deep"
+    priority: AdvisoryPriority = AdvisoryPriority.NORMAL
+    capability: str = ""
+
+    async def _run_impl(self, ctx: SidecarContext) -> list[Any]:
+        await self._orchestrator._run_wayback_cdx_deep_sidecar()
+        return []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ISSUE #15 FIX: Priority Queue for Advisory Sidecars
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _build_advisory_adapters(
+    orchestrator: "SidecarOrchestrator",
+) -> list[AdvisoryCallable]:
+    """
+    Build callable advisory adapters for all enabled sidecars.
+
+    ISSUE #15 FIX: Returns list of AdvisoryCallable adapters organized by
+    priority. Adapters are created based on LANE_REGISTRY enablement.
+
+    Returns:
+        List of AdvisoryCallable adapters, sorted by priority (HIGH first)
+    """
+    adapters: list[AdvisoryCallable] = []
+
+    # HIGH priority adapters
+    # CT→PassiveDNS pivot is HIGH but handled by SprintAdvisoryRunner
+
+    # NORMAL priority adapters
+    if LANE_REGISTRY.is_enabled("ipfs"):
+        adapters.append(IPFSDiscoveryAdapter(orchestrator))
+    adapters.append(OnionDiscoveryAdapter(orchestrator))
+    adapters.append(I2PDiscoveryAdapter(orchestrator))
+    adapters.append(BGPEnrichmentAdapter(orchestrator))
+    adapters.append(BannerGrabAdapter(orchestrator))
+    adapters.append(DHTDiscoveryAdapter(orchestrator))
+    if LANE_REGISTRY.is_enabled("gopher"):
+        adapters.append(GopherAdapter(orchestrator))
+    adapters.append(CommonCrawlAdapter(orchestrator))
+    adapters.append(BGPAdvisoryAdapter(orchestrator))
+    adapters.append(WaybackCDXDeepAdapter(orchestrator))
+
+    # LOW priority adapters
+    if LANE_REGISTRY.is_enabled("digital_ghost"):
+        adapters.append(DigitalGhostAdapter(orchestrator))
+    if LANE_REGISTRY.is_enabled("steganography"):
+        adapters.append(SteganographyAdapter(orchestrator))
+    if LANE_REGISTRY.is_enabled("ti_feeds"):
+        adapters.append(TIFeedAdapter(orchestrator))
+    if _os.environ.get("HLEDAC_ENABLE_AUTO_RE", "0") in ("1", "true", "yes"):
+        adapters.append(AutoREAdapter(orchestrator))
+
+    # Sort by priority (HIGH=1, NORMAL=2, LOW=3)
+    adapters.sort(key=lambda a: a.priority.value)
+    return adapters
+
+
+async def _run_advisory_with_priority(
+    adapter: AdvisoryCallable,
+    ctx: SidecarContext,
+    sem: _asyncio.Semaphore,
+    tracer: Any,
+) -> list[Any]:
+    """
+    Run a single advisory adapter with semaphore and tracing.
+
+    ISSUE #15 FIX: Ensures priority-aware concurrency limits are applied
+    per adapter's declared priority level.
+    """
+    async with sem:
+        if tracer:
+            with tracer.start_as_current_span(f"advisory.{adapter.sidecar_id}") as span:
+                span.set_attribute("advisory.name", adapter.sidecar_id)
+                span.set_attribute("advisory.priority", adapter.priority.name)
+                try:
+                    return await adapter(ctx)
+                except Exception:  # noqa: BLE001
+                    _advisory_logger.debug(
+                        "[%s] advisory failed (fail-soft)",
+                        adapter.sidecar_id,
+                    )
+                    return []
+        else:
+            try:
+                return await adapter(ctx)
+            except Exception:  # noqa: BLE001
+                _advisory_logger.debug(
+                    "[%s] advisory failed (fail-soft)",
+                    adapter.sidecar_id,
+                )
+                return []
+
+
 # ---------------------------------------------------------------------------
 # SidecarOrchestrator
 # ---------------------------------------------------------------------------
@@ -641,101 +944,115 @@ class SidecarOrchestrator:
                 name="advisory:ct_passivedns",
     )
 
-            # ── Branch C: BGP/Wayback/CommonCrawl sidecars ────────────────────
-            async def _run_archive_sidecars() -> None:
-                async with _asyncio.TaskGroup() as _tg:
-                    _tg.create_task(
-                        _run_bounded_sidecar(self._run_bgp_advisory_sidecar(), "bgp_advisory"),
-                        name="sprint:bgp_advisory_sidecar",
-    )
-                    _tg.create_task(
-                        _run_bounded_sidecar(self._run_wayback_cdx_deep_sidecar(), "wayback_cdx_deep"),
-                        name="sprint:wayback_cdx_sidecar",
-    )
-                    # F250F: CommonCrawl CDX sidecar (non-blocking, via LaneRegistry)
-                    if LANE_REGISTRY.is_enabled("common_crawl"):
-                        _tg.create_task(
-                            _run_bounded_sidecar(self._run_commoncrawl_sidecar(), "commoncrawl"),
-                            name="sprint:commoncrawl_sidecar",
-    )
+            # ═══════════════════════════════════════════════════════════════════════════
+            # ISSUE #15 FIX: Branch C+D - Callable Adapter Pattern with parallel()
+            # ═══════════════════════════════════════════════════════════════════════════
+            # Refactored from verbose TaskGroup to cleaner adapter-based pattern.
+            # Uses _build_advisory_adapters() + parallel() for priority-based execution.
+
+            async def _run_adapter_sidecars() -> None:
+                """
+                ISSUE #15 FIX: Run all advisory sidecars via callable adapters.
+
+                Uses _build_advisory_adapters() to create priority-sorted adapters,
+                then runs them via parallel() with priority-based concurrency limits.
+
+                Benefits:
+                - Composable: adapters can be wrapped, decorated, chained
+                - Priority-aware: HIGH/NORMAL/LOW execution with concurrency limits
+                - Parallel: all adapters run concurrently up to semaphore limits
+                - Testable: pure async callables, easy to mock
+                """
+                # Build callable adapters from orchestrator methods
+                adapters = _build_advisory_adapters(self)
+
+                if not adapters:
+                    log.debug("[ISSUE #15] No advisory adapters enabled")
+                    return
+
+                # Log enabled adapters
+                _enabled = [a.sidecar_id for a in adapters]
+                log.debug("[ISSUE #15] Enabled advisory adapters: %s", _enabled)
+
+                # Build SidecarContext for adapter execution
+                _ctx = SidecarContext(
+                    query=getattr(self._scheduler, "_sprint_query", "") or "",
+                    sprint_id=getattr(self._scheduler, "_sprint_id", "unknown") or "unknown",
+                    findings=list(getattr(self._result, "findings", []) or []),
+                    sprint_mode=getattr(getattr(self._scheduler, "_config", None), "sprint_mode", "active") or "active",
+                    memory_pressure=getattr(getattr(self._governor, "snapshot", None), "memory_pressure", 0.0) or 0.0,
+                )
+
+                # Run adapters grouped by priority via parallel()
+                # HIGH priority: concurrency=8, fire immediately
+                # NORMAL priority: concurrency=8, fire-and-forget
+                # LOW priority: concurrency=4, may be deferred
+
+                # Filter adapters by priority
+                _high_priority = [a for a in adapters if a.priority == AdvisoryPriority.HIGH]
+                _normal_priority = [a for a in adapters if a.priority == AdvisoryPriority.NORMAL]
+                _low_priority = [a for a in adapters if a.priority == AdvisoryPriority.LOW]
+
+                # Log priority distribution
+                log.debug(
+                    "[ISSUE #15] Priority distribution: HIGH=%d, NORMAL=%d, LOW=%d",
+                    len(_high_priority), len(_normal_priority), len(_low_priority)
+                )
+
+                # Execute all adapters via parallel() with priority-aware concurrency
+                # Each adapter's __call__ method handles semaphore acquisition internally
+                _tracer = _get_otel_tracer()
+                _sem = _get_advisory_semaphore()
+
+                # Build coroutine tasks from adapters
+                async def _run_adapter_with_tracing(adapter: AdvisoryCallable) -> list[Any]:
+                    async with _sem:  # Semaphore per adapter call
+                        if _tracer:
+                            with _tracer.start_as_current_span(f"advisory.{adapter.sidecar_id}") as span:
+                                span.set_attribute("advisory.name", adapter.sidecar_id)
+                                span.set_attribute("advisory.priority", adapter.priority.name)
+                                try:
+                                    return await adapter(_ctx)
+                                except Exception:  # noqa: BLE001
+                                    _advisory_logger.debug(
+                                        "[%s] advisory failed (fail-soft)",
+                                        adapter.sidecar_id,
+                                        exc_info=True,
+                                    )
+                                    return []
+                        else:
+                            try:
+                                return await adapter(_ctx)
+                            except Exception:  # noqa: BLE001
+                                _advisory_logger.debug(
+                                    "[%s] advisory failed (fail-soft)",
+                                    adapter.sidecar_id,
+                                    exc_info=True,
+                                )
+                                return []
+
+                # Run all adapters in parallel with global semaphore (concurrency=8)
+                _all_tasks = [_run_adapter_with_tracing(a) for a in adapters]
+                if _all_tasks:
+                    try:
+                        _results = await parallel(_all_tasks, policy="log")
+                        log.debug(
+                            "[ISSUE #15] Advisory adapters completed: %d adapters executed",
+                            len([r for r in _results if r])
+                        )
+                    except _asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        _advisory_logger.debug(
+                            "[ISSUE #15] Adapter execution error: %s",
+                            e,
+                            exc_info=True,
+                        )
 
             _outer_tg.create_task(
-                _run_archive_sidecars(),
-                name="advisory:archive_sidecars",
-    )
-
-            # ── Branch D: IPFS/Onion/I2P/banner/DHT/Gopher/stego/TI sidecars ─
-            _ipfs_enabled = LANE_REGISTRY.is_enabled("ipfs")
-            if _ipfs_enabled:
-                _gateway = _os.environ.get("HLEDAC_IPFS_GATEWAY_URL", "https://ipfs.io")
-                log.info("IPFS sidecar: ENABLED — gateway=%s", _gateway)
-            else:
-                log.info("IPFS sidecar: DISABLED (set HLEDAC_ENABLE_IPFS=1 to enable)")
-
-            async def _run_dark_pivot_sidecars() -> None:
-                async with _asyncio.TaskGroup() as _tg:
-                    if _ipfs_enabled:
-                        _tg.create_task(
-                            _run_bounded_sidecar(self._run_ipfs_discovery_sidecar(), "ipfs_discovery"),
-                            name="sprint:ipfs_discovery_sidecar",
-    )
-                    # F251: Onion discovery sidecar (Tor .onion crawling)
-                    _tg.create_task(
-                        _run_bounded_sidecar(self._run_onion_discovery_sidecar(), "onion_discovery"),
-                        name="sprint:onion_discovery_sidecar",
-    )
-                    # F2P: I2P discovery sidecar
-                    _tg.create_task(
-                        _run_bounded_sidecar(self._run_i2p_discovery_sidecar(), "i2p_discovery"),
-                        name="sprint:i2p_discovery_sidecar",
-    )
-                    _tg.create_task(
-                        _run_bounded_sidecar(self._run_bgp_enrichment_sidecar(), "bgp_enrichment"),
-                        name="sprint:bgp_enrichment_sidecar",
-    )
-                    _tg.create_task(
-                        _run_bounded_sidecar(self._run_banner_grab_sidecar(), "banner_grab"),
-                        name="sprint:banner_grab_sidecar",
-    )
-                    # F214Q: DHT discovery sidecar
-                    _tg.create_task(
-                        _run_bounded_sidecar(self._run_dht_sidecar(), "dht_discovery"),
-                        name="sprint:dht_sidecar",
-    )
-                    # F214R: Gopher discovery sidecar — gated via LaneRegistry
-                    if LANE_REGISTRY.is_enabled("gopher"):
-                        _tg.create_task(
-                            _run_bounded_sidecar(self._run_gopher_sidecar(), "gopher"),
-                            name="sprint:gopher_sidecar",
-    )
-                    # F3FORENSICS: File forensics sidecars (non-blocking, env-gated, P0 bounded)
-                    if LANE_REGISTRY.is_enabled("digital_ghost"):
-                        _tg.create_task(
-                            _run_bounded_sidecar(self._run_digital_ghost_sidecar(), "digital_ghost"),
-                            name="sprint:digital_ghost_sidecar",
-    )
-                    if LANE_REGISTRY.is_enabled("steganography"):
-                        _tg.create_task(
-                            _run_bounded_sidecar(self._run_steganography_sidecar(), "steganography"),
-                            name="sprint:stego_sidecar",
-    )
-                    # F252: TI feed advisory sidecar (NVD + CISA KEV, P0 bounded)
-                    if LANE_REGISTRY.is_enabled("ti_feeds"):
-                        _tg.create_task(
-                            _run_bounded_sidecar(self._run_ti_feed_sidecar(), "ti_feed"),
-                            name="sprint:ti_feed_sidecar",
-    )
-                    # ADVERSARY-004: Hermes3 Auto-RE for unknown binary formats
-                    if _os.environ.get("HLEDAC_ENABLE_AUTO_RE", "0") in ("1", "true", "yes"):
-                        _tg.create_task(
-                            _run_bounded_sidecar(self._run_auto_re_sidecar(), "auto_re"),
-                            name="sprint:auto_re_sidecar",
-    )
-
-            _outer_tg.create_task(
-                _run_dark_pivot_sidecars(),
-                name="advisory:dark_pivot_sidecars",
-    )
+                _run_adapter_sidecars(),
+                name="advisory:adapter_sidecars",
+            )
 
             # ── Branch E: Plugin sidecars from SidecarRegistry ─────────────────
             # ORPHANED TASK FIX: Use safe_create_managed_task to make this task

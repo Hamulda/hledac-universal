@@ -335,7 +335,9 @@ class PassiveDNSResolver:
                 existing_fut = self._inflight[cache_key]
             else:
                 existing_fut = None
-                fut = asyncio.get_event_loop().create_future()
+                # ISSUE-10 FIX: get_running_loop() instead of deprecated get_event_loop() (Python 3.12+)
+                # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+                fut = asyncio.get_running_loop().create_future(name=f"passive_dns:resolve:{cache_key}")
                 self._inflight[cache_key] = fut
 
         # Lock is now released — safe to await even if we're the only task (won't deadlock)

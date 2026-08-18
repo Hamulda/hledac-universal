@@ -310,7 +310,7 @@ class DuckDBFTSStore:
         rows = [{'doc_id': d.doc_id, 'title': d.title, 'body': d.body, 'source': d.source, 'url': d.url, 'fetched_at': d.fetched_at, 'metadata_json': d.metadata_json} for d in batch]
         df = DataFrame(rows)
         arrow_table = df.to_arrow()
-        reg_name = f'fts_batch_{uuid.uuid4().hex[:12]}'
+        reg_name = f'fts_batch_{uuid.uuid7().hex[:12]}'
         try:
             self._conn.register(reg_name, arrow_table)
             self._conn.execute(f'\n                INSERT OR REPLACE INTO doc_bm25\n                (doc_id, title, body, source, url, fetched_at, metadata_json)\n                SELECT doc_id, title, body, source, url, fetched_at, metadata_json\n                FROM {reg_name};\n            ')

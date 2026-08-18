@@ -278,10 +278,12 @@ class BoundedInferencePipeline:
             await self._start_workers()
 
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
+        # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+        future: asyncio.Future[str] = loop.create_future(name="inference_pipeline:request")
 
         item = PipelineItem(
-            request_id=uuid.uuid4().hex[:12],
+            # ISSUE-11: uuid7 for time-ordered request IDs (Python 3.14+)
+            request_id=uuid.uuid7().hex[:12],
             future=future,
             prompt=prompt[:MAX_PROMPT_CHARS],
             system_msg=system_msg,

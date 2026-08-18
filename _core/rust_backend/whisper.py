@@ -11,8 +11,9 @@ Architecture:
     Audio → whisper.cpp (Rust) → WHISPER_COREML=1 → ANE encoder inference → text
 
 M1 8GB Constraints:
-    - Only tiny (39 MB) and base (74 MB) models
-    - Bounded to 1 concurrent inference (Mutex-protected)
+    - tiny (39 MB) and base (74 MB) models by default
+    - medium (148 MB) model with whisper_medium feature gate
+    - Bounded concurrent inference: 1 for tiny/base, 1 for medium (ANE memory)
     - CoreML/ANE uses dedicated memory — does NOT compete with main RAM
 
 Usage:
@@ -25,8 +26,20 @@ Usage:
     result = rust.whisper.transcribe("/path/to/audio.wav", model_size="tiny")
     # result: {text, language, duration_s, confidence, segments, coreml_used, ...}
     
+    # Batch transcription (for multi-page PDF audio)
+    results = rust.whisper.batch_transcribe(["audio1.wav", "audio2.wav"], model_size="tiny")
+    # results: {results: [...], total_files: 2, successful: 2, ...}
+    
+    # Verify ANE usage
+    verification = rust.whisper.verify_ane()
+    # verification: {ane_available: True, hardware_path: 'Apple Neural Engine (ANE)', ...}
+    
     # Get model cache directory
     cache_dir = rust.whisper.get_cache_dir()
+    
+    # Get available models
+    models = rust.whisper.get_available_models()
+    # models: ["tiny", "base"] or ["tiny", "base", "medium"] with feature gate
 """
 
 from __future__ import annotations
@@ -51,6 +64,10 @@ class _RustWhisperDomain:
         """Check if whisper models are available."""
         return self._ext.is_available()
 
+    def get_available_models(self) -> list[str]:
+        """Get list of available (cached) model sizes."""
+        return self._ext.get_available_models()
+
     def get_cache_dir(self) -> str:
         """Get the model cache directory path."""
         return self._ext.get_cache_dir()
@@ -67,7 +84,7 @@ class _RustWhisperDomain:
 
         Args:
             audio_path: Path to audio file (WAV 16kHz mono recommended)
-            model_size: "tiny" (39 MB, fast) or "base" (74 MB, accurate)
+            model_size: "tiny" (39 MB), "base" (74 MB), or "medium" (148 MB, feature-gated)
             language: Language code (e.g., "en") or None for auto-detect
             n_threads: Number of threads for CPU decoder (default: 4)
 
@@ -88,13 +105,54 @@ class _RustWhisperDomain:
 
         Args:
             audio_path: Path to audio file
-            model_size: "tiny" or "base"
+            model_size: "tiny", "base", or "medium" (feature-gated)
             language: Language code or None for auto-detect
 
         Returns:
             List of segment dicts: [{text, start_s, end_s, confidence}, ...]
         """
         return self._ext.transcribe_with_timestamps(audio_path, model_size, language)
+
+    def batch_transcribe(
+        self,
+        audio_paths: list[str],
+        model_size: str = "tiny",
+        language: str | None = None,
+        n_threads: int = 4,
+        max_concurrent: int = 2,
+    ) -> dict[str, Any]:
+        """
+        Batch transcribe multiple audio files.
+
+        Optimized for multi-page PDF audio extraction with bounded concurrency.
+
+        Args:
+            audio_paths: List of audio file paths
+            model_size: "tiny", "base", or "medium" (feature-gated)
+            language: Language code or None for auto-detect
+            n_threads: Number of threads for CPU decoder (default: 4)
+            max_concurrent: Max concurrent transcriptions (default: 2 for M1 8GB)
+
+        Returns:
+            Dict with: results, total_files, successful, failed,
+                      total_latency_s, average_latency_s
+        """
+        return self._ext.batch_transcribe(
+            audio_paths, model_size, language, n_threads, max_concurrent
+        )
+
+    def verify_ane(self) -> dict[str, Any]:
+        """
+        Verify ANE is being used for transcription.
+
+        Returns:
+            Dict with: ane_available, hardware_path, coreml_models, memory_info
+        """
+        return self._ext.verify_ane()
+
+    def is_medium_available(self) -> bool:
+        """Check if medium model is available (requires whisper_medium feature)."""
+        return getattr(self._ext, "MEDIUM_AVAILABLE", False)
 
 
 class _PythonWhisperDomain:
@@ -191,6 +249,8 @@ def __getattr__(name: str) -> Any:
     # These are accessed from rust.whisper.*
     if name == "is_available":
         return _get_rust_domain().is_available() if _get_rust_domain() else _get_python_domain().is_available()
+    elif name == "get_available_models":
+        return _get_rust_domain().get_available_models() if _get_rust_domain() else []
     elif name == "get_cache_dir":
         return _get_rust_domain().get_cache_dir() if _get_rust_domain() else _get_python_domain().get_cache_dir()
     elif name == "transcribe":
@@ -199,4 +259,16 @@ def __getattr__(name: str) -> Any:
     elif name == "transcribe_with_timestamps":
         domain = _get_rust_domain() or _get_python_domain()
         return domain.transcribe_with_timestamps
+    elif name == "batch_transcribe":
+        domain = _get_rust_domain()
+        if domain:
+            return domain.batch_transcribe
+        raise AttributeError("batch_transcribe requires Rust whisper module")
+    elif name == "verify_ane":
+        domain = _get_rust_domain()
+        if domain:
+            return domain.verify_ane
+        raise AttributeError("verify_ane requires Rust whisper module")
+    elif name == "is_medium_available":
+        return _get_rust_domain().is_medium_available() if _get_rust_domain() else False
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

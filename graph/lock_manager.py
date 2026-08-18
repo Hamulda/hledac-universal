@@ -40,6 +40,7 @@ import os
 import pathlib
 import threading
 import time
+import weakref
 from typing import TYPE_CHECKING
 
 from _core.lock_registry import LockCategory, register_lock
@@ -285,6 +286,7 @@ class GraphLockManager:
         "_denial_reason",
         "_holder_pid",
         "_lock",
+        "_finalizer",  # F264: weakref.finalize for deterministic cleanup
     )
 
     def __new__(cls, db_path: str) -> GraphLockManager:
@@ -305,6 +307,14 @@ class GraphLockManager:
         self._denial_reason: str = ""
         self._holder_pid: int | None = None
         self._lock = threading.Lock()  # Per-instance thread safety
+
+        # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
+        # Primary cleanup path; __del__ is fallback for interpreter shutdown edge cases
+        self._finalizer = weakref.finalize(
+            self,
+            _release_graph_lock,
+            self._lock_path,
+        )
 
     # ── Properties ──────────────────────────────────────────────────────────
 
@@ -456,15 +466,33 @@ class GraphLockManager:
         self.release()
 
     def __del__(self) -> None:
-        """Ensure flock is released on garbage collection."""
-        if self._fd is not None:
+        """Fallback destructor — weakref.finalize is primary, __del__ is last resort.
+
+        In Python 3.14+ __del__ is not guaranteed to run, so _finalizer (via
+        weakref.finalize) is the canonical cleanup path.
+        """
+        # Detach finalizer to prevent double-cleanup
+        if hasattr(self, '_finalizer') and self._finalizer.detach():
+            # We took ownership — run cleanup now
+            self.release()
+
+
+def _release_graph_lock(lock_path: pathlib.Path) -> None:
+    """Module-level cleanup function for weakref.finalize.
+
+    Separated from class method to avoid reference cycle and ensure
+    the cleanup function is callable after the instance is collected.
+    Releases any stale flock held by this process.
+    """
+    try:
+        if lock_path.exists():
+            fd = os.open(str(lock_path), os.O_RDWR)
             try:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
-                os.close(self._fd)
-            except OSError:  # noqa: BLE001
-                pass
+                fcntl.flock(fd, fcntl.LOCK_UN)
             finally:
-                self._fd = None
+                os.close(fd)
+    except (OSError, FileNotFoundError):  # noqa: BLE001
+        pass
 
 
 def cleanup_stale_graph_lock(db_path: str, force: bool = False) -> tuple[int, str]:

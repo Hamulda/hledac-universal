@@ -34,6 +34,7 @@ import asyncio
 import json
 import logging
 import re
+import weakref
 from dataclasses import dataclass, field
 import msgspec
 from compat.msgspec_gc_compat import Struct
@@ -1939,7 +1940,7 @@ class APICache:
 
     Used for rate-limited APIs like Shodan and Censys.
     """
-    __slots__ = tuple(('_conn', '_db_path', 'ttl_seconds'))
+    __slots__ = tuple(('_conn', '_db_path', 'ttl_seconds', '_finalizer'))
 
     def __init__(self, cache_dir: str | None=None, ttl_seconds: int=3600):
         """
@@ -1962,6 +1963,8 @@ class APICache:
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.execute('\n            CREATE TABLE IF NOT EXISTS api_cache (\n                key TEXT PRIMARY KEY,\n                value TEXT,\n                timestamp REAL\n            )\n        ')
         self._conn.commit()
+        # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
+        self._finalizer = weakref.finalize(self, _api_cache_cleanup, self._conn)
 
     def get(self, key: str) -> str | None:
         """
@@ -2016,10 +2019,30 @@ class APICache:
             pass
 
     def __del__(self) -> None:
-        try:
-            self._conn.close()
-        except Exception:
-            pass
+        """
+        F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
+        
+        Called only if:
+        - Finalizer wasn't triggered (interpreter shutdown order)
+        - Object was resurrected and then deleted
+        """
+        if hasattr(self, '_finalizer') and self._finalizer.detach():
+            self.close()
+
+
+def _api_cache_cleanup(conn: Any) -> None:
+    """
+    Module-level cleanup function for weakref.finalize.
+    
+    F264: Close sqlite connection when APICache is garbage collected.
+    Called automatically by weakref.finalize when the object is GC'd.
+    """
+    try:
+        if conn is not None:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        pass
+
 
 async def search_shodan(query: str, api_key: str | None=None) -> list[dict[str, Any]]:
     """

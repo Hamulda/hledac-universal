@@ -282,7 +282,8 @@ class _EmbeddingRequest:
     def __init__(self, priority: int, text: str) -> None:
         self.priority = priority
         self.text = text
-        self.future: asyncio.Future[np.ndarray] = asyncio.get_running_loop().create_future()
+        # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+        self.future: asyncio.Future[np.ndarray] = asyncio.get_running_loop().create_future(name="mlx_dispatcher:embedding")
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, _EmbeddingRequest):

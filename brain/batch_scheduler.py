@@ -153,7 +153,8 @@ class BatchScheduler:
         if self._worker_task is None:
             await self.start()
         schema_key = self._compute_schema_key(response_model, temperature)
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
+        future: asyncio.Future = asyncio.get_running_loop().create_future(name=f"batch_scheduler:structured:{response_model.__name__}")
         tie = next(self._batch_tie_breaker)
         payload = {'prompt': prompt, 'response_model': response_model, 'temperature': temperature, 'max_tokens': max_tokens, 'system_msg': system_msg, 'future': future, 'type': 'structured'}
         await self._batch_queue.put((priority, tie, schema_key, payload))

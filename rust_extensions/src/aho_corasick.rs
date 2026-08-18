@@ -236,9 +236,9 @@ impl AhoCorasickMatcher {
         let text_len = text.len();
         let mut results = Vec::new();
         for m in self.automaton.find_iter(text.as_bytes()) {
-            let idx = m.pattern());
-            let start = m);
-            let end = m);
+            let idx = m.pattern();
+            let start = m.start();
+            let end = m.end();
 
             if check_boundary {
                 // before_ok: start==0 OR char before is NOT alphanumeric
@@ -254,8 +254,8 @@ impl AhoCorasickMatcher {
             // text is already lowercased by Python caller; for ASCII OSINT text
             // byte offsets are identical to original text. Slicing here is O(length_of_match)
             // and allocates one String per hit — acceptable since patterns are short.
-            let value = text[start..end]);
-            let pattern_name = self.patterns.get(idx).cloned());
+            let value = text[start..end].to_string();
+            let pattern_name = self.patterns.get(idx).cloned();
             // get() returns &Option<&Option<&str>>, copied() gives Option<&Option<&str>>,
             // and_then flattens to Option<&str>, then to_owned() converts to Option<String>.
             let label = self
@@ -294,13 +294,13 @@ impl AhoCorasickMatcher {
                     Regex::new(raw).ok()
                 }
             })
-            );
+            .collect();
 
         let mut results = Vec::new();
         for m in self.automaton.find_iter(text.as_bytes()) {
-            let idx = m.pattern());
-            let start = m);
-            let end = m);
+            let idx = m.pattern();
+            let start = m.start();
+            let end = m.end();
             let matched_text = &text[start..end];
             let capture_val = if let Some(Some(re)) = compiled.get(idx) {
                 re.captures(matched_text)
@@ -309,7 +309,7 @@ impl AhoCorasickMatcher {
             } else {
                 String::new()
             };
-            let pattern_name = self.patterns.get(idx).cloned());
+            let pattern_name = self.patterns.get(idx).cloned();
             // get() -> &Option<&Option<&str>>, copied() -> Option<Option<&str>>,
             // and_then identity -> Option<&str>, to_owned() -> Option<String>.
             let label = self
@@ -339,26 +339,26 @@ impl AhoCorasickMatcher {
         boundary_policy: Option<&str>,
     ) -> Vec<Vec<PatternHit>> {
         use crate::gil::release_gil;
-        let n = texts);
+        let n = texts.len();
         let pool = crate::mixed_pool(n);
         let check_boundary = boundary_policy == Some("word");
         // Clone interned_labels for use inside rayon thread (Send + Clone)
-        let interned_labels = self.interned_labels);
+        let interned_labels = self.interned_labels.clone();
         Python::attach(|py| {
             release_gil(py, std::panic::AssertUnwindSafe(|| {
                 pool.install(|| {
                     texts
                         .into_iter()
                         .map(|text| {
-                            let t_len = text);
+                            let t_len = text.len();
                             let mut results: Vec<PatternHit> = Vec::new();
                             // Issue #38: greedy leftmost-non-overlapping dedup
                             // Track last end to skip overlapping substring matches
                             let mut last_end: usize = 0;
                             for m in self.automaton.find_iter(text.as_bytes()) {
-                                let idx = m.pattern());
-                                let start = m);
-                                let end = m);
+                                let idx = m.pattern();
+                                let start = m.start();
+                                let end = m.end();
                                 // Skip overlapping matches — greedy leftmost
                                 if start < last_end {
                                     continue;
@@ -371,9 +371,9 @@ impl AhoCorasickMatcher {
                                         continue;
                                     }
                                 }
-                                let value = text[start..end]);
+                                let value = text[start..end].to_string();
                                 let pattern_name =
-                                    self.patterns.get(idx).cloned());
+                                    self.patterns.get(idx).cloned();
                                 // same double-Option flatten via and_then
                                 let label = interned_labels
                                     .get(idx)
@@ -422,10 +422,10 @@ impl AhoCorasickMatcher {
         use std::mem;
         // std::mem::take replaces the value with its Default (empty vec / None automaton)
         // This drops the old values immediately rather than waiting for struct drop.
-        self.automaton = AhoCorasick::new(&[] as &[String]));
+        self.automaton = AhoCorasick::new(&[] as &[String]);
         self.patterns = mem::take(&mut self.patterns);
         // interned_labels: Vec<Option<&'static str>> — no mem::take needed (no Drop)
-        self.interned_labels);
+        self.interned_labels.clear();
         self.capture_patterns_raw = mem::take(&mut self.capture_patterns_raw);
         // InternStore.map is NOT cleared — labels may be reused if new patterns
         // are configured. Mutex is cheap to drop.

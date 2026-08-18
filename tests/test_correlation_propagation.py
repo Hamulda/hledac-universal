@@ -31,7 +31,7 @@ class TestEvidenceLogCorrelation:
         from hledac.universal.evidence_log import EvidenceLog
 
         with tempfile.TemporaryDirectory():
-            run_id = f"test_run_{uuid.uuid4().hex[:8]}"
+            run_id = f"test_run_{uuid.uuid7().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
             event = log.create_event(
@@ -49,7 +49,7 @@ class TestEvidenceLogCorrelation:
         from hledac.universal.evidence_log import EvidenceLog
 
         with tempfile.TemporaryDirectory():
-            run_id = f"test_run_{uuid.uuid4().hex[:8]}"
+            run_id = f"test_run_{uuid.uuid7().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
             correlation: dict[str, str | None] = {
@@ -77,7 +77,7 @@ class TestEvidenceLogCorrelation:
         from hledac.universal.evidence_log import EvidenceLog
 
         with tempfile.TemporaryDirectory():
-            run_id = f"test_run_{uuid.uuid4().hex[:8]}"
+            run_id = f"test_run_{uuid.uuid7().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
             correlation = {
@@ -103,7 +103,7 @@ class TestEvidenceLogCorrelation:
         from hledac.universal.evidence_log import EvidenceLog
 
         with tempfile.TemporaryDirectory():
-            run_id = f"test_run_{uuid.uuid4().hex[:8]}"
+            run_id = f"test_run_{uuid.uuid7().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
             correlation: dict[str, str | None] = {
@@ -132,7 +132,7 @@ class TestEvidenceLogCorrelation:
         from hledac.universal.evidence_log import EvidenceLog
 
         with tempfile.TemporaryDirectory():
-            run_id = f"test_run_{uuid.uuid4().hex[:8]}"
+            run_id = f"test_run_{uuid.uuid7().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
             correlation: dict[str, str | None] = {
@@ -174,7 +174,7 @@ class TestToolExecLogCorrelation:
         from hledac.universal.tool_exec_log import ToolExecLog
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            run_id = f"test_run_{uuid.uuid4().hex[:8]}"
+            run_id = f"test_run_{uuid.uuid7().hex[:8]}"
             log = ToolExecLog(run_dir=Path(tmpdir), run_id=run_id, enable_persist=False)
 
             event = log.log(
@@ -192,7 +192,7 @@ class TestToolExecLogCorrelation:
         from hledac.universal.tool_exec_log import ToolExecLog
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            run_id = f"test_run_{uuid.uuid4().hex[:8]}"
+            run_id = f"test_run_{uuid.uuid7().hex[:8]}"
             log = ToolExecLog(run_dir=Path(tmpdir), run_id=run_id, enable_persist=False)
 
             correlation: dict[str, str | None] = {
@@ -221,7 +221,7 @@ class TestToolExecLogCorrelation:
         from hledac.universal.tool_exec_log import ToolExecLog
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            run_id = f"test_run_{uuid.uuid4().hex[:8]}"
+            run_id = f"test_run_{uuid.uuid7().hex[:8]}"
             log = ToolExecLog(run_dir=Path(tmpdir), run_id=run_id, enable_persist=False)
 
             correlation: dict[str, str | None] = {
@@ -413,7 +413,7 @@ class TestAnalyticsHookCorrelation:
         from hledac.universal.evidence_log import EvidenceLog
 
         with tempfile.TemporaryDirectory():
-            run_id = f"test_shadow_corr_{uuid.uuid4().hex[:8]}"
+            run_id = f"test_shadow_corr_{uuid.uuid7().hex[:8]}"
             log = EvidenceLog(run_id=run_id, enable_persist=False)
 
             # Create evidence_packet event with full correlation

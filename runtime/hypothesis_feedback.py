@@ -135,7 +135,7 @@ class HypothesisFeedbackAdapter:
         if self._store is None:
             return False
         try:
-            record = HypothesisFeedbackRecord(id=str(uuid.uuid4()), target_id=self._target_id, pivot_type=pivot_type, ioc_type=ioc_type, produced_count=produced_count, accepted_count=accepted_count, signal_value=signal_value, ts=time.time())
+            record = HypothesisFeedbackRecord(id=str(uuid.uuid7()), target_id=self._target_id, pivot_type=pivot_type, ioc_type=ioc_type, produced_count=produced_count, accepted_count=accepted_count, signal_value=signal_value, ts=time.time())
             await self._store.async_record_hypothesis_feedback(record)
             self._cache = None
             return True

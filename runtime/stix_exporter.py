@@ -175,7 +175,7 @@ def _iso8601_future(days: int = 90) -> str:
 
 
 def _new_uuid() -> str:
-    return str(uuid.uuid4())
+    return str(uuid.uuid7())
 
 
 def _hash_algorithm(value: str) -> str:

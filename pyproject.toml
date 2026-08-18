@@ -1,5 +1,25 @@
 # pyproject.toml — Hledac Universal v18+
 # MacBook Air M1 8GB — soukromý projekt, flat deps, žádné extras
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODERNIZAČNÍ MATICE — Cutting Edge (2026) Řešení — Python 3.14.6
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# ✅ Serialization:    msgspec 0.21+ + orjson (gc→weakref compat layer)
+# ✅ HTTP client:      httpx 0.28+ + curl_cffi (JA3/stealth)
+# ✅ HTTP/3:           Native nw_connection via Rust (Apple Network.framework)
+# ✅ DNS:              dnspython 3.x (E3 FIX: dns.resolver + dns.query.http)
+# ✅ DS/DB:            DuckDB 1.5+ + sqlite-vec + Polars
+# ✅ Re-rank:          flashrank 0.2+ (in [ml] extra)
+# ✅ MLX:              mlx 0.31+ + mlx-lm 0.31+ (ANE optimized)
+# ✅ Graph:            rustworkx 0.18+ + Kuzu (IOC graphs)
+# ✅ Cache:            diskcache 5.6+ + custom async (no Redis deps)
+# ✅ OTel:             opentelemetry-api/sdk 1.27+ (lazy init)
+# ✅ uuid7:            stdlib uuid.uuid7() + compat shim
+# ✅ annotationlib:    Python 3.14 built-in (probe-ready)
+# ⏳ t-strings:       PEP 750 (Python 3.15 feature, not yet)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -72,6 +92,8 @@ dependencies = [
     #   (gc=False ↔ weakref=False). compat/msgspec_gc_compat.py provides a drop-in
     #   `struct()` factory and `Struct` base class that translates `gc=False → weakref=False`
     #   automatically. All production classes migrated to compat layer.
+    # NOTE: 0.21.1 is latest available as of 2026-08. Upper bound <0.24.0 allows
+    # future minor updates. Major version (0.x) convention per semver.
     "msgspec>=0.21.1,<0.24.0",
     # ── JSON Serialization Strategy (Issue M3) ───────────────────────────────
     # Wire format (typed structs with known schema): msgspec (msgspec.Struct)
@@ -194,6 +216,10 @@ dependencies = [
     #   - IOC internal IDs: own namespace, not cross-language (duckdb_store, ioc_graph, ioc_extract)
     "xxhash>=3.7.0,<4.0.0",
     "mmh3>=5.2.1",
+    # ── Email / ASN ───────────────────────────────────────────────────────────
+    # MODERN-2026-Q3: email_validator for RFC 5321/5322 compliant email validation
+    # Used by: recon/, intelligence/, security/ modules for email OSINT
+    "email-validator>=2.1.0",
     # ── Networking / OSINT ────────────────────────────────────────────────────
     # ISSUE-008: dnspython 2.x EOL — migrate to 3.x for async-native API.
     # dnspython 3.x breaks: dns.asyncresolver.resolve() → dns.resolver.resolve()
@@ -452,6 +478,7 @@ graph-storage = [
 ]
 [project.scripts]
 hledac = "hledac.universal.__main__:main"
+hledac-sprint = "hledac.universal.runtime.sprint_entrypoint:run_sprint"
 check-silent-excepts = "hledac.universal.scripts.check_silent_excepts:main"
 
 # ── Dev tools (oddělené od runtime, uv sync --group dev) ─────────────────────

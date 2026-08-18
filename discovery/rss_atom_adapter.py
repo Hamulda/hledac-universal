@@ -791,10 +791,22 @@ def _fetch_feed_content(feed_url: str, timeout_s: float, max_bytes: int) -> tupl
     """
     from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 
+    # ISSUE-10 FIX: Use asyncio.Runner() instead of deprecated get_event_loop().run_until_complete()
     try:
-        result = asyncio.get_event_loop().run_until_complete(
-            async_fetch_public_text(feed_url, timeout_s=timeout_s, max_bytes=max_bytes, bypass_circuit_breaker=True)
-    )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop - use asyncio.Runner() (Python 3.11+)
+            with asyncio.Runner() as runner:
+                result = runner.run(
+                    async_fetch_public_text(feed_url, timeout_s=timeout_s, max_bytes=max_bytes, bypass_circuit_breaker=True)
+                )
+        else:
+            # Running loop detected - schedule on running loop
+            result = asyncio.run_coroutine_threadsafe(
+                async_fetch_public_text(feed_url, timeout_s=timeout_s, max_bytes=max_bytes, bypass_circuit_breaker=True),
+                loop
+            ).result()
     except Exception:
         # Return None result with error on exception
         return (None, 'fetch_exception', None)

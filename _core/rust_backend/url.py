@@ -44,6 +44,17 @@ class _RustUrlDomain:
     def extract_domain(self, url: str) -> str:
         return _python_extract_domain(url)
 
+    def batch_fingerprint(self, urls: list[str]) -> list[str]:
+        """Batch fingerprint URLs using Rust xxHash64.
+
+        Returns list of 16-char hex strings (same length as input).
+        None/null fingerprints are returned as empty string.
+
+        M1 8GB safe: rayon parallel, GIL released during batch.
+        """
+        raw_results = self._ext.batch_fingerprint(urls)
+        return [format(fp, '016x') if fp is not None else '' for fp in raw_results]
+
 
 class _PythonUrlDomain:
     """Pure-Python URL normalization/fingerprint fallback."""
