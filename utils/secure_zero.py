@@ -139,7 +139,7 @@ def secure_zero_typed(obj: Any) -> None:
     if SecretContainer is None:
         try:
             import msgspec
-from compat.msgspec_gc_compat import Struct
+            from compat.msgspec_gc_compat import Struct
 
             SecretContainer = msgspec.Struct
         except ImportError:

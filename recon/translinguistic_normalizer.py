@@ -947,17 +947,24 @@ def batch_normalize_translinguistic(texts: list[str]) -> list[str]:
     )
         texts = texts[:_BATCH_HARD_CAP]
 
-    # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal._core.rust_backend import rust
-    batch_nfc_normalize_fast = rust.raw.batch_nfc_normalize_fast
-    batch_strip_diacritics_fast = rust.raw.batch_strip_diacritics_fast
-    if batch_nfc_normalize_fast is None or batch_strip_diacritics_fast is None:
+    # F1: Use centralized text_norm_wiring layer for consistency
+    try:
+        from rust_extensions.wiring.text_norm_wiring import (
+            batch_nfc_normalize_fast as _batch_nfc,
+            batch_strip_diacritics_fast as _batch_strip,
+            is_available as _available,
+        )
+        if not _available():
+            raise ImportError("Rust text normalization not available")
+    except ImportError:
+        raise
+    except Exception:
         raise ImportError("Rust text normalization not available")
     # First: NFC normalize + case-fold via Rust NEON fast-path
-    normalized = batch_nfc_normalize_fast(texts)
+    normalized = _batch_nfc(texts)
     # Second: strip diacritics via Rust NFD fast-path
-    normalized = batch_strip_diacritics_fast(normalized)
-    # R6: if Rust text normalization not available, use texts as-is
+    normalized = _batch_strip(normalized)
+    # F1: if Rust text normalization not available, use texts as-is
     if normalized is None:
         normalized = texts
 

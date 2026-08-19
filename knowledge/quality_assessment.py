@@ -22,6 +22,7 @@ This module provides quality decision helpers that DuckDBShadowStore delegates t
 
 
 
+import asyncio
 import hashlib
 import logging as _logging
 import os
@@ -104,6 +105,13 @@ _FEED_SOURCE_TYPES: frozenset[str] = frozenset({
 # semantic dedup entirely (exact match = trust the hash as dedup key).
 # Pattern matches hex hashes of common IOC types (SHA256, MD5, SHA1, Blake2b).
 _HIGH_CONF_IOC_RE = re.compile(r"^[a-fA-F0-9]{32,128}$")
+
+# R9: Batch size bounds for M1 8GB optimization
+# Min: 50 findings to amortize async overhead
+# Max: 200 findings to prevent memory pressure
+# Rust assess_findings_quality_batch handles internal chunking at BATCH_HARD_CAP
+_QUALITY_BATCH_SIZE_MIN = 50
+_QUALITY_BATCH_SIZE_MAX = 200
 
 
 def _normalize_for_quality(text: str) -> str:
@@ -862,6 +870,60 @@ class QualityAssessor:
 
         assert None not in results, "assess_batch: 1:1 invariant violated"
         return results  # type: ignore[return-value]
+
+    async def assess_batch_async(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> list[FindingQualityDecision]:
+        """
+        R9: Async batch quality gate — offloads assess_batch to thread pool.
+
+        Uses asyncio.to_thread to avoid blocking the event loop during
+        CPU-bound Rust rayon parallel work. PyO3 releases GIL during
+        rayon parallel sections.
+
+        R9: Enforces batch_size bounds (50-200 findings per chunk) to:
+          - Amortize async overhead for small batches
+          - Prevent memory pressure on M1 8GB
+          - Enable optimal rayon parallelization in Rust
+
+        Args:
+            findings: List of CanonicalFinding to assess
+
+        Returns:
+            list[FindingQualityDecision] in same order as findings
+        """
+        n = len(findings)
+        if n == 0:
+            return []
+
+        # R9: Chunk findings into bounded batches
+        if n < _QUALITY_BATCH_SIZE_MIN:
+            # Small batch: process directly without async overhead
+            return self.assess_batch(findings)
+
+        # Chunk findings within bounds
+        chunks: list[list[CanonicalFinding]] = []
+        for i in range(0, n, _QUALITY_BATCH_SIZE_MAX):
+            chunk = findings[i:i + _QUALITY_BATCH_SIZE_MAX]
+            if len(chunk) >= _QUALITY_BATCH_SIZE_MIN or i + _QUALITY_BATCH_SIZE_MAX >= n:
+                chunks.append(chunk)
+            else:
+                # Merge small final chunk with previous
+                if chunks:
+                    chunks[-1].extend(chunk)
+                else:
+                    chunks.append(chunk)
+
+        # Process chunks in parallel via asyncio.to_thread
+        results: list[FindingQualityDecision] = []
+        tasks = [asyncio.to_thread(self.assess_batch, chunk) for chunk in chunks]
+        chunk_results = await asyncio.gather(*tasks)
+
+        for chunk_result in chunk_results:
+            results.extend(chunk_result)
+
+        return results
 
     def _assess_batch_legacy(
         self,

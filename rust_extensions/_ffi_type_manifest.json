@@ -1,9 +1,9 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-08-18T22:47:59.573073+00:00",
+  "generated_at": "2026-08-19T16:20:08.666395+00:00",
   "capability": "NEXTGEN-05",
   "description": "Build-time FFI type-safety manifest",
-  "__source_hash__": "07c64ca0ea068d8877f63a3204d53527ca6a0006c37350262cdaa190c2bc9218",
+  "__source_hash__": "6d95d644724a7ee73d505da546a0dfa1d57cb8a0c9d976978d1811d21faa801b",
   "classes": {
     "warc_parser.WarcCertificate": {
       "module": "warc_parser",
@@ -850,6 +850,12 @@
           "name": "count_matches_mmap",
           "signature": "(path: str)",
           "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "scan_batch",
+          "signature": "(texts: list[str])",
+          "return_type": "list[list[StreamPatternHit]]",
           "is_async": false
         },
         {

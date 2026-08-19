@@ -37,6 +37,7 @@ from typing import Any
 import httpx
 import orjson
 from _core import aclose
+from utils._patterns import looks_like_domain as _looks_like_domain
 logger = logging.getLogger(__name__)
 
 # Crypto-safe RNG — F350M-R
@@ -407,25 +408,6 @@ def _is_ip_address(value: str) -> bool:
     if ':' in value and re.match('^[0-9a-fA-F:]+$', value):
         return True
     return False
-
-def _looks_like_domain(value: str) -> bool:
-    """Return True if value looks like a domain name."""
-    if not value or len(value) > 253:
-        return False
-    if '.' not in value:
-        return False
-    if _is_ip_address(value):
-        return False
-    parts = value.split('.')
-    if len(parts) < 2:
-        return False
-    tld = parts[-1]
-    if len(tld) < 1 or len(tld) > 63:
-        return False
-    if not re.match('^[a-z0-9.\\-_]+$', tld):
-        return False
-    return True
-
 async def call_lookup_passive_dns(domain: str, session_provider: httpx.AsyncClient | None=None, fetch_func: Callable[..., Any] | None=None) -> tuple[list[str], PassiveDNSOutcome]:
     """
     CIRCL PDNS lookup with normalized outcome — F207F.

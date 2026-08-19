@@ -30,6 +30,37 @@ logger = logging.getLogger(__name__)
 DEFAULT_ENRICH_QUEUE_IN = 64
 DEFAULT_ENRICH_QUEUE_OUT = 128
 
+# ============================================================================
+# F2: Elastic Pool Singleton — lazy module-level init for Rust rayon resize
+# ============================================================================
+# ponytail: global lock on Rust side; add per-stage granularity if throughput matters
+_RUST_CPU_POOL_RESIZE: Any = None  # Cached resize function
+_POOL_INIT_LOGGED: bool = False
+
+
+def _get_rust_cpu_pool_resize():
+    """Get Rust CPU pool resize function with lazy initialization.
+    
+    F2: This replaces the in-function import that was causing hot-path overhead.
+    The function is cached after first call to avoid repeated imports.
+    """
+    global _RUST_CPU_POOL_RESIZE, _POOL_INIT_LOGGED
+    if _RUST_CPU_POOL_RESIZE is not None:
+        return _RUST_CPU_POOL_RESIZE
+    
+    try:
+        from rust_extensions.wiring.elastic_pool_wiring import resize_cpu_pool
+        _RUST_CPU_POOL_RESIZE = resize_cpu_pool
+        if not _POOL_INIT_LOGGED:
+            logger.debug("[F2] Rust CPU pool resize wired successfully")
+            _POOL_INIT_LOGGED = True
+        return resize_cpu_pool
+    except Exception as e:
+        if not _POOL_INIT_LOGGED:
+            logger.debug("[F2] Rust CPU pool unavailable: %s", e)
+            _POOL_INIT_LOGGED = True
+        return None
+
 
 class EnrichStage:
     """AsyncIterator pipeline for CanonicalFinding construction from pattern hits.
@@ -142,7 +173,11 @@ class EnrichStage:
         batch_success: int,
         metrics: Any,
     ) -> None:
-        """Update AIMD window based on batch success/failure."""
+        """Update AIMD window based on batch success/failure.
+        
+        F2: Also syncs Rust rayon CPU pool to match AIMD window.
+        Eliminates AIMD oscillation spike on P-core (Thompson sampling jitter).
+        """
         if batch_success > 0:
             new_window = await self._aimd.on_success()
         else:
@@ -153,6 +188,14 @@ class EnrichStage:
             # ISSUE-008: Use resize() instead of creating new Semaphore
             if self._sem is not None:
                 await self._sem.resize(new_workers)
+            # F2: Sync Rust rayon CPU pool to match AIMD window
+            # Uses module-level lazy singleton — no hot-path import overhead
+            resize_fn = _get_rust_cpu_pool_resize()
+            if resize_fn is not None:
+                try:
+                    resize_fn(min(new_workers, 8))
+                except Exception:
+                    pass  # Rust pool failed — continue with Python-only
             metrics.update_aimd_window(new_window)
 
     async def run(
@@ -195,7 +238,7 @@ class EnrichStage:
                 # Process results and AIMD feedback
                 batch_success, batch_fail = await self._process_batch_results(
                     gather_result, output_queue, metrics
-    )
+                )
                 success_count += batch_success
                 fail_count += batch_fail
                 await self._update_aimd(batch_success, metrics)
@@ -213,7 +256,7 @@ class EnrichStage:
                 success_count + fail_count,
                 success_count,
                 fail_count,
-    )
+            )
 
     async def _enrich_one_hit(
         self, hit: Any, page_text: str, url: str, ctx: StageContext
@@ -232,7 +275,7 @@ class EnrichStage:
                 hit_end=getattr(hit, "end", 0) or 0,
                 page_text=page_text,
                 discovery_score=None,
-    )
+            )
             return result[0] if result and len(result) > 0 else None
         except asyncio.CancelledError:
             raise

@@ -578,7 +578,13 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             if not path:
                 continue
             fid_seed = f'{start}|{tgt}|{ts_now}'
-            fid = 'graph_path_' + hashlib.sha256(fid_seed.encode('utf-8')).hexdigest()[:16]
+            # E1: Hardware-accelerated SHA-256 (ARM NEON on Apple Silicon)
+            try:
+                from _core.rust_backend import rust
+                hashes = rust.crypto.batch_sha256_hw([fid_seed])
+                fid = 'graph_path_' + (hashes[0][:16] if hashes else hashlib.sha256(fid_seed.encode('utf-8')).hexdigest()[:16])
+            except Exception:
+                fid = 'graph_path_' + hashlib.sha256(fid_seed.encode('utf-8')).hexdigest()[:16]
             try:
                 findings.append(CanonicalFinding(finding_id=fid, query=query or '', source_type='graph_path_analysis', confidence=0.5, ts=ts_now, provenance=('graph_path_analysis', 'research_coordinator', start, tgt), payload_text=_msgspec_encode({'start': start, 'target': tgt, 'path': path, 'length': len(path), 'centrality': {'start': centrality.get(start, 0.0), 'target': centrality.get(tgt, 0.0)}, 'sprint_id': sprint_id}).decode()))
             except Exception as e:
@@ -757,7 +763,14 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         config = config or ExcavationConfig()
         max_depth = config.max_depth
         logger.info(f"Starting excavation from '{seed_paper.title[:50]}...' to depth {max_depth}")
-        thread_id = hashlib.sha256(f'{seed_paper.id}:{datetime.now(UTC).isoformat()}'.encode()).hexdigest()[:16]
+        # E1: Hardware-accelerated SHA-256 (ARM NEON on Apple Silicon)
+        thread_key = f'{seed_paper.id}:{datetime.now(UTC).isoformat()}'
+        try:
+            from _core.rust_backend import rust
+            hashes = rust.crypto.batch_sha256_hw([thread_key])
+            thread_id = hashes[0][:16] if hashes else hashlib.sha256(thread_key.encode()).hexdigest()[:16]
+        except Exception:
+            thread_id = hashlib.sha256(thread_key.encode()).hexdigest()[:16]
         thread = ResearchThread(id=thread_id, root_topic=query)
         self._threads[thread_id] = thread
         seed_paper.depth = 0
@@ -939,7 +952,14 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         Returns:
             Hierarchical plan with chief and worker tasks
         """
-        plan_id = hashlib.sha256(f'{objective}:{time.time()}'.encode()).hexdigest()[:16]
+        # E1: Hardware-accelerated SHA-256 (ARM NEON on Apple Silicon)
+        plan_key = f'{objective}:{time.time()}'
+        try:
+            from _core.rust_backend import rust
+            hashes = rust.crypto.batch_sha256_hw([plan_key])
+            plan_id = hashes[0][:16] if hashes else hashlib.sha256(plan_key.encode()).hexdigest()[:16]
+        except Exception:
+            plan_id = hashlib.sha256(plan_key.encode()).hexdigest()[:16]
         chief_tasks = [{'task_id': 'chief_1', 'type': 'planning', 'description': f'Plan research for: {objective[:50]}'}, {'task_id': 'chief_2', 'type': 'coordination', 'description': 'Coordinate worker agents'}, {'task_id': 'chief_3', 'type': 'synthesis', 'description': 'Synthesize findings'}]
         worker_tasks = [{'task_id': 'worker_1', 'type': 'search', 'description': 'Search academic sources'}, {'task_id': 'worker_2', 'type': 'crawl', 'description': 'Crawl web sources'}, {'task_id': 'worker_3', 'type': 'analyze', 'description': 'Analyze data'}, {'task_id': 'worker_4', 'type': 'extract', 'description': 'Extract key findings'}]
         dependencies = {'worker_3': ['worker_1', 'worker_2'], 'worker_4': ['worker_3'], 'chief_3': ['worker_4']}

@@ -580,19 +580,16 @@ class SecretVault:
 
         Returns:
             True on success, False on failure.
+        
+        Performance note:
+            Single-item encryption uses Python cryptography.hazmat (hardware AES-NI).
+            Rust batch encryption (via crypto_accelerate) is only beneficial for
+            >= 32 items - see put_batch() for batch operations.
         """
         plaintext = self._serialize(data)
-        if self._rust_available:
-            # Use async Rust wrapper for consistent async behavior
-            encrypted_list = await _rust_batch_encrypt_async(
-                self._password, self._salt, [plaintext.decode()]
-            )
-            if encrypted_list:
-                encrypted = encrypted_list[0]
-            else:
-                encrypted = self._encrypt_python(plaintext)
-        else:
-            encrypted = self._encrypt_python(plaintext)
+        # Single items: Use Python directly (hardware AES-NI, no FFI overhead)
+        # Batch items (>= 32): Use Rust via put_batch() for rayon parallelization
+        encrypted = self._encrypt_python(plaintext)
 
         async with self._lock:
             return self._lmdb_put(key, encrypted)
@@ -606,20 +603,18 @@ class SecretVault:
 
         Returns:
             Secret payload dict, or None if not found / decryption fails.
+        
+        Performance note:
+            Single-item decryption uses Python cryptography.hazmat (hardware AES-NI).
+            Rust batch decryption (via crypto_accelerate) is only beneficial for
+            >= 32 items - see get_batch() for batch operations.
         """
         encrypted = self._lmdb_get(key)
         if encrypted is None:
             return None
 
-        if self._rust_available:
-            # Use async Rust wrapper for consistent async behavior
-            decrypted_list = await _rust_batch_decrypt_async(
-                self._password, self._salt, [encrypted]
-            )
-            if decrypted_list and decrypted_list[0] is not None:
-                return self._deserialize(decrypted_list[0].encode('utf-8'))
-            # Fall through to Python if Rust failed
-
+        # Single items: Use Python directly (hardware AES-NI, no FFI overhead)
+        # Batch items (>= 32): Use Rust via get_batch() for rayon parallelization
         plaintext = self._decrypt_python(encrypted)
         if plaintext is None:
             return None

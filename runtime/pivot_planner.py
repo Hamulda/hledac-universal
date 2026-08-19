@@ -32,6 +32,7 @@ from compat.msgspec_gc_compat import Struct
 import msgspec.json as _json
 import math
 import re
+from utils._patterns import looks_like_domain
 import uuid
 from dataclasses import dataclass, field
 from typing import Any

@@ -68,6 +68,9 @@ except ImportError as _exc:
 if not _RUST_SCANNER_AVAILABLE:
     logger.warning(f'[HEIST-01] Rust StreamingIocScanner not available. mmap/bytes streaming scan disabled. Install: rebuild Rust extensions with `uv run maturin develop --release`. Import error: {_RUST_IMPORT_ERROR}')
 
+# Shared IOC patterns (imported to avoid duplication)
+from _core.rust_backend._ioc_patterns import IOC_LITERALS
+_uAe
 class IocStreamScanner:
     """Streaming IOC scanner for mmap'd files and raw byte buffers.
 
@@ -355,8 +358,7 @@ class IocStreamScanner:
 
         """
         return IocStreamScanner(patterns, labels)
-_IOC_LITERALS: list[str] = ['127.0.0.1', '0.0.0.0', '255.255.255.255', '192.168.', '10.0.', '172.16.', 'pastebin.com', 'github.com', 'raw.githubusercontent', 'mega.nz', 'mediafire.com', 'dropbox.com', 'da39a3ee', 'e3b0c44', '58845d3a', '@gmail.com', '@yahoo.com', '@hotmail.com', 'CVE-', 'CVE-202', 'CVE-201', '.ru', '.cn', '.tk', '.ml', '.ga', '.cf', '.gq', 'http://', 'https://', 'ftp://', 'sftp://', '.onion', 'ssh://', 'telnet://', 'rdp://']
-_ioc_scanner_instance: IocStreamScanner | None = None
+# Use shared IOC_LITERALS from _ioc_patterns
 _ioc_scanner_lock = asyncio.Lock()
 
 async def get_ioc_scanner() -> IocStreamScanner:
@@ -374,10 +376,10 @@ async def get_ioc_scanner() -> IocStreamScanner:
         return _ioc_scanner_instance
     async with _ioc_scanner_lock:
         if _ioc_scanner_instance is None:
-            scanner = IocStreamScanner(_IOC_LITERALS)
+            scanner = IocStreamScanner(IOC_LITERALS)
             _ioc_scanner_instance = scanner
             if scanner.is_available:
-                logger.info(f'[HEIST-01] Singleton IOC scanner initialized with {len(_IOC_LITERALS)} literal patterns, NEON Teddy SIMD enabled')
+                logger.info(f'[HEIST-01] Singleton IOC scanner initialized with {len(IOC_LITERALS)} literal patterns, NEON Teddy SIMD enabled')
             else:
                 logger.warning('[HEIST-01] Singleton IOC scanner initialized without Rust - SIMD scanning disabled')
         return _ioc_scanner_instance

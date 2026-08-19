@@ -17,6 +17,7 @@ import asyncio
 from hledac.universal.utils.asyncx import parallel
 import logging
 import re
+from utils._patterns import looks_like_domain as _looks_like_domain
 import time
 from dataclasses import dataclass
 import msgspec
@@ -330,28 +331,6 @@ def _extract_domain_from_query(query: str) -> str | None:
             if len(parts) >= 2 and len(parts[0]) <= 63:
                 return token
     return None
-
-def _looks_like_domain(value: str) -> bool:
-    """Return True if value looks like a domain name (not an IP, has TLD)."""
-    if _is_ip_like(value):
-        return False
-    if not value or len(value) > 253:
-        return False
-    if '.' not in value:
-        return False
-    parts = value.split('.')
-    if len(parts) < 2:
-        return False
-    tld = parts[-1]
-    if len(tld) < 1 or len(tld) > 63:
-        return False
-    if not re.match('^[a-z0-9.\\-_]+$', tld):
-        return False
-    return True
-
-def _is_wildcard_only(domain: str) -> bool:
-    """Return True if domain is a wildcard cert (e.g. '*.example.com')."""
-    return bool(_WILDCARD_ONLY_RE.match(domain))
 
 def _make_cache_key(domain: str) -> str:
     """Make a cache key for a domain using xxhash."""

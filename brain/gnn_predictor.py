@@ -16,10 +16,16 @@ import heapq
 import logging
 import time
 from collections import OrderedDict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import numpy as np
 from _core import aclose
 logger = logging.getLogger(__name__)
+
+# Type alias for MLX arrays (avoids runtime import at module level)
+MLXArray = Any  # Will be mlx.array at runtime when available
+if TYPE_CHECKING:
+    import mlx.core as _mlx
+
 
 # [GNN-3] Constants for ANE-GNN
 GNN_ACTIVATION_THRESHOLD: int = 100  # Use ANE for graphs >= 100 nodes
@@ -776,7 +782,7 @@ class GNNPredictor:
             pass
             self.scheduler.schedule(8, 'train_gnn', self, edges, features, labels, num_epochs)
 
-    def predict(self, node_ids: list[int], edges: list[tuple[int, int]]) -> Any:
+    def predict(self, node_ids: list[int], edges: list[tuple[int, int]]) -> MLXArray:
         """
         Predikce pravděpodobnosti hrany mezi každým párem v node_ids.
         Pro jednoduchost predikujeme skóre pro všechny možné páry mezi node_ids.
@@ -833,7 +839,7 @@ class GNNPredictor:
         pred = self.model(feat, adj)
         return pred
 
-    def get_graph_embedding(self) -> Any:
+    def get_graph_embedding(self) -> MLXArray:
         """
         Vrátí embedding celého grafu jako proxy (průměr embeddings uzlů).
         """

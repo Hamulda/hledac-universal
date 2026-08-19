@@ -1267,7 +1267,7 @@ class SynthesisRunner:
             logger.warning("[P2-1] Hermes3Engine init failed: %s", e)
         return self._hermes_engine
 
-    def _get_inference_pipeliner(self) -> Any:
+    def _get_inference_pipeliner(self) -> "InferencePipeliner | None":
         """
         P2-1b: Get or create InferencePipeliner for non-blocking submit + prompt overlap.
 

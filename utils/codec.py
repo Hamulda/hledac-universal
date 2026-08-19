@@ -204,6 +204,32 @@ def _ensure_rust_json() -> Any:
 
 
 # =============================================================================
+# E3: Rust zstd extension (lazy import, fail-soft)
+# =============================================================================
+_rust_zstd: Any = None
+_RUST_ZSTD_PROBED: bool = False
+
+
+def _ensure_rust_zstd() -> Any:
+    """Lazy-load Rust compress_zstd/decompress_zstd backend. Returns domain or None."""
+    global _rust_zstd, _RUST_ZSTD_PROBED
+    if _RUST_ZSTD_PROBED:
+        return _rust_zstd
+    _RUST_ZSTD_PROBED = True
+    try:
+        from hledac.universal._core.rust_backend import rust as _rust_backend
+
+        if _rust_backend.is_available:
+            compress_domain = _rust_backend.compress
+            if compress_domain is not None:
+                _rust_zstd = compress_domain
+                return _rust_zstd
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+# =============================================================================
 # Core API: encode / decode
 # =============================================================================
 
@@ -401,6 +427,9 @@ def encode_zstd(obj: Any, level: int = 3) -> bytes:
     """
     Encode + zstd-compress with 4-byte length prefix.
 
+    E3: Uses Rust compress_zstd (GIL-released) when available.
+    Falls back to compression.zstd (Python 3.14+) or zstandard package.
+
     Args:
         obj: JSON-serializable object.
         level: zstd compression level (1 fast — 22 max; default 3).
@@ -411,16 +440,30 @@ def encode_zstd(obj: Any, level: int = 3) -> bytes:
     Raises:
         RuntimeError: If zstd is not available.
     """
+    raw = encode(obj)
+    # E3: Try Rust zstd first (GIL-released, ~3-5× faster on M1)
+    rust_domain = _ensure_rust_zstd()
+    if rust_domain is not None:
+        try:
+            compressed = rust_domain.compress_zstd(raw, level)
+            return struct.pack("<I", len(raw)) + compressed
+        except Exception:  # noqa: BLE001
+            # Fall through to Python fallback
+            pass
+
+    # Python fallback: compression.zstd stdlib or zstandard package
     zstd_mod = _ensure_zstd()
     if zstd_mod is None:
         raise RuntimeError("zstd compression not available (compression.zstd from Python 3.14+ required)")
-    raw = encode(obj)
     return struct.pack("<I", len(raw)) + zstd_mod.compress(raw, level)
 
 
 def decode_zstd(data: bytes | memoryview | bytearray) -> Any:
     """
     Decode zstd-compressed JSON bytes (with length prefix).
+
+    E3: Uses Rust decompress_zstd (GIL-released) when available.
+    Falls back to compression.zstd (Python 3.14+) or zstandard package.
 
     Args:
         data: Payload from :func:`encode_zstd`.
@@ -432,32 +475,36 @@ def decode_zstd(data: bytes | memoryview | bytearray) -> Any:
         RuntimeError: If zstd is not available.
         ValueError: On length-prefix mismatch.
     """
-    zstd_mod = _ensure_zstd()
-    if zstd_mod is None:
-        raise RuntimeError("zstd compression not available (compression.zstd from Python 3.14+ required)")
     if isinstance(data, (memoryview, bytearray)):
         data = bytes(data)
     if len(data) < 4:
         raise ValueError("decode_zstd: payload too short for length prefix")
     raw_len = struct.unpack("<I", data[:4])[0]
-    raw = zstd_mod.decompress(data[4:])
+    compressed = data[4:]
+
+    # E3: Try Rust zstd first (GIL-released, ~3-5x faster on M1)
+    rust_domain = _ensure_rust_zstd()
+    if rust_domain is not None:
+        try:
+            raw = rust_domain.decompress_zstd(compressed)
+            if len(raw) != raw_len:
+                raise ValueError(
+                    f"decode_zstd: length mismatch (prefix={raw_len}, actual={len(raw)})"
+                )
+            return decode(raw)
+        except Exception:
+            pass
+
+    # Python fallback: compression.zstd stdlib or zstandard package
+    zstd_mod = _ensure_zstd()
+    if zstd_mod is None:
+        raise RuntimeError("zstd compression not available (compression.zstd from Python 3.14+ required)")
+    raw = zstd_mod.decompress(compressed)
     if len(raw) != raw_len:
         raise ValueError(
             f"decode_zstd: length mismatch (prefix={raw_len}, actual={len(raw)})"
-    )
+        )
     return decode(raw)
-
-
-# =============================================================================
-# STIX / large bundle encoding (Rust serde_json path)
-#
-# For STIX bundles > 1MB, Rust serde_json can be 2-5× faster than msgspec
-# due to SIMD-accelerated parsing. Fall back to msgspec → orjson if Rust
-# extension unavailable.
-# =============================================================================
-
-_STIX_LARGE_THRESHOLD: int = 1_048_576  # 1 MiB — switch to Rust for larger
-
 
 def encode_stix(obj: Any, *, pretty: bool = False, sort_keys: bool = True) -> bytes:
     """

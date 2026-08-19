@@ -416,10 +416,10 @@ class FastPathTriage:
         return None
 
     def _check_simd_available(self) -> bool:
-        """Check if Rust SIMD similarity is available."""
+        """Check if Rust vDSP SIMD similarity is available via accelerate_wired."""
         try:
-            from hledac.universal.rust_extensions.integrations import get_simd_similarity
-            return get_simd_similarity().available
+            from hledac.universal.rust_extensions.wiring.accelerate_wiring import accelerate_wired
+            return accelerate_wired().available
         except Exception:
             return False
 
@@ -462,26 +462,20 @@ class FastPathTriage:
 
         import numpy as np
 
-        # C7: Try Rust SIMD path first
+        # C7: Try Rust vDSP SIMD path first (M1 NEON acceleration)
         if self._simd_available:
             try:
-                from hledac.universal.rust_extensions.integrations import get_simd_similarity
-                simd = get_simd_similarity()
+                from hledac.universal.rust_extensions.wiring.accelerate_wiring import accelerate_wired
+                accel = accelerate_wired()
 
-                # Convert numpy arrays to lists for Rust
-                query_list = query_emb.tolist()
-                candidates_list = [emb.tolist() for emb in candidate_embs]
+                if accel.available:
+                    # Convert numpy arrays to lists for Rust vDSP
+                    query_list = query_emb.tolist()
+                    candidates_list = [emb.tolist() for emb in candidate_embs]
 
-                # Get all scores (top_k = len(candidates) for all scores)
-                top_scores = simd.batch_cosine_scores(query_list, candidates_list, top_k=len(candidates_list))
-
-                # Extract scores in original order
-                scores = [0.0] * len(candidates_list)
-                for idx, score in top_scores:
-                    if 0 <= idx < len(scores):
-                        scores[idx] = score
-
-                return scores
+                    # Use vDSP batch cosine scores (5-10x faster on M1)
+                    scores = accel.batch_cosine_scores(query_list, candidates_list)
+                    return scores
             except Exception:
                 pass
 

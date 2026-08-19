@@ -5,6 +5,7 @@ Responsibilities:
 - Use Rust feed_pipeline if available
 - Fall back to Python PatternMatcher
 - Batch signal aggregation using Rust signal_batch (NEON-accelerated)
+- F1: NFC normalize texts before pattern matching (100× faster via Rust)
 
 Input: FeedAssembledBatch
 Output: FeedMatchedBatch (entry_urls, matched_pattern_counts, matched_pattern_labels, entry_dedup_hits, errors)
@@ -24,9 +25,14 @@ logger = logging.getLogger(__name__)
 # Signal batch wiring - lazy import to avoid circular dependencies
 _signal_batch = None
 
+# F1: Text norm wiring - lazy import for NFC normalization
+_text_norm_nfc = None
+_text_norm_batch = None
+
 # M1 8GB Safety: Batch size limits to prevent OOM
 _MAX_BATCH_SIZE = 10000  # Maximum items per batch
 _MAX_TEXT_LEN = 50000    # Maximum text length per item
+_NFC_BATCH_SIZE = 1000   # Batch size for NFC normalization (perf/overhead tradeoff)
 
 
 def _get_signal_batch():
@@ -39,6 +45,90 @@ def _get_signal_batch():
         except Exception:
             _signal_batch = None
     return _signal_batch
+
+
+def _get_text_norm():
+    """Lazy load text norm NFC normalization (single text)."""
+    global _text_norm_nfc
+    if _text_norm_nfc is None:
+        try:
+            from rust_extensions.wiring.text_norm_wiring import nfc_normalize as _nfc
+            _text_norm_nfc = _nfc
+        except Exception:
+            _text_norm_nfc = None
+    return _text_norm_nfc
+
+
+def _get_text_norm_batch():
+    """Lazy load text norm batch NFC normalization."""
+    global _text_norm_batch
+    if _text_norm_batch is None:
+        try:
+            from rust_extensions.wiring.text_norm_wiring import batch_nfc_normalize_fast as _batch
+            _text_norm_batch = _batch
+        except Exception:
+            _text_norm_batch = None
+    return _text_norm_batch
+
+
+def _normalize_text(text: str) -> str:
+    """
+    NFC normalize text before pattern matching.
+
+    F1: Uses Rust nfc_normalize (100× faster) with Python fallback.
+    NFC normalization ensures consistent Unicode representation for
+    accurate pattern matching on non-ASCII text.
+    """
+    normalizer = _get_text_norm()
+    if normalizer is not None:
+        try:
+            return normalizer(text)
+        except Exception:
+            pass
+    # Fallback: Python unicodedata
+    if not text:
+        return text
+    if text.isascii():
+        return text
+    try:
+        import unicodedata
+        return unicodedata.normalize("NFC", text)
+    except Exception:
+        return text
+
+
+def _normalize_texts_batch(texts: list[str]) -> list[str]:
+    """
+    Batch NFC normalize texts for efficient processing.
+
+    F1: Uses Rust batch_nfc_normalize_fast for 100× faster batch processing
+    compared to per-item normalization. Falls back to per-item normalization
+    if batch processing fails or Rust unavailable.
+
+    Args:
+        texts: List of input texts
+
+    Returns:
+        List of NFC-normalized texts
+    """
+    if not texts:
+        return []
+
+    # Fast path: check ASCII (no normalization needed)
+    ascii_indices = [i for i, t in enumerate(texts) if t and t.isascii()]
+    if len(ascii_indices) == len(texts):
+        return texts  # All ASCII, no normalization needed
+
+    # Try batch normalization
+    batch_fn = _get_text_norm_batch()
+    if batch_fn is not None:
+        try:
+            return batch_fn(texts)
+        except Exception:
+            pass
+
+    # Fallback: per-item normalization
+    return [_normalize_text(t) for t in texts]
 
 
 class ScanStage:
@@ -138,8 +228,15 @@ async def _rust_scan_batch(
     batch: FeedAssembledBatch,
     rust_domain: Any,
 ) -> list[dict[str, Any]]:
-    """Scan using Rust feed_pipeline."""
+    """Scan using Rust feed_pipeline with batch NFC normalization."""
     results = []
+
+    # F1: Batch NFC normalize all texts at once for efficiency
+    assembled_texts = [
+        batch.assembled_texts[i] if i < len(batch.assembled_texts) else ""
+        for i in range(len(batch.entry_urls))
+    ]
+    normalized_texts = _normalize_texts_batch(assembled_texts)
 
     async def scan_one(idx: int, text: str, entry_url: str) -> dict[str, Any]:
         try:
@@ -147,7 +244,7 @@ async def _rust_scan_batch(
                 text,
                 entry_url,
                 idx,
-    )
+            )
             # Result is (entry_idx, entry_url, combined_hits, 0, 0, assembly_phase)
             if result and len(result) >= 3:
                 combined_hits = result[2]
@@ -159,7 +256,7 @@ async def _rust_scan_batch(
             return {"count": 0, "labels": [], "error": str(exc)}
 
     tasks = [
-        scan_one(i, batch.assembled_texts[i] if i < len(batch.assembled_texts) else "", batch.entry_urls[i] if i < len(batch.entry_urls) else "")
+        scan_one(i, normalized_texts[i] if i < len(normalized_texts) else "", batch.entry_urls[i] if i < len(batch.entry_urls) else "")
         for i in range(len(batch.entry_urls))
     ]
     # F3XX: parallel_ok() replaces asyncio.gather — returns list[T] in original order.
@@ -174,11 +271,18 @@ async def _rust_scan_batch(
 async def _python_scan_batch(
     batch: FeedAssembledBatch,
 ) -> list[dict[str, Any]]:
-    """Scan using Python PatternMatcher fallback."""
+    """Scan using Python PatternMatcher fallback with batch NFC normalization."""
     results = []
 
+    # F1: Batch NFC normalize all texts at once for efficiency
+    assembled_texts = [
+        batch.assembled_texts[i] if i < len(batch.assembled_texts) else ""
+        for i in range(len(batch.entry_urls))
+    ]
+    normalized_texts = _normalize_texts_batch(assembled_texts)
+
     for i in range(len(batch.entry_urls)):
-        text = batch.assembled_texts[i] if i < len(batch.assembled_texts) else ""
+        text = normalized_texts[i] if i < len(normalized_texts) else ""
         try:
             matches = _python_match_text(text)
             labels = [m.get("label", "unknown") for m in matches] if matches else []

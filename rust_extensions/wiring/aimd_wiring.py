@@ -198,15 +198,17 @@ def with_aimd_semaphore(
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            window, active = acquire_fetch_slot()
-
-            # Check if we're at capacity
-            if max_concurrent is not None and active > max_concurrent:
-                release_fetch_slot()
-                # Wait for capacity
-                while active >= max_concurrent:
-                    await asyncio.sleep(0.1)
+            # Wait for capacity if needed (check BEFORE acquiring)
+            if max_concurrent is not None:
+                while True:
                     _, active = acquire_fetch_slot()
+                    if active <= max_concurrent:
+                        break
+                    release_fetch_slot()
+                    await asyncio.sleep(0.05)
+
+            # Now acquire the slot
+            window, active = acquire_fetch_slot()
 
             try:
                 result = await func(*args, **kwargs)
@@ -215,6 +217,9 @@ def with_aimd_semaphore(
             except Exception:
                 record_fetch_failure()
                 raise
+            finally:
+                # Always release the slot
+                release_fetch_slot()
 
         return wrapper
 

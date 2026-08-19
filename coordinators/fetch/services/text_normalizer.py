@@ -9,7 +9,7 @@ Purpose:
     Ensures consistent text comparison across different Unicode representations.
 
 Architecture:
-    - Tier 0: Rust nfc_normalize (NEON SIMD, GIL released, 3× faster on M1)
+    - Tier 0: Rust nfc_normalize (NEON SIMD, GIL released, 100× faster on M1)
     - Tier 1: Rust batch_nfc_normalize_fast (parallel, for batch operations)
     - Fallback: Python unicodedata.normalize('NFC', text)
 
@@ -27,16 +27,26 @@ Usage:
 """
 from __future__ import annotations
 
-import unicodedata
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
-    from hledac.universal._core.rust_backend import rust_backend as _rust_backend
+    pass
 
 __all__ = [
     "TextNormalizerService",
     "get_text_normalizer",
+    "is_available",
 ]
+
+
+def is_available() -> bool:
+    """
+    Check if Rust NFC normalization is available.
+
+    Returns:
+        True if Rust text_norm functions are available, False otherwise.
+    """
+    return _get_rust_text_norm() is not None
 
 
 # =============================================================================
@@ -51,7 +61,7 @@ _BATCH_CHUNK_SIZE: int = 10_000
 
 
 # =============================================================================
-# Rust Fast-Path (Lazy Import)
+# Rust Fast-Path via Wiring Layer
 # =============================================================================
 
 # Module-level cache for Rust text normalization functions
@@ -62,14 +72,10 @@ _RUST_TEXT_NORM: tuple[
     "Callable[[list[str]], list[str]] | None",  # batch_nfc_normalize_fast
 ] | None = None
 
-# Type alias for better readability
-_NfcFunc = Callable[[str], str]
-_BatchNfcFunc = Callable[[list[str]], list[str]]
-
 
 def _get_rust_text_norm() -> tuple[object, object, object] | None:
     """
-    Lazy-load Rust text normalization functions.
+    Lazy-load Rust text normalization functions from wiring layer.
 
     Returns (nfc_normalize, batch_nfc_normalize, batch_nfc_normalize_fast)
     or None if Rust unavailable.
@@ -81,16 +87,17 @@ def _get_rust_text_norm() -> tuple[object, object, object] | None:
         return _RUST_TEXT_NORM
 
     try:
-        # R6: Centralized Rust access via _core.rust_backend
-        from hledac.universal._core.rust_backend import rust
-
-        nfc_normalize = rust.raw.nfc_normalize
-        batch_nfc_normalize = rust.raw.batch_nfc_normalize
-        batch_nfc_normalize_fast = rust.raw.batch_nfc_normalize_fast
+        # F1: Use centralized text_norm_wiring layer
+        from rust_extensions.wiring.text_norm_wiring import (
+            nfc_normalize as _nfc,
+            batch_nfc_normalize as _batch,
+            batch_nfc_normalize_fast as _batch_fast,
+            is_available as _available,
+        )
 
         # Verify at least nfc_normalize is available
-        if nfc_normalize is not None:
-            _RUST_TEXT_NORM = (nfc_normalize, batch_nfc_normalize, batch_nfc_normalize_fast)
+        if _available():
+            _RUST_TEXT_NORM = (_nfc, _batch, _batch_fast)
             return _RUST_TEXT_NORM
     except Exception:  # noqa: BLE001
         pass
@@ -125,6 +132,8 @@ def _python_nfc_normalize(text: str) -> str:
     if text.isascii():
         return text
     try:
+        import unicodedata
+
         return unicodedata.normalize("NFC", text)
     except Exception:  # noqa: BLE001
         return text

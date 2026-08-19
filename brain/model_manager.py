@@ -27,6 +27,10 @@ from contextlib import asynccontextmanager
 from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
+
+# Type alias for model instances - used for load_model return types
+ModelInstance = "DeepHermes3Engine | ModernBertAdapter | CoreMLEmbedder"
+
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
     from hledac.universal.brain.modernbert_adapter import ModernBertAdapter
@@ -208,7 +212,7 @@ class MlxcelHermesAdapter:
         self._initialized = False
 
     @staticmethod
-    def _default_config() -> Any:
+    def _default_config() -> dict[str, Any]:
         """Return a minimal config object matching DeepHermes3Engine expectations."""
         from dataclasses import dataclass
 
@@ -276,7 +280,7 @@ class MlxcelHermesAdapter:
             logger.debug('[MLXCEL ADAPTER] LoRA adapter not yet supported via IPC')
 
     @property
-    def stats(self) -> Any:
+    def stats(self) -> dict[str, Any] | None:
         """Return IPC telemetry from mlxcel client."""
         if self._client is not None:
             return self._client.stats
@@ -373,7 +377,7 @@ class ModelManager:
         from .modernbert_adapter import ModernBertModelAdapter
         return ModernBertModelAdapter()
 
-    def _create_gliner_engine(self) -> Any:
+    def _create_gliner_engine(self) -> "NEREngine":
         """Factory pro NEREngine s gliner-relex (NER + relation extraction)."""
         try:
             from gliner import GLiNER
@@ -504,7 +508,7 @@ class ModelManager:
             return False
 
     @asynccontextmanager
-    async def acquire_model_ctx(self, model_name: str) -> Any:
+    async def acquire_model_ctx(self, model_name: str) -> DeepHermes3Engine | ModernBertAdapter | CoreMLEmbedder | None:
         """
         Context manager that guarantees model unload on exit.
 
@@ -525,7 +529,7 @@ class ModelManager:
                 except RuntimeError:
                     _sync_eval_and_clear_cache()
 
-    async def with_model(self, model_name: ModelName) -> Any:
+    async def with_model(self, model_name: ModelName) -> DeepHermes3Engine | ModernBertAdapter | CoreMLEmbedder | None:
         """
         Vrátí async context manager pro daný model.
 
@@ -550,7 +554,7 @@ class ModelManager:
         except Exception:
             return 0
 
-    async def load_model(self, model_name: ModelName) -> Any:
+    async def load_model(self, model_name: ModelName) -> DeepHermes3Engine | ModernBertAdapter | CoreMLEmbedder | None:
         """
         Async načtení modelu do paměti.
 
@@ -597,7 +601,7 @@ class ModelManager:
             logger.info('[MODEL DOWNLOAD] Restoring HTTP worker pool to 25')
             await adjust_fetch_workers(25)
 
-    async def _load_model_async(self, model_name: str) -> Any:
+    async def _load_model_async(self, model_name: str) -> DeepHermes3Engine | ModernBertAdapter | CoreMLEmbedder | None:
         """Interní async implementace načtení modelu."""
         model_key = model_name.lower()
         decision = check_model_allowed(model_key)
@@ -630,7 +634,7 @@ class ModelManager:
             await adjust_fetch_workers(3)
             return model
 
-    async def _begin_model_unload(self, model_name: str, model_type: ModelType) -> Any | None:
+    async def _begin_model_unload(self, model_name: str, model_type: ModelType) -> DeepHermes3Engine | ModernBertAdapter | CoreMLEmbedder | None:
         """Start background unload if a model is currently loaded. Returns task or None."""
         if self._current_model is None:
             return None
@@ -661,7 +665,7 @@ class ModelManager:
         except Exception as e:
             logger.debug('[F203J] QuantizationSelector error (using defaults): %s', e)
 
-    async def _instantiate_model(self, model_name: str, model_type: ModelType) -> Any:
+    async def _instantiate_model(self, model_name: str, model_type: ModelType) -> DeepHermes3Engine | ModernBertAdapter | CoreMLEmbedder | None:
         """Factory instantiation + initialize/load. Raises RuntimeError on failure."""
         logger.info(f'[MODEL LOAD] {model_name} start')
         factory = self._model_factories[model_type]
@@ -849,7 +853,7 @@ class ModelManager:
                 self._mlx_embedder = None
         return self._ane_embedder is not None
 
-    async def get_embedder(self, resource_allocator: Any=None) -> Any | None:
+    async def get_embedder(self, resource_allocator: Any=None) -> CoreMLEmbedder | None:
         """
         Vrátí funkci pro embeddování, která se rozhodne podle dostupnosti ANE a zátěže.
 
@@ -958,7 +962,7 @@ class ModelManager:
             logger.warning(f'[GENERATE_REPORT] Failed to save: {e}')
         return final_report
 
-    async def with_phase(self, phase_name: str) -> Any:
+    async def with_phase(self, phase_name: str) -> DeepHermes3Engine | ModernBertAdapter | CoreMLEmbedder | None:
         """
         Context manager pro fázové workflow.
 
@@ -983,7 +987,7 @@ class ModelManager:
         logger.info(f'[PHASE START] {phase_name} -> using {model_name}')
 
         @asynccontextmanager
-        async def _phase_context() -> Any:
+        async def _phase_context() -> DeepHermes3Engine | ModernBertAdapter | CoreMLEmbedder | None:
             async with model_lifecycle(model_name) as model:
                 yield model
             logger.info(f'[PHASE END] {phase_name}')
@@ -1029,7 +1033,7 @@ class ModelManager:
             logger.debug(f'[EMBED] Failed to unload embedding model: {e}')
 
     @asynccontextmanager
-    async def embedding_lifecycle(self) -> Any:
+    async def embedding_lifecycle(self) -> ModernBertAdapter | CoreMLEmbedder | None:
         """
         Context manager for embedding model lifecycle.
 

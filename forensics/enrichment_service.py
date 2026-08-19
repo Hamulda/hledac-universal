@@ -40,6 +40,7 @@ import ssl
 import msgspec
 from compat.msgspec_gc_compat import Struct
 from pathlib import Path
+from utils._patterns import extract_file_path_from_payload as _extract_file_path_from_payload
 from typing import Any
 from hledac.universal.utils.asyncx import parallel
 from _core import aclose
@@ -134,36 +135,6 @@ def _run_ghost_analysis(file_path: str) -> dict[str, Any]:
         log.debug('Forensics ghost analysis failed for %s: %s', file_path, exc)
         return {}
 _SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif', '.webp', '.pdf', '.docx', '.doc', '.mp3', '.flac', '.ogg', '.m4a', '.wav', '.wma', '.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.zip', '.tar', '.gz', '.bz2', '.7z', '.rar'}
-
-def _extract_file_path_from_payload(payload_text: str | None) -> str | None:
-    """
-    Extract a local file path from payload_text.
-
-    Handles:
-    - Direct local paths: /Users/.../file.jpg
-    - file:// URLs: file:///tmp/file.pdf
-    - Paths with query strings stripped
-
-    Returns None if no suitable file path found or file doesn't exist.
-    """
-    if not payload_text:
-        return None
-    if payload_text.startswith('file://'):
-        path_str = payload_text[7:]
-        path_str = path_str.split('?')[0].split('#')[0]
-        path = Path(path_str)
-        if path.exists() and path.is_file():
-            return str(path)
-    path = Path(payload_text)
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    if path.exists() and path.is_file():
-        return str(path)
-    clean = payload_text.split('?')[0].split('#')[0]
-    if clean != payload_text:
-        return _extract_file_path_from_payload(clean)
-    return None
-
 def _file_has_forensics_support(file_path: str) -> bool:
     """Check if file extension is supported by forensics enrichment."""
     ext = Path(file_path).suffix.lower()

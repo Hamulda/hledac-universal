@@ -245,30 +245,60 @@ def _get_python_domain() -> _PythonWhisperDomain:
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy attribute access for domain switching."""
+    """Lazy attribute access for domain switching.
+    
+    Handles attribute errors gracefully to avoid infinite recursion
+    when the Rust module is not available.
+    """
     # These are accessed from rust.whisper.*
+    try:
+        rust_domain = _get_rust_domain()
+    except (ImportError, AttributeError):
+        rust_domain = None
+    
     if name == "is_available":
-        return _get_rust_domain().is_available() if _get_rust_domain() else _get_python_domain().is_available()
+        if rust_domain:
+            return rust_domain.is_available()
+        return _get_python_domain().is_available()
     elif name == "get_available_models":
-        return _get_rust_domain().get_available_models() if _get_rust_domain() else []
+        if rust_domain:
+            return rust_domain.get_available_models()
+        return []
     elif name == "get_cache_dir":
-        return _get_rust_domain().get_cache_dir() if _get_rust_domain() else _get_python_domain().get_cache_dir()
+        if rust_domain:
+            return rust_domain.get_cache_dir()
+        return _get_python_domain().get_cache_dir()
     elif name == "transcribe":
-        domain = _get_rust_domain() or _get_python_domain()
-        return domain.transcribe
+        if rust_domain:
+            return rust_domain.transcribe
+        return _get_python_domain().transcribe
     elif name == "transcribe_with_timestamps":
-        domain = _get_rust_domain() or _get_python_domain()
-        return domain.transcribe_with_timestamps
+        if rust_domain:
+            return rust_domain.transcribe_with_timestamps
+        return _get_python_domain().transcribe_with_timestamps
     elif name == "batch_transcribe":
-        domain = _get_rust_domain()
-        if domain:
-            return domain.batch_transcribe
-        raise AttributeError("batch_transcribe requires Rust whisper module")
+        if rust_domain:
+            return rust_domain.batch_transcribe
+        raise AttributeError(
+            "batch_transcribe requires Rust whisper module. "
+            "Build Rust extension with whisper feature."
+        )
     elif name == "verify_ane":
-        domain = _get_rust_domain()
-        if domain:
-            return domain.verify_ane
-        raise AttributeError("verify_ane requires Rust whisper module")
+        if rust_domain:
+            return rust_domain.verify_ane
+        raise AttributeError(
+            "verify_ane requires Rust whisper module. "
+            "Build Rust extension with whisper feature."
+        )
     elif name == "is_medium_available":
-        return _get_rust_domain().is_medium_available() if _get_rust_domain() else False
+        if rust_domain:
+            return rust_domain.is_medium_available()
+        return False
+    elif name == "extract_voiceprint":
+        if rust_domain:
+            return rust_domain._ext.extract_voiceprint
+        raise AttributeError(
+            "extract_voiceprint requires Rust whisper module. "
+            "Build Rust extension with whisper feature."
+        )
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

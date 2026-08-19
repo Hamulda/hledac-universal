@@ -369,9 +369,18 @@ class MultiLevelContextCache:
                 self._semantic_index.add(entry.embedding.reshape(1, -1).astype('float32'))
 
     def _generate_cache_id(self, content: Any) -> str:
-        """Generate unique cache ID for content."""
+        """Generate unique cache ID for content.
+        
+        E1: Uses hardware-accelerated SHA-256 (ARM NEON on Apple Silicon)
+        instead of MD5 for consistency with other crypto acceleration targets.
+        """
         content_str = str(content)
-        return hashlib.md5(content_str.encode()).hexdigest()[:16]
+        try:
+            from _core.rust_backend import rust
+            hashes = rust.crypto.batch_sha256_hw([content_str])
+            return hashes[0][:16] if hashes else hashlib.sha256(content_str.encode()).hexdigest()[:16]
+        except Exception:
+            return hashlib.sha256(content_str.encode()).hexdigest()[:16]
 
     def _estimate_size(self, content: Any) -> int:
         """Estimate size of content in bytes."""

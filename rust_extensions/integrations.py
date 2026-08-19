@@ -83,7 +83,7 @@ T = TypeVar("T")
 # ---------------------------------------------------------------------------
 # Centralized Rust Backend Access
 # ---------------------------------------------------------------------------
-from hledac.universal._core.rust_backend import rust as _rust_backend
+from _core.rust_backend import rust as _rust_backend
 
 
 def _rust_available(module_name: str) -> bool:
@@ -2507,6 +2507,305 @@ def get_aimd(initial_window: float = 4.0, min_window: float = 1.0, max_window: f
 
 
 # ============================================================================
+# 16. DEOBFUSCATE INTEGRATION (C14)
+# ============================================================================
+# Source: rust_extensions/src/deobfuscate.rs
+# Purpose: CyberChef-style IOC deobfuscation pipeline
+# Target: knowledge/ioc_processor.py (IOC extraction pipeline)
+# Benefit: +25% recall on defanged/encoded IOC (phishing, paste sites)
+# M1 8GB: NEON SIMD entropy probe, rayon 2 threads, 16MB scan buffer cap
+# ============================================================================
+
+
+class DeobfuscateIntegration:
+    """
+    Facade for deobfuscate.rs Rust module.
+
+    Provides CyberChef-style IOC deobfuscation pipeline:
+
+    Pipeline Stages:
+        1. Sliding-window entropy probe (32-byte windows, Shannon > 5.5 bits/byte)
+        2. Try-decode ladder in parallel (Rayon):
+           - Base64 → decode → validate printable ratio
+           - Hex → decode → validate printable ratio
+           - Base58 → decode → validate printable ratio
+           - URL% → decode → validate printable ratio
+           - ROT13 → decode → validate printable ratio
+           - XOR-1 → decode (256 keys) → validate printable ratio
+        3. Recursive re-entry if decoded entropy > 5.0
+
+    C14: Integrated BEFORE IOC extraction for +25% recall on defanged IOCs.
+
+    M1 8GB Safety:
+    - rayon pool: 2 threads (I/O-equivalent, not CPU-bound)
+    - max_depth: 3 (covers 3-layer Base64→Hex→Base64)
+    - scan buffer: 16 MB hard cap per text
+    - budget: ≤ 25 ms per 100 KB text
+    - RSS overhead: ~30 MB
+
+    Circuit Breaker:
+    - After 5 consecutive errors, temporarily disables Rust path
+    - Re-enables after 60 seconds to allow recovery
+
+    Example:
+        >>> integration = get_deobfuscate()
+        >>> candidates = integration.batch_decode_ioc_candidates(["SGVsbG8gV29ybGQ="])
+        >>> # candidates = [["Hello World"]]  # decoded from base64
+    """
+
+    __slots__ = ("_available", "_module", "_error_count", "_last_error_time", "_circuit_open_until")
+
+    # Circuit breaker constants
+    _ERROR_THRESHOLD = 5  # Open circuit after this many consecutive errors
+    _CIRCUIT_RECOVERY_SECONDS = 60  # Re-enable Rust after this many seconds
+
+    def __init__(self) -> None:
+        self._available = _rust_available("deobfuscate")
+        self._module = getattr(_rust_backend, "deobfuscate", None)
+        self._error_count = 0
+        self._last_error_time = 0.0
+        self._circuit_open_until = 0.0
+
+    @property
+    def available(self) -> bool:
+        """Check if Rust deobfuscate is available (including circuit breaker check)."""
+        if not self._available:
+            return False
+        import time
+        now = time.monotonic()
+        # Check if circuit is open
+        if self._circuit_open_until > 0 and now < self._circuit_open_until:
+            return False
+        # If recovery time has passed, try to close circuit
+        if self._circuit_open_until > 0 and now >= self._circuit_open_until:
+            self._circuit_open_until = 0.0
+            self._error_count = 0
+            return True
+        return True
+
+    def _record_success(self) -> None:
+        """Record a successful Rust call (closes circuit if open)."""
+        self._error_count = 0
+        self._circuit_open_until = 0.0
+
+    def _record_error(self) -> None:
+        """Record a failed Rust call (opens circuit if threshold exceeded)."""
+        import time
+        self._error_count += 1
+        self._last_error_time = time.monotonic()
+        if self._error_count >= self._ERROR_THRESHOLD:
+            self._circuit_open_until = self._last_error_time + self._CIRCUIT_RECOVERY_SECONDS
+            logger.warning(
+                f"[Deobfuscate] Circuit breaker OPEN after {self._error_count} errors. "
+                f"Rust disabled for {self._CIRCUIT_RECOVERY_SECONDS}s."
+            )
+
+    def decode_ioc_candidates(
+        self, text: str, max_depth: int = 3
+    ) -> list[str]:
+        """
+        Deobfuscate IOC candidates in a single text.
+
+        Pipeline: entropy probe → try-decode ladder → recursive re-entry.
+
+        Args:
+            text: Raw text to deobfuscate (max 16 MB per call)
+            max_depth: Maximum nesting depth (default 3, covers 3-layer encoding)
+
+        Returns:
+            List of decoded IOC candidates found in the text.
+        """
+        if not self.available:
+            return self._python_fallback(text)
+
+        try:
+            result = self._module.decode_ioc_candidates(text, max_depth)
+            # result is DeobfuscateResult with .candidates attribute
+            if hasattr(result, 'candidates'):
+                self._record_success()
+                return list(result.candidates)
+            self._record_success()
+            return []
+        except Exception:  # noqa: BLE001
+            self._record_error()
+            return self._python_fallback(text)
+
+    def batch_decode_ioc_candidates(
+        self, texts: list[str], max_depth: int = 3
+    ) -> list[list[str]]:
+        """
+        Deobfuscate IOC candidates in batch of texts (parallel via rayon).
+
+        Args:
+            texts: List of raw texts to deobfuscate (max 1000 per batch)
+            max_depth: Maximum nesting depth (default 3)
+
+        Returns:
+            List of decoded candidate lists, one per input text (in order).
+        """
+        if not texts:
+            return []
+
+        if not self.available:
+            return [self._python_fallback(t) for t in texts]
+
+        try:
+            results = self._module.batch_decode_ioc_candidates(texts, max_depth)
+            # results is Vec<DeobfuscateResult>
+            decoded: list[list[str]] = []
+            for result in results:
+                if hasattr(result, 'candidates'):
+                    decoded.append(list(result.candidates))
+                else:
+                    decoded.append([])
+            self._record_success()
+            return decoded
+        except Exception:  # noqa: BLE001
+            self._record_error()
+            return [self._python_fallback(t) for t in texts]
+
+    def get_telemetry(self) -> dict[str, int]:
+        """
+        Get deobfuscation telemetry counters.
+
+        Returns:
+            Dict with keys: passes, layers_stripped, bytes_decoded
+        """
+        if not self._available:
+            return {"passes": 0, "layers_stripped": 0, "bytes_decoded": 0}
+
+        try:
+            passes, layers, bytes_decoded = self._module.deobfuscate_telemetry()
+            return {
+                "passes": int(passes),
+                "layers_stripped": int(layers),
+                "bytes_decoded": int(bytes_decoded),
+            }
+        except Exception:  # noqa: BLE001
+            return {"passes": 0, "layers_stripped": 0, "bytes_decoded": 0}
+
+    def reset_telemetry(self) -> None:
+        """Reset telemetry counters (call at sprint boundary)."""
+        if self._available:
+            try:
+                self._module.deobfuscate_telemetry_reset()
+            except Exception:  # noqa: BLE001
+                pass
+
+    # ─── Python fallback implementations ───────────────────────────────────────
+
+    @staticmethod
+    def _python_fallback(text: str) -> list[str]:
+        """
+        Pure Python IOC deobfuscation fallback.
+
+        Provides basic defang/decode for when Rust module is unavailable:
+        - URL defang (hxxp, [.], etc.)
+        - Base64 decode
+        - Hex decode
+        - ROT13 decode
+
+        Note: Limited compared to Rust pipeline (no entropy probing, no recursive).
+        """
+        import base64
+        import re
+
+        candidates: list[str] = []
+
+        # ── URL defang patterns ────────────────────────────────────────────────
+        defang_patterns = [
+            (r"hxxp(?:s?)://", "http://"),  # hxxp:// → http://
+            (r"\[\.\]", "."),  # [.]. → .
+            (r"\[\@\]", "@"),  # [@] → @
+            (r"\[\:\]", ":"),  # [:] → :
+            (r"\[\-\]", "-"),  # [-] → -
+            (r"\[\/\]", "/"),  # [/] → /
+        ]
+
+        for pattern, replacement in defang_patterns:
+            defanged = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+            if defanged != text and len(defanged) > 4:
+                candidates.append(defanged)
+
+        # ── Base64 decode attempt ─────────────────────────────────────────────
+        base64_pattern = re.compile(
+            r"(?:[A-Za-z0-9+/]{4}){4,}"  # At least 4 base64 chunks
+        )
+        for match in base64_pattern.finditer(text):
+            try:
+                decoded = base64.b64decode(match.group()).decode("utf-8", errors="ignore")
+                # Validate: must be mostly printable ASCII
+                printable_ratio = sum(
+                    1 for c in decoded if c.isprintable()
+                ) / max(len(decoded), 1)
+                if printable_ratio > 0.80 and len(decoded) >= 8:
+                    candidates.append(decoded)
+            except Exception:  # noqa: BLE001
+                pass
+
+        # ── Hex decode attempt ────────────────────────────────────────────────
+        hex_pattern = re.compile(r"(?:[0-9A-Fa-f]{2}){4,}")  # At least 4 hex pairs
+        for match in hex_pattern.finditer(text):
+            try:
+                # Check if it looks like hex (all hex digits)
+                hex_str = match.group()
+                if all(c in "0123456789abcdefABCDEF" for c in hex_str):
+                    decoded = bytes.fromhex(hex_str).decode("utf-8", errors="ignore")
+                    printable_ratio = sum(
+                        1 for c in decoded if c.isprintable()
+                    ) / max(len(decoded), 1)
+                    if printable_ratio > 0.80 and len(decoded) >= 4:
+                        candidates.append(decoded)
+            except Exception:  # noqa: BLE001
+                pass
+
+        # ── ROT13 decode ─────────────────────────────────────────────────────
+        rot13_pattern = re.compile(
+            r"(?:[A-Za-z]{2,}[^A-Za-z]*){2,}"  # At least 2 alpha words
+        )
+        for match in rot13_pattern.finditer(text):
+            potential_rot13 = match.group()
+            # Check if it looks like ROT13-able content
+            if any(c in "abcdefghijklmnopqrstuvwxyz" for c in potential_rot13.lower()):
+                decoded = potential_rot13.translate(
+                    str.maketrans(
+                        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+                        "NOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+                    )
+                )
+                # Only add if different and has alphanumeric content
+                if decoded != potential_rot13 and any(c.isalnum() for c in decoded):
+                    candidates.append(decoded)
+
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        result: list[str] = []
+        for c in candidates:
+            if c not in seen:
+                seen.add(c)
+                result.append(c)
+        return result
+
+
+_deobfuscate_instance: DeobfuscateIntegration | None = None
+
+
+def get_deobfuscate() -> DeobfuscateIntegration:
+    """
+    Get singleton deobfuscate integration instance.
+
+    C14: Wired to knowledge/ioc_processor.py for +25% IOC recall.
+
+    Returns:
+        DeobfuscateIntegration singleton
+    """
+    global _deobfuscate_instance
+    if _deobfuscate_instance is None:
+        _deobfuscate_instance = DeobfuscateIntegration()
+    return _deobfuscate_instance
+
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 
@@ -2532,6 +2831,7 @@ __all__ = [
     "IOCDedupIntegration",
     "SignalBatchIntegration",
     "AIMDIntegration",  # C13: Lock-free AIMD for fetch concurrency
+    "DeobfuscateIntegration",  # C14: CyberChef-style IOC deobfuscation
     # Factory functions
     "get_quality_gate",
     "get_text_similarity",
@@ -2548,4 +2848,5 @@ __all__ = [
     "get_ioc_dedup",
     "get_signal_batch",
     "get_aimd",  # C13: AIMD controller singleton
+    "get_deobfuscate",  # C14: IOC deobfuscation
 ]

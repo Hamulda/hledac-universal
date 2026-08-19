@@ -22,17 +22,22 @@ API:
     extract_nonfeed_seeds_from_findings(findings, max_seeds=100) -> list[NonfeedSeed]
     compute_lane_unlocks(seeds) -> dict[str, list[str]]
 
+HEIST-01 Streaming API (Rust StreamingIocScanner):
+    extract_nonfeed_seeds_from_stream(findings, max_seeds=100) -> list[NonfeedSeed]
+    extract_nonfeed_seeds_from_file(path, max_seeds=100, chunk_size=65536) -> list[NonfeedSeed]
+
 Publisher domains (feed aggregators — excluded as seeds unless real indicators):
     krebsonsecurity.com, thehackernews.com, bleedingcomputer.com,
     welivesecurity.com, sans.edu, darkreading.com, zdnet.com,
     theregister.com, arstechnica.com, securityweek.com
 """
 import re
+from collections.abc import AsyncIterator
 
 import msgspec
 from compat.msgspec_gc_compat import Struct
 from _core import aclose
-__all__ = ['NonfeedSeed', 'SeedQuality', 'classify_seed_quality', 'extract_nonfeed_seeds_from_text', 'extract_nonfeed_seeds_from_findings', 'compute_lane_unlocks', 'PUBLISHER_DOMAINS']
+__all__ = ['NonfeedSeed', 'SeedQuality', 'classify_seed_quality', 'extract_nonfeed_seeds_from_text', 'extract_nonfeed_seeds_from_findings', 'compute_lane_unlocks', 'PUBLISHER_DOMAINS', 'extract_nonfeed_seeds_from_stream', 'extract_nonfeed_seeds_from_file']
 PUBLISHER_DOMAINS: frozenset[str] = frozenset(['krebsonsecurity.com', 'thehackernews.com', 'bleepingcomputer.com', 'welivesecurity.com', 'sans.edu', 'darkreading.com', 'zdnet.com', 'theregister.com', 'arstechnica.com', 'securityweek.com', 'infoworld.com', 'threatpost.com', 'darknet.com.au', 'journalofcloudsecurity.com'])
 'Publisher/aggregator domains filtered from seed extraction.'
 _GENERIC_DROP_DOMAINS: frozenset[str] = frozenset(['example.com', 'example.org', 'example.net', 'example.edu', 'localhost', 'test.com', 'testing.com', 'invalid.com'])
@@ -324,3 +329,139 @@ def compute_lane_unlocks(seeds: list[NonfeedSeed]) -> dict[str, list[str]]:
     hashes = [s for s in seeds if s.kind == 'hash']
     cves = [s for s in seeds if s.kind == 'cve']
     return {'ct': [s.value for s in domains], 'passive_dns': [s.value for s in domains + ips], 'wayback': [s.value for s in domains + urls], 'doh': [s.value for s in domains], 'graph': [s.value for s in hashes], 'cve': [s.value for s in cves]}
+
+
+# HEIST-01: Streaming IOC extraction via Rust StreamingIocScanner
+# ---------------------------------------------------------------------------
+
+def _ioc_hit_to_seed(hit: dict, source: str = 'stream') -> NonfeedSeed | None:
+    """Convert a streaming scanner hit to a NonfeedSeed.
+
+    Args:
+        hit: Dict with keys: start, end, pattern, label, value.
+        source: Source tag ('stream' or 'file').
+
+    Returns:
+        NonfeedSeed if the pattern is a recognized IOC kind, None otherwise.
+    """
+    pattern = hit.get('pattern', '')
+    value = hit.get('value', '')
+
+    if not value:
+        return None
+
+    # Map pattern to IOC kind
+    if pattern in ('127.0.0.1', '0.0.0.0', '255.255.255.255', '192.168.', '10.0.', '172.16.'):
+        kind = 'ip'
+        confidence = 0.95
+    elif '@' in value and '.' in value:
+        kind = 'email'
+        confidence = 0.85
+    elif value.startswith('CVE-') or pattern in ('CVE-', 'CVE-202', 'CVE-201'):
+        kind = 'cve'
+        confidence = 0.9
+    elif len(value) >= 32 and all(c in '0123456789abcdefABCDEF' for c in value):
+        # Likely a hash
+        kind = 'hash'
+        confidence = 0.8
+    elif value.startswith('http://') or value.startswith('https://') or '/' in value:
+        kind = 'url'
+        confidence = 0.9
+    elif '.' in value and not value.startswith('.'):
+        kind = 'domain'
+        confidence = 0.7
+    else:
+        kind = 'unknown'
+        confidence = 0.5
+
+    # Filter publisher domains
+    if kind == 'domain' and value.lower() in PUBLISHER_DOMAINS:
+        return None
+
+    return NonfeedSeed(
+        value=value,
+        kind=kind,
+        source=source,
+        confidence=confidence,
+        reason=f'{kind}_in_{source}',
+    )
+
+
+async def extract_nonfeed_seeds_from_stream(
+    findings: AsyncIterator[str],
+    *,
+    max_seeds: int = 100,
+) -> list[NonfeedSeed]:
+    """HEIST-01: Stream IOC extraction from async text iterator.
+
+    Uses the Rust StreamingIocScanner for high-performance IOC extraction
+    from large documents (50+ MB) with bounded memory.
+
+    Args:
+        findings: Async iterator yielding text chunks.
+        max_seeds: Hard cap on returned seeds (default 100).
+
+    Returns:
+        Deduplicated list of NonfeedSeed from streaming scan.
+        Bounded to max_seeds.
+    """
+    # Lazy import to avoid circular dependency and Rust extension check
+    from _core.rust_backend.ioc_stream_scan import stream_scan
+
+    seen: dict[tuple[str, str], NonfeedSeed] = {}
+
+    async def on_ioc(hit: dict) -> None:
+        """Callback for each IOC found by scanner."""
+        if len(seen) >= max_seeds:
+            return
+        seed = _ioc_hit_to_seed(hit, source='stream')
+        if seed is not None:
+            key = (seed.kind, seed.value)
+            if key not in seen:
+                seen[key] = seed
+
+    await stream_scan(findings, on_ioc=on_ioc)
+    return list(seen.values())[:max_seeds]
+
+
+async def extract_nonfeed_seeds_from_file(
+    path: str,
+    *,
+    max_seeds: int = 100,
+    chunk_size: int = 65536,
+) -> list[NonfeedSeed]:
+    """HEIST-01: Stream IOC extraction from a file using mmap.
+
+    Uses the Rust StreamingIocScanner with zero-copy mmap scanning
+    for true streaming performance on large files.
+
+    Args:
+        path: Path to file to scan.
+        max_seeds: Hard cap on returned seeds (default 100).
+        chunk_size: Chunk size for scan_iter_mmap (default 64KB).
+
+    Returns:
+        Deduplicated list of NonfeedSeed from file.
+        Bounded to max_seeds.
+    """
+    # Lazy import to avoid circular dependency and Rust extension check
+    from _core.rust_backend.ioc_stream_scan import stream_scan_file
+
+    seen: dict[tuple[str, str], NonfeedSeed] = {}
+
+    def on_ioc(hit: dict) -> None:
+        """Callback for each IOC found by scanner."""
+        if len(seen) >= max_seeds:
+            return
+        seed = _ioc_hit_to_seed(hit, source='file')
+        if seed is not None:
+            key = (seed.kind, seed.value)
+            if key not in seen:
+                seen[key] = seed
+
+    await stream_scan_file(
+        path,
+        on_ioc=on_ioc,
+        chunk_size=chunk_size,
+    )
+    return list(seen.values())[:max_seeds]

@@ -55,7 +55,7 @@ pub fn global_memory_bytes() -> u64 {
 fn bump_instance() {
     GLOBAL_INSTANCES.fetch_add(1, Ordering::Relaxed);
     // Sum of all tier capacities = fixed at startup
-    let total_cap: u64 = TIER_CAPACITIES.iter().map(|&c| c as u64));
+    let total_cap: u64 = TIER_CAPACITIES.iter().map(|\&c| c as u64).sum();
     GLOBAL_CAPACITY.store(total_cap, Ordering::Relaxed);
     // M1-06: Update static memory footprint for health endpoint
     let mem_bytes = compute_static_memory_bytes();

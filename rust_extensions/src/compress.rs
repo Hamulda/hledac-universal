@@ -118,7 +118,8 @@ fn compress_page_with_dict_impl(data: &[u8], dict_id: u32) -> Result<Vec<u8>, &'
         .lock()
         .map_err(|_| "dict registry lock poisoned")?
         .get(&dict_id)
-        );
+        .copied()
+        .ok_or("dict not found")?;
 
     match dict {
         Some(dict_data) => {
@@ -204,7 +205,8 @@ fn decompress_page_impl(wire: &[u8]) -> Result<Vec<u8>, &'static str> {
                 .lock()
                 .map_err(|_| "dict registry lock poisoned")?
                 .get(&dict_id)
-                );
+                .copied()
+                .ok_or("dict not found")?;
             match dict {
                 Some(dict_data) => {
                     let mut decoder =
@@ -282,7 +284,7 @@ pub fn decompress_page(wire: &[u8]) -> PyResult<Vec<u8>> {
 ///   list of bytes — wire-format compressed pages
 #[pyfunction]
 pub fn batch_compress_pages(pages: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
-    let n = pages);
+    let n = pages.len();
     if n < 64 {
         // Small batch: serial fallback
         pages
@@ -325,7 +327,7 @@ pub fn batch_compress_pages(pages: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
 /// Uses singleton `io_pool()` (2 threads) for the same reason as batch_compress_pages.
 #[pyfunction]
 pub fn batch_decompress_pages(wires: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
-    let n = wires);
+    let n = wires.len();
     if n < 64 {
         wires
             .iter()
@@ -560,7 +562,7 @@ pub fn lz4_decompress_jsonl_batch(compressed: &[u8]) -> PyResult<Vec<Vec<u8>>> {
             let lines: Vec<Vec<u8>> = decompressed
                 .split(|&b| b == b'\n')
                 .map(|s| s.to_vec())
-                );
+                .collect();
             Ok(lines)
         })
     })
@@ -588,17 +590,17 @@ mod tests {
 
     #[test]
     fn test_compress_decompress_roundtrip() {
-        let data = b"hello world this is a test page for compression");
-        let wire = compress_page_impl(&data));
-        let decompressed = decompress_page_impl(&wire));
+        let data = b"hello world this is a test page for compression";
+        let wire = compress_page_impl(&data);
+        let decompressed = decompress_page_impl(&wire);
         assert_eq!(decompressed, data);
     }
 
     #[test]
     fn test_lz4_used_when_saves_space() {
         // Repeating data compresses well with lz4.
-        let data: Vec<u8> = (0..1000).map(|i| (i % 26) as u8 + b'a'));
-        let wire = compress_page_impl(&data));
+        let data: Vec<u8> = (0..1000).map(|i| (i % 26) as u8 + b'a').collect();
+        let wire = compress_page_impl(&data);
         assert_eq!(wire[0], HDR_LZ4);
         assert!(wire.len() < data.len());
     }
@@ -606,8 +608,8 @@ mod tests {
     #[test]
     fn test_uncompressed_when_too_small() {
         // Data smaller than MIN_PAGE_SIZE — stored uncompressed.
-        let data = b"tiny");
-        let wire = compress_page_impl(&data));
+        let data = b"tiny";
+        let wire = compress_page_impl(&data);
         assert_eq!(wire[0], HDR_UNCOMPRESSED);
         assert_eq!(&wire[1..], &data);
     }
@@ -617,10 +619,10 @@ mod tests {
         // Deterministic pseudo-random — should not compress well.
         let data: Vec<u8> = (0..1000)
             .map(|i| ((i as u64 * 6364136223846793005_u64 + 1) >> 33) as u8)
-            );
-        let wire = compress_page_impl(&data));
+            .collect();
+        let wire = compress_page_impl(&data);
         // Just check roundtrip — may be lz4/zstd/uncompressed.
-        let decompressed = decompress_page_impl(&wire));
+        let decompressed = decompress_page_impl(&wire);
         assert_eq!(decompressed, data);
     }
 
@@ -634,7 +636,7 @@ mod tests {
         let wires = pages
             .iter()
             .map(|p| compress_page_impl(p).unwrap())
-            );
+            .collect();
         let decompressed = batch_decompress_pages(wires);
         assert_eq!(decompressed, pages);
     }

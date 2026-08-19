@@ -105,6 +105,11 @@ def recommend_pool_size(
         return 2  # Default
 
 
+# R12-NOTE: get_adaptive_mixed_threshold is now in _core.resource_governor
+# Import from there directly: from _core.resource_governor import get_adaptive_mixed_threshold
+# The redundant wrapper has been removed to avoid circular dependencies.
+
+
 # Check availability at import time for logging
 if _adaptive_scheduler.available:
     logger.info("[AdaptiveScheduler] Rust adaptive_scheduler.rs integration: ENABLED")

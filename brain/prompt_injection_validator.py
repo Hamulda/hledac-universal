@@ -678,7 +678,7 @@ _LLM_MAX_TOKENS: int = 3500  # Leave buffer for system prompt (Hermes3 context: 
 _LLM_TOKENIZER: Any = None  # Lazy-loaded tokenizer instance
 
 
-def _get_tokenizer() -> Any:
+def _get_tokenizer() -> Any | None:
     """
     Lazy-load the tokenizer for token counting (M1 8GB: load on demand).
 

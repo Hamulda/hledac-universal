@@ -27,8 +27,11 @@ dedup_bloom_wiring        - Distributed BloomFilter for URL queue dedup (B4)
 signal_batch_wiring       - NEON batch signal processing for feeds
 fulltext_index_wiring     - Tantivy BM25 fulltext search
 html_parse_wiring         - lol_html zero-copy HTML parsing
+text_norm_wiring          - NFC Unicode + diacritics (100× faster)
 serde_json_wiring         - Fast JSON serialization for STIX
 pipeline_compose_wiring   - Functor-style MAP/FILTER/FOLD pipeline composition
+deobfuscate_wiring       - CyberChef-style IOC deobfuscation (C14)
+aho_corasick_simd_wiring - NEON Aho-Corasick for IOC pattern set (D4)
 
 Usage:
 ------
@@ -196,6 +199,19 @@ from rust_extensions.wiring.html_parse_wiring import (
     is_available as html_parser_available,
 )
 
+# Text Norm (NFC Unicode + Diacritics)
+from rust_extensions.wiring.text_norm_wiring import (
+    nfc_normalize,
+    nfd_normalize,
+    strip_diacritics,
+    batch_nfc_normalize,
+    batch_nfc_normalize_fast,
+    batch_strip_diacritics,
+    batch_strip_diacritics_fast,
+    batch_nfc_and_strip_diacritics,
+    is_available as text_norm_available,
+)
+
 # Serde JSON
 from rust_extensions.wiring.serde_json_wiring import (
     dumps,
@@ -234,6 +250,32 @@ from rust_extensions.wiring.pipeline_compose_wiring import (
     run_stage_with_stats,
 )
 
+# Deobfuscate (C14: CyberChef-style IOC deobfuscation)
+from rust_extensions.wiring.deobfuscate_wiring import (
+    deobfuscate_wired,
+    decode_ioc_candidates,
+    batch_decode_ioc_candidates,
+    get_telemetry,
+    reset_telemetry,
+)
+
+# Aho-Corasick SIMD (D4: NEON Aho-Corasick for IOC pattern set)
+from rust_extensions.wiring.aho_corasick_simd_wiring import (
+    SIMDAhoCorasickMatcher,
+    SIMDMatch,
+    ScanStats,
+    get_simd_matcher,
+    reset_simd_matcher,
+    scan_text_simd,
+    scan_text_simd_async,
+    scan_batch_simd,
+    scan_batch_simd_async,
+    ioc_prefilter,
+    ioc_prefilter_batch,
+    AHO_CORASICK_SIMD_WIRING_STATUS,
+    simd_aho_available,
+)
+
 __all__ = [
     # Quality Gate
     "quality_gate_wired",
@@ -258,6 +300,7 @@ __all__ = [
     "get_mixed_threshold",
     "get_phase_config",
     "recommend_pool_size",
+    # R12-NOTE: get_adaptive_mixed_threshold is in _core.resource_governor
     # Accelerate
     "accelerate_wired",
     "cosine_similarity",
@@ -356,4 +399,24 @@ __all__ = [
     "batch_process_filter_map",
     "prep_batch_stats",
     "run_stage_with_stats",
+    # Deobfuscate (C14: CyberChef-style IOC deobfuscation)
+    "deobfuscate_wired",
+    "decode_ioc_candidates",
+    "batch_decode_ioc_candidates",
+    "get_telemetry",
+    "reset_telemetry",
+    # Aho-Corasick SIMD (D4: NEON Aho-Corasick for IOC pattern set)
+    "SIMDAhoCorasickMatcher",
+    "SIMDMatch",
+    "ScanStats",
+    "get_simd_matcher",
+    "reset_simd_matcher",
+    "scan_text_simd",
+    "scan_text_simd_async",
+    "scan_batch_simd",
+    "scan_batch_simd_async",
+    "ioc_prefilter",
+    "ioc_prefilter_batch",
+    "AHO_CORASICK_SIMD_WIRING_STATUS",
+    "simd_aho_available",
 ]

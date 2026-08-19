@@ -38,7 +38,10 @@ import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 if TYPE_CHECKING:
-    pass
+    from hledac.universal.utils.cache._sync import LRUCache, SlidingWindowKVCache
+
+# Type aliases for cache types (TYPE_CHECKING only)
+CacheT = LRUCache | SlidingWindowKVCache
 K = TypeVar('K')
 V = TypeVar('V')
 logger: Any = None
@@ -151,21 +154,21 @@ class UnifiedCacheManager:
         self._session_cache = session_cache_pool
         self._prefix_cache = prefix_cache
 
-    def _ensure_kv_cache(self) -> Any:
+    def _ensure_kv_cache(self) -> SlidingWindowKVCache:
         """Lazily create KV cache pool."""
         if self._kv_cache is None:
             from utils.cache._sync import SlidingWindowKVCache
             self._kv_cache = SlidingWindowKVCache(max_size=self._kv_cache_maxsize, window_tokens=self._kv_cache_window_tokens, decay_base=self._kv_cache_decay_base, token_interval_s=self._kv_cache_token_interval_s, thread_safe=False)
         return self._kv_cache
 
-    def _ensure_session_cache(self) -> Any:
+    def _ensure_session_cache(self) -> LRUCache:
         """Lazily create session cache pool."""
         if self._session_cache is None:
             from utils.cache._sync import LRUCache
             self._session_cache = LRUCache(max_size=self._session_cache_maxsize, thread_safe=False)
         return self._session_cache
 
-    def _ensure_prefix_cache(self) -> Any:
+    def _ensure_prefix_cache(self) -> LRUCache:
         """Lazily create prefix cache."""
         if self._prefix_cache is None:
             from utils.cache._sync import LRUCache
@@ -173,17 +176,17 @@ class UnifiedCacheManager:
         return self._prefix_cache
 
     @property
-    def kv_cache(self) -> Any:
+    def kv_cache(self) -> SlidingWindowKVCache:
         """Get KV cache pool (creates if needed)."""
         return self._ensure_kv_cache()
 
     @property
-    def session_cache(self) -> Any:
+    def session_cache(self) -> LRUCache:
         """Get session cache pool (creates if needed)."""
         return self._ensure_session_cache()
 
     @property
-    def prefix_cache(self) -> Any:
+    def prefix_cache(self) -> LRUCache:
         """Get prefix cache (creates if needed)."""
         return self._ensure_prefix_cache()
 

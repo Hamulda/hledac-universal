@@ -65,7 +65,7 @@ impl InternStore {
     }
 
     fn intern(&self, s: &str) -> &'static str {
-        let mut map = self.map);
+        let mut map = self.map.lock());
         if let Some(existing) = map.get(s) {
             return existing;
         }
@@ -331,7 +331,7 @@ impl StreamingIocScanner {
             pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
         })?;
 
-        let file_len = mmap);
+        let file_len = mmap.len();
         if offset >= file_len {
             return Ok(Vec::new());
         }
@@ -404,6 +404,35 @@ impl StreamingIocScanner {
         Ok(self.automaton.find_iter(&mmap).count())
     }
 
+
+    /// Scan a batch of text strings and return per-item hits.
+    ///
+    /// E4: Batch equivalent of `scan_bytes()` — feeds N strings through the
+    /// same Aho-Corasick automaton. Each string is scanned independently;
+    /// offsets are per-string (not global).
+    ///
+    /// # Performance
+    ///
+    /// - O(total_bytes) — single automaton pass over all strings
+    /// - M1 NEON Teddy SIMD applied per string via `find_iter`
+    /// - Bounded memory: each hit's value is UTF-8 lossy decoded (no binary bloat)
+    ///
+    /// # Args
+    ///
+    /// - `texts`: List of text strings to scan.
+    ///
+    /// # Returns
+    ///
+    /// Vec<Vec<StreamPatternHit>> — hits per input string, same order.
+    /// Empty input or empty strings return empty inner Vec.
+    fn scan_batch(&self, texts: Vec<String>) -> Vec<Vec<StreamPatternHit>> {
+        texts
+            .into_iter()
+            .map(|text| {
+                self._scan_slice(text.as_bytes())
+            })
+            .collect()
+    }
     // ---------------------------------------------------------------------------
     // MODERN-24: Arrow IPC Zero-Copy Export
     // ---------------------------------------------------------------------------
@@ -552,8 +581,8 @@ impl StreamingIocScanner {
             // Fallback: build with empty patterns (should never fail)
             AhoCorasick::new(&[] as &[&str]).unwrap()
         });
-        self.patterns);
-        self.interned_labels);
+        self.patterns.clear();
+        self.interned_labels.clear();
         // InternStore labels are leaked — process lifetime, intentional
     }
 }
@@ -583,7 +612,7 @@ impl StreamingIocScanner {
         _return_tuples: bool, // Placeholder for type dispatch
     ) -> PyResult<Vec<StreamPatternHit>> {
         let chunk_size = chunk_size.unwrap_or(65536).max(4096);
-        let file_len = mmap);
+        let file_len = mmap.len();
         
         if file_len == 0 {
             return Ok(Vec::new());
@@ -634,7 +663,7 @@ impl StreamingIocScanner {
         chunk_size: Option<usize>,
     ) -> Vec<(String, Option<String>, String, usize, usize)> {
         let chunk_size = chunk_size.unwrap_or(65536).max(4096);
-        let file_len = mmap);
+        let file_len = mmap.len();
         
         if file_len == 0 {
             return Vec::new();
@@ -762,6 +791,36 @@ mod tests {
         assert_eq!(hits[0].value, "malware");
         assert_eq!(hits[1].pattern, "phishing");
         assert_eq!(hits[1].value, "phishing");
+    #[test]
+    fn test_scan_batch() {
+        let scanner = make_scanner();
+        let texts = vec![
+            "malware detected in system".to_string(),
+            "phishing email from bank".to_string(),
+            "clean text nothing here".to_string(),
+        ];
+        let results = scanner.scan_batch(texts);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].len(), 1);
+        assert_eq!(results[0][0].pattern, "malware");
+        assert_eq!(results[1].len(), 1);
+        assert_eq!(results[1][0].pattern, "phishing");
+        assert_eq!(results[2].len(), 0);
+    }
+
+    #[test]
+    fn test_scan_batch_empty_strings() {
+        let scanner = make_scanner();
+        let texts = vec![
+            "malware".to_string(),
+            "".to_string(),
+            "phishing".to_string(),
+        ];
+        let results = scanner.scan_batch(texts);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].len(), 1);
+        assert_eq!(results[1].len(), 0);
+        assert_eq!(results[2].len(), 1);
     }
 
     #[test]

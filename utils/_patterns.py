@@ -32,6 +32,7 @@ import logging
 
 from collections.abc import Sequence
 from _core import aclose
+from pathlib import Path
 
 __all__ = [
     # Singleton
@@ -1958,3 +1959,400 @@ class CloseMethodDescriptor:
                     setattr(obj, initialized_attr, initialized_value)
 
         return close
+
+
+# ==============================================================================
+# IOC Pattern Helpers (F320-REFACTOR: Eliminace _looks_like_domain klonů)
+# ==============================================================================
+
+
+import re
+
+# Pre-compiled patterns for performance
+_IP_RE = re.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
+_DOMAIN_LABEL_RE = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$')
+
+
+def looks_like_domain(value: str) -> bool:
+    """
+    Check if value looks like a valid domain name.
+
+    Validates:
+    - Length constraints (max 253 chars total, 63 per label)
+    - IP address rejection
+    - Label format (alphanumeric, hyphens allowed but not at start/end)
+    - Must have at least one dot (TLD indicator)
+
+    This is the canonical implementation - use this instead of local duplicates.
+    """
+    if not value or len(value) > 253:
+        return False
+    if '.' not in value:
+        return False
+    # Reject IP addresses
+    if _IP_RE.match(value):
+        return False
+    # Check each label
+    parts = value.split('.')
+    if len(parts) < 2:
+        return False
+    for label in parts:
+        if not label or len(label) > 63:
+            return False
+        # Allow alphanumeric + hyphen, but not starting/ending with hyphen
+        if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$', label):
+            return False
+    return True
+
+
+def looks_like_ip(value: str) -> bool:
+    """Check if value looks like an IPv4 address."""
+    if not value:
+        return False
+    parts = value.split('.')
+    if len(parts) != 4:
+        return False
+    return all(part.isdigit() and 0 <= int(part) <= 255 for part in parts)
+
+
+# Update __all__ to include new functions
+__all__ = __all__ + ["looks_like_domain", "looks_like_ip"]
+
+
+# ==============================================================================
+# Terminal State Normalization (F208L - Canonical Implementation)
+# ==============================================================================
+
+# Non-terminal states that should be returned as-is
+NON_TERMINAL_STATES: frozenset[str | None] = frozenset([
+    'pending', 'running', 'not_attempted', 'missing', '', None
+])
+
+
+def normalize_terminal_state(outcome_or_dict: Any) -> str | None:
+    """
+    [F208L] Map an outcome dict to a canonical terminal state string.
+
+    Supported terminal states:
+      - success       : attempted=True, accepted_count > 0
+      - success_empty : attempted=True, raw_count > 0, accepted_count = 0
+      - empty         : attempted=True, raw_count = 0, accepted_count = 0
+      - attempted     : attempted=True, no other qualifier
+      - skipped       : skipped=True
+      - error         : error is not None and not empty string
+      - timeout       : timeout=True
+
+    Non-terminal states (return as-is for identity check):
+      - pending, running, not_attempted, missing, "", None
+
+    Canonical implementation - use this instead of local duplicates.
+    """
+    if outcome_or_dict is None:
+        return None
+    d: dict
+    if hasattr(outcome_or_dict, 'to_dict'):
+        d = outcome_or_dict.to_dict()
+    elif isinstance(outcome_or_dict, dict):
+        d = outcome_or_dict
+    else:
+        return None
+    raw_state = d.get('terminal_state')
+    if raw_state is not None and raw_state in NON_TERMINAL_STATES:
+        return raw_state
+    if d.get('skipped'):
+        return 'skipped'
+    if d.get('timeout'):
+        return 'timeout'
+    if d.get('error') is not None and d.get('error') != '':
+        return 'error'
+    if d.get('attempted'):
+        has_raw_count = 'raw_count' in d
+        raw_count = d.get('raw_count', 0)
+        accepted_count = d.get('accepted_count', 0)
+        if accepted_count > 0:
+            return 'success'
+        if has_raw_count and raw_count > 0 and accepted_count == 0:
+            return 'success_empty'
+        if has_raw_count and raw_count == 0 and accepted_count == 0:
+            return 'empty'
+        return 'attempted'
+    return None
+
+
+# Update __all__ to include new functions
+__all__ = __all__ + ["normalize_terminal_state", "NON_TERMINAL_STATES"]
+
+
+# ==============================================================================
+# File Path Extraction (from forensics + multimodal)
+# ==============================================================================
+
+def extract_file_path_from_payload(payload_text: str | None) -> str | None:
+    """
+    Extract a local file path from payload_text.
+
+    Handles:
+    - Direct local paths: /Users/.../file.jpg
+    - file:// URLs: file:///tmp/file.pdf
+    - Paths with query strings stripped
+
+    Returns None if no suitable file path found or file doesn't exist.
+    Canonical implementation - use this instead of local duplicates.
+    """
+    if not payload_text:
+        return None
+    if payload_text.startswith('file://'):
+        path_str = payload_text[7:]
+        path_str = path_str.split('?')[0].split('#')[0]
+        path = Path(path_str)
+        if path.exists() and path.is_file():
+            return str(path)
+    path = Path(payload_text)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if path.exists() and path.is_file():
+        return str(path)
+    clean = payload_text.split('?')[0].split('#')[0]
+    if clean != payload_text:
+        return extract_file_path_from_payload(clean)
+    return None
+
+
+# ==============================================================================
+# Mission Intent Inference (from acquisition_strategy_planner + lanes)
+# ==============================================================================
+
+# Regex patterns for mission intent detection
+_MISSION_CVE_RE = re.compile(r'\bCVE-\d{4}-\d{4,}\b', re.IGNORECASE)
+_MISSION_DOMAIN_OR_IP_RE = re.compile(
+    r'(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}|\d{1,3}(?:\.\d{1,3}){3}'
+)
+_MISSION_URL_RE = re.compile(r'(?:https?://|[a-zA-Z][a-zA-Z0-9+.-]*://)')
+_MISSION_WALLET_RE = re.compile(
+    r'(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}|0x[a-fA-F0-9]{40}|L[a-zA-HJ-NP-Z0-9]{32,34}|'
+    r'4[0-9AB][1-9A-HJ-NP-Za-km-z]{92}|X[1-9A-HJ-NP-Za-km-z]{95}|'
+    r'ripple:rvr?[a-zA-HJ-NP-Z0-9]{24,}|dust:qty[0-9a-f]{40}'
+)
+_MISSION_CRYPTO_HASH_RE = re.compile(
+    r'\b[0-9a-fA-F]{64}\b|\b[0-9a-fA-F]{80}\b|\b[0-9a-fA-F]{16}\b'
+)
+_EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
+
+
+def _has_crypto_indicator(query: str) -> bool:
+    """Check if query contains crypto wallet or hash patterns."""
+    return bool(_MISSION_WALLET_RE.search(query) or _MISSION_CRYPTO_HASH_RE.search(query))
+
+
+def infer_mission_intent(query: str) -> str:
+    """
+    F225A: Infer mission intent from query string.
+
+    Rules:
+      - CVE-* pattern          → cve_recon
+      - crypto wallet/hash     → wallet_recon
+      - email-like indicator   → person_recon
+      - domain/IP/URL         → domain_recon / infra_recon
+      - otherwise             → unknown (safe lanes only)
+
+    Returns a string constant from MissionIntent.
+    No network I/O, no model load. Deterministic.
+    Canonical implementation - use this instead of local duplicates.
+    """
+    # Note: MissionIntent enum must be imported by caller
+    if _MISSION_CVE_RE.search(query):
+        return 'cve_recon'
+    if _has_crypto_indicator(query):
+        return 'wallet_recon'
+    if re.match(r'\d{1,3}(?:\.\d{1,3}){3}$', query.strip()):
+        return 'infra_recon'
+    if _EMAIL_RE.search(query):
+        return 'person_recon'
+    if _MISSION_URL_RE.search(query):
+        return 'infra_recon'
+    if looks_like_domain(query):
+        return 'domain_recon'
+    return 'unknown'
+
+
+# ==============================================================================
+# CT Domain Extraction (from acquisition_strategy_planner + lanes)
+# ==============================================================================
+
+def extract_domain_from_ct_finding(finding: Any) -> str | None:
+    """
+    Extract domain from a CT CanonicalFinding (or dict-like) object.
+
+    Strategy:
+        1. Try payload_text: parse "domain: <value>" lines
+        2. Fallback: query field
+
+    Returns:
+        Normalized lowercase domain string, or None if not extractable.
+    Canonical implementation - use this instead of local duplicates.
+    """
+    payload: str | None = getattr(finding, 'payload_text', None)
+    if payload and isinstance(payload, str):
+        for line in payload.splitlines():
+            line = line.strip()
+            if line.startswith('domain:'):
+                domain = line[len('domain:'):].strip()
+                if domain:
+                    return domain.lower()
+        for line in payload.splitlines():
+            line = line.strip()
+            if line and (not line.startswith('#')) and ('.' in line):
+                if len(line) <= 253 and ' ' not in line and (line.startswith(('www.', 'http', '//')) is False):
+                    if re.match(r'^[a-z0-9.\-_]+$', line):
+                        return line.lower()
+    query: str = getattr(finding, 'query', '') or ''
+    if query:
+        domains = _MISSION_DOMAIN_OR_IP_RE.findall(query)
+        if domains:
+            for d in domains:
+                if d and '.' in d and (not looks_like_ip(d)):
+                    return d.lower()
+        if looks_like_domain(query.strip()):
+            return query.strip().lower()
+    return None
+
+
+def select_ct_domains_for_passivedns_pivot(
+    ct_candidate_findings: list, *, max_pivots: int = 5
+) -> list[str]:
+    """
+    Sprint R5: Extract deduplicated domains from CT-accepted CanonicalFinding
+    candidates for PassiveDNS one-hop pivot.
+
+    Pure function: deterministic output from deterministic input.
+    No network I/O, no side effects.
+
+    Args:
+        ct_candidate_findings: List of CanonicalFinding (or dict-like) objects
+            with source_type="ct" and payload_text containing domain lines.
+        max_pivots: Default cap on pivot domains (default=5, hard_max=10).
+
+    Returns:
+        Deduplicated list of domain strings (max 10), in first-seen order.
+
+    Canonical implementation - use this instead of local duplicates.
+    """
+    if not ct_candidate_findings:
+        return []
+    _hard_max = 10
+    _effective_max = min(max_pivots, _hard_max)
+    seen: dict[str, str] = {}
+    for finding in ct_candidate_findings:
+        domain = extract_domain_from_ct_finding(finding)
+        if domain and domain not in seen:
+            seen[domain] = domain
+            if len(seen) >= _effective_max:
+                break
+    return list(seen.values())
+
+
+# Update __all__ to include new functions
+__all__ = __all__ + [
+    "extract_file_path_from_payload",
+    "infer_mission_intent",
+    "extract_domain_from_ct_finding",
+    "select_ct_domains_for_passivedns_pivot",
+]
+
+
+# ==============================================================================
+# Nonfeed Mission Exit Reason (from acquisition_strategy_planner + lanes)
+# ==============================================================================
+
+class NonfeedMissionExitReason:
+    """F217B: Canonical mission exit reason values."""
+    MISSION_NOT_FINISHED = ''
+    DIAGNOSTIC_COMPLETE_NONFEED_ACCEPTED = 'diagnostic_complete_nonfeed_accepted'
+    DIAGNOSTIC_COMPLETE_NO_NONFEED_ACCEPTED = 'diagnostic_complete_no_nonfeed_accepted'
+    DIAGNOSTIC_BLOCKED_BY_MEMORY = 'diagnostic_blocked_by_memory'
+    MISSION_INCOMPLETE = 'mission_incomplete'
+
+
+def derive_exit_reason(
+    snapshot_any_accepted: bool,
+    snapshot_mission_active: bool,
+    memory_skipped_families: tuple[str, ...],
+    required_families: list[str],
+    family_status: dict[str, str],
+) -> str:
+    """
+    Derive the canonical mission exit reason.
+    
+    Canonical implementation - use this instead of local duplicates.
+    """
+    if not snapshot_mission_active:
+        return NonfeedMissionExitReason.MISSION_NOT_FINISHED
+    if snapshot_any_accepted:
+        return NonfeedMissionExitReason.DIAGNOSTIC_COMPLETE_NONFEED_ACCEPTED
+    if memory_skipped_families:
+        required_set = set(required_families)
+        skipped_set = set(memory_skipped_families)
+        if skipped_set.issuperset(required_set) or all(
+            (family_status.get(f, 'missing') == 'memory_skip' for f in required_families)
+        ):
+            return NonfeedMissionExitReason.DIAGNOSTIC_BLOCKED_BY_MEMORY
+    terminal_statuses = {'accepted', 'terminal', 'provider_failure', 'memory_skip'}
+    if all((family_status.get(f, 'missing') in terminal_statuses for f in required_families)):
+        return NonfeedMissionExitReason.DIAGNOSTIC_COMPLETE_NO_NONFEED_ACCEPTED
+    return NonfeedMissionExitReason.MISSION_INCOMPLETE
+
+
+# ==============================================================================
+# Secure Enclave Helper Path Resolution (from security/pq_crypto_swift + pq_export_encryption_swift)
+# ==============================================================================
+
+_REPO_ROOT: "Path | None" = None
+
+
+def _detect_repo_root() -> "Path | None":
+    """Detect repo root from this file's location."""
+    global _REPO_ROOT
+    if _REPO_ROOT is not None:
+        return _REPO_ROOT
+    try:
+        from pathlib import Path
+        self_path = Path(__file__).resolve()
+        repo_root = self_path.parent.parent.parent
+        if (repo_root / 'tools' / 'secure_enclave_helper').exists():
+            _REPO_ROOT = repo_root
+            return _REPO_ROOT
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def get_secure_enclave_helper_path() -> "Path | None":
+    """
+    Resolve secure-enclave-helper path with priority:
+      a) HLEDAC_SECURE_ENCLAVE_HELPER env var
+      b) repo-root/tools/secure_enclave_helper/.build/release/secure-enclave-helper
+      c) None (fail-soft)
+    
+    Canonical implementation - use this instead of local duplicates.
+    """
+    import os
+    from pathlib import Path
+    
+    env_path = os.environ.get('HLEDAC_SECURE_ENCLAVE_HELPER')
+    if env_path:
+        p = Path(env_path)
+        if p.exists() and p.is_file():
+            return p
+        return None
+    repo_root = _detect_repo_root()
+    if repo_root is not None:
+        repo_helper = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'
+        if repo_helper.exists() and repo_helper.is_file():
+            return repo_helper
+    return None
+
+
+# Update __all__ to include new functions
+__all__ = __all__ + [
+    "get_secure_enclave_helper_path",
+]

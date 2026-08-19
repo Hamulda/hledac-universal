@@ -83,34 +83,57 @@ _MAX_BODY_CACHE_BYTES: int = 2 * 1024 * 1024
 _DISKCACHE_DIR: Path = Path.home() / '.cache' / 'hledac' / 'conditional_cache'
 _zstd_module: Any = None
 _zstd_probe_done: bool = False
+# E3: Rust zstd domain for conditional cache
+_rust_zstd: Any = None
+
 
 def _resolve_enabled() -> bool:
     """Default ON. Opt-out: HLEDAC_CONDITIONAL_CACHE=0."""
     return ENV.get_bool('HLEDAC_CONDITIONAL_CACHE')
 
-def _probe_zstd() -> Any:
-    """Lazily probe for zstd. Falls back to zlib (stdlib) on absence.
 
-    zstd gives ~3x faster compression and similar ratio; for this
-    cache the bodies are small and the I/O is cold-path, so the
-    difference is invisible. We log once at first probe.
+def _probe_zstd() -> Any:
+    """Lazily probe for zstd. Tries Rust first, then Python stdlib/zstandard.
+
+    E3: Rust compress_zstd gives ~3-5x faster compression on M1 with GIL release.
+    Falls back to compression.zstd (Python 3.14+) or zstandard package.
     """
-    global _zstd_module, _zstd_probe_done
+    global _zstd_module, _zstd_probe_done, _rust_zstd
     if _zstd_probe_done:
         return _zstd_module
     _zstd_probe_done = True
+
+    # E3: Try Rust zstd first (GIL-released, ~3-5x faster on M1)
     try:
-        import zstandard as _zs
+        from hledac.universal._core.rust_backend import rust as _rust_backend
+        if _rust_backend.is_available:
+            _rust_zstd = _rust_backend.compress
+            if _rust_zstd is not None:
+                logger.debug('conditional_cache: using Rust zstd backend (E3)')
+                _zstd_module = 'rust'  # Sentinel value
+                return _zstd_module
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Python fallback: compression.zstd stdlib or zstandard package
+    try:
+        import compression.zstd as _zs
         _zstd_module = _zs
-        logger.debug('conditional_cache: using zstd backend')
-    except ImportError:  # zstandard not installed
-        _zstd_module = None
-        logger.debug('conditional_cache: zstd unavailable, using zlib fallback')
+        logger.debug('conditional_cache: using Python zstd stdlib backend')
+    except ImportError:
+        try:
+            import zstandard as _zs
+            _zstd_module = _zs
+            logger.debug('conditional_cache: using zstandard package backend')
+        except ImportError:  # zstandard not installed
+            _zstd_module = None
+            logger.debug('conditional_cache: zstd unavailable, using zlib fallback')
     return _zstd_module
 
 def _compress(body: bytes) -> bytes:
     """Compress body using zstd (preferred) or zlib (fallback).
 
+    E3: Uses Rust compress_zstd (GIL-released) when available.
     Marker byte in the first byte:
       0x00 = uncompressed passthrough (small bodies)
       0x01 = zstd
@@ -119,15 +142,30 @@ def _compress(body: bytes) -> bytes:
     if not body:
         return b'\x00'
     marker = b'\x00'
-    if _zstd_module is not None:
+
+    # E3: Try Rust zstd first (GIL-released, ~3-5x faster on M1)
+    if _rust_zstd is not None:
         try:
-            compressed = _zstd_module.ZstdCompressor().compress(body)
+            compressed = _rust_zstd.compress_zstd(body, level=3)
             if len(compressed) < len(body):
                 marker = b'\x01'
                 return marker + compressed
             return marker + body
-        except Exception as e:  # noqa: BLE001 — zstd.ZstdError (lazy import, not available at top)
-            logger.debug('conditional_cache: zstd compress failed: %s', e)
+        except Exception as e:  # noqa: BLE001
+            logger.debug('conditional_cache: Rust zstd compress failed: %s', e)
+
+    # Python fallback: compression.zstd or zstandard package
+    if _zstd_module not in (None, 'rust'):
+        try:
+            compressed = _zstd_module.compress(body)
+            if len(compressed) < len(body):
+                marker = b'\x01'
+                return marker + compressed
+            return marker + body
+        except Exception as e:  # noqa: BLE001
+            logger.debug('conditional_cache: Python zstd compress failed: %s', e)
+
+    # Final fallback: zlib
     try:
         compressed = zlib.compress(body, 6)
         if len(compressed) < len(body):
@@ -139,19 +177,33 @@ def _compress(body: bytes) -> bytes:
     return b'\x00' + body
 
 def _decompress(blob: bytes) -> bytes:
-    """Reverse of ``_compress``. Returns the raw body. Never raises."""
+    """Reverse of ``_compress``. Returns the raw body. Never raises.
+
+    E3: Uses Rust decompress_zstd (GIL-released) when available.
+    """
     if not blob:
         return b''
     if len(blob) < 1:
         return b''
     marker = blob[:1]
     payload = blob[1:]
-    if marker == b'\x01' and _zstd_module is not None:
+
+    # E3: Try Rust zstd first (GIL-released, ~3-5x faster on M1)
+    if marker == b'\x01' and _rust_zstd is not None:
         try:
-            return _zstd_module.ZstdDecompressor().decompress(payload)
-        except Exception as e:  # noqa: BLE001 — zstd.ZstdError (lazy import)
-            logger.debug('conditional_cache: zstd decompress failed: %s', e)
+            return _rust_zstd.decompress_zstd(payload)
+        except Exception as e:  # noqa: BLE001
+            logger.debug('conditional_cache: Rust zstd decompress failed: %s', e)
             return b''
+
+    # Python fallback: compression.zstd or zstandard package
+    if marker == b'\x01' and _zstd_module not in (None, 'rust'):
+        try:
+            return _zstd_module.decompress(payload)
+        except Exception as e:  # noqa: BLE001
+            logger.debug('conditional_cache: Python zstd decompress failed: %s', e)
+            return b''
+
     if marker == b'\x02':
         try:
             return zlib.decompress(payload)

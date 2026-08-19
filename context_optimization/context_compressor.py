@@ -22,6 +22,9 @@ from pathlib import Path
 from typing import Any
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+# E3: Use Rust zstd via msgspec_json (zero-copy, GIL-released)
+from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
+from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 import numpy as np
 from hledac.universal.utils.asyncx import parallel_ok
 from _core import aclose
@@ -194,8 +197,17 @@ class ContextCompressor:
             logger.warning(f'Could not save compressed storage: {e}')
 
     def _generate_context_id(self, content: str) -> str:
-        """Generate unique ID for content."""
-        return hashlib.md5(content.encode()).hexdigest()[:16]
+        """Generate unique ID for content.
+        
+        E1: Uses hardware-accelerated SHA-256 (ARM NEON on Apple Silicon)
+        instead of MD5 for consistency with other crypto acceleration targets.
+        """
+        try:
+            from _core.rust_backend import rust
+            hashes = rust.crypto.batch_sha256_hw([content])
+            return hashes[0][:16] if hashes else hashlib.sha256(content.encode()).hexdigest()[:16]
+        except Exception:
+            return hashlib.sha256(content.encode()).hexdigest()[:16]
 
     def _estimate_tokens(self, text: str) -> int:
         """Estimate token count (approximate)."""
@@ -245,10 +257,12 @@ class ContextCompressor:
         critical_content = self._extract_critical_content(full_context, self.max_critical_tokens)
         important_summary = self._create_summary(full_context, self.max_important_tokens)
         abstract_summary = self._create_abstract(full_context, self.max_abstract_tokens)
-        import lz4.frame
-        full_compressed = lz4.frame.compress(full_context.encode('utf-8'))
+        # E3: Use Rust zstd via _encode_zstd (zero-copy, GIL-released)
+        full_compressed = _encode_zstd(full_context.encode('utf-8'))
         compressed_tokens = self._estimate_tokens(critical_content) + self._estimate_tokens(important_summary) + self._estimate_tokens(abstract_summary)
         compression_ratio = compressed_tokens / max(original_tokens, 1)
+        # E3: Add codec metadata for zstd
+        metadata = {**metadata, 'codec': 'zstd'}
         compressed_ctx = CompressedContext(context_id=context_id, original_size=original_tokens, compressed_size=compressed_tokens, compression_ratio=compression_ratio, critical_content=critical_content, important_summary=important_summary, abstract_summary=abstract_summary, full_compressed=full_compressed, metadata=metadata, timestamp=time.time())
         self.compressed_storage[context_id] = compressed_ctx
         self._save_compressed_storage()
@@ -368,8 +382,12 @@ class ContextCompressor:
             content = compressed_ctx.abstract_summary
             source_level = CompressionLevel.ABSTRACT
         else:
-            import lz4.frame
-            content = lz4.frame.decompress(compressed_ctx.full_compressed).decode('utf-8')
+            # E3: Use Rust zstd via _decode_zstd (zero-copy, GIL-released)
+            try:
+                content = _decode_zstd(compressed_ctx.full_compressed).decode('utf-8')
+            except Exception:
+                # Fallback: assume uncompressed if decode fails
+                content = compressed_ctx.full_compressed.decode('utf-8') if isinstance(compressed_ctx.full_compressed, bytes) else str(compressed_ctx.full_compressed)
             source_level = None
         relevance_score = 0.0
         if query and self.embedder:

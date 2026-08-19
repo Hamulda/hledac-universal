@@ -385,6 +385,9 @@ class SprintContext(Struct, frozen=True):
     'F350M-R: ServiceContainer for rust.force and other sprint-scoped services.'
     cycle: CycleState = msgspec.field(default_factory=CycleState)
     'Per-cycle state — see CycleState docstring.'
+    # R13: LaneBalancer for adaptive lane balancing and feed dominance prevention
+    lane_balancer: Any = None
+    'LaneBalancer for feed dominance prevention and lane budget management.'
 
     @property
     def wall_clock_start(self) -> float:
@@ -419,7 +422,7 @@ class SprintContext(Struct, frozen=True):
         """
         return cls(config=config, query=query, result=result, ct_log_client=ct_log_client, graph_service=graph_service)
 
-    def with_services(self, *, duckdb_store: InitResult[Any] | None=None, graph_service: Any=None, hermes_engine: InitResult[Any] | None=None, governor: InitResult[Any] | None=None, evidence_log: InitResult[Any] | None=None, runner: Any=None, lifecycle: Any=None, container: Any=None) -> 'SprintContext':
+    def with_services(self, *, duckdb_store: InitResult[Any] | None=None, graph_service: Any=None, hermes_engine: InitResult[Any] | None=None, governor: InitResult[Any] | None=None, evidence_log: InitResult[Any] | None=None, runner: Any=None, lifecycle: Any=None, container: Any=None, lane_balancer: Any=None) -> 'SprintContext':
         """Return a new SprintContext with services initialized (type-safe).
 
         Each service field accepts an InitResult[T] (from fail-soft init) or None.
@@ -429,8 +432,11 @@ class SprintContext(Struct, frozen=True):
         rust.force resolution in AccelBackend.
         
         NOTE: duckdb_store param maps to duckdb_store_result field (SC-05 fix).
+
+        R13: lane_balancer wires LaneBalancer into SprintContext for adaptive lane
+        balancing and feed dominance prevention.
         """
-        return struct_replace(self, duckdb_store_result=duckdb_store, graph_service=graph_service, hermes_engine=hermes_engine, governor=governor, evidence_log=evidence_log, runner=runner, lifecycle=lifecycle, container=container)
+        return struct_replace(self, duckdb_store_result=duckdb_store, graph_service=graph_service, hermes_engine=hermes_engine, governor=governor, evidence_log=evidence_log, runner=runner, lifecycle=lifecycle, container=container, lane_balancer=lane_balancer)
 
     def with_cycle(self, **kwargs: Any) -> 'SprintContext':
         """Return a new SprintContext with updated per-cycle state.

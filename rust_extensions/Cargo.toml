@@ -372,6 +372,8 @@ advanced = [
     "signal_batch",
     "dedup_bloom",
     "graph_cache",
+    # HEIST-01: Streaming IOC scanner for large documents
+    "ioc_stream_scan",
 ]
 
 # ISSUE-AUDIT: anti_analysis feature added (2026-08-14)
@@ -409,8 +411,10 @@ deep_warc = []
 deep_unindexed = []
 
 # deep_ac: NEON SIMD Aho-Corasick — high-performance payload scanning
-# ZOMBIE: No Python callers (deep_ac feature is a dormant module)
-# Module kept as dormant asset; re-wire if high-performance payload scanning needed.
+# WIRING_COMPLETE: aho_corasick_simd.rs wired via rust_extensions/wiring/aho_corasick_simd_wiring.py
+# - knowledge/ioc_processor.py uses SIMD pre-filter
+# - pipeline/ioc_cooccurrence_miner.py uses SIMD pre-filter
+# - forensics/ioc_extractor.py (DEPRECATED) auto-inherits via ioc_processor
 # M1 8GB: ~1MB compile, batch parallel via rayon
 deep_ac = []
 
@@ -528,6 +532,8 @@ federated_qtable = [] # Referenced by advanced
 signal_batch = []     # Referenced by advanced
 dedup_bloom = []      # Referenced by advanced
 graph_cache = []      # Referenced by advanced
+# HEIST-01: Streaming IOC scanner for large documents
+ioc_stream_scan = []     # Referenced by advanced (feature-gated struct in ioc_stream_scan.rs)
 # SILICON-06: ane — Apple Neural Engine bindings (model registry, batch validation)
 # Includes coreml_ane for CoreML/ANE integration (model loading, ANE offload).
 # ANE uses dedicated memory — does not compete with main RAM budget.

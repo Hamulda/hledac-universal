@@ -208,7 +208,20 @@ class IntelligentResourceAllocator:
         self._prediction_model = None
         self._anomaly_detector = None
         self._scaler = None
-        self.m1_optimizations = {'cpu_efficiency_cores': 4, 'cpu_performance_cores': 4, 'memory_bandwidth': 68.25, 'unified_memory': True, 'neural_engine': True}
+        # MODERN-33: Use actual P/E core detection instead of hardcoded 4+4
+        try:
+            from _core.topology import get_topology
+            topo = get_topology()
+            self.m1_optimizations = {
+                'cpu_efficiency_cores': topo.e_cores,
+                'cpu_performance_cores': topo.p_cores,
+                'memory_bandwidth': 68.25,
+                'unified_memory': True,
+                'neural_engine': True
+            }
+        except Exception:
+            # Fail-safe: M1 Air default
+            self.m1_optimizations = {'cpu_efficiency_cores': 4, 'cpu_performance_cores': 4, 'memory_bandwidth': 68.25, 'unified_memory': True, 'neural_engine': True}
         self._capacity_sampler = _ResourceCapacitySampler()
         self.scale_up_threshnew = self.config.get('scaling', {}).get('scale_up_threshnew', 0.8)
         self.scale_down_threshnew = self.config.get('scaling', {}).get('scale_down_threshnew', 0.3)

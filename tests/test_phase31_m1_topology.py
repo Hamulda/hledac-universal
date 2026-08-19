@@ -354,3 +354,47 @@ W4: MODERN-26/27/28/29/30/31/32/33/34/35 Test Coverage:
 
 Total: 22 test cases
 """
+
+
+class TestCoreTopologyModule:
+    """Test the _core.topology module for P/E core detection."""
+
+    def test_topology_detection(self) -> None:
+        """Should detect P/E core topology correctly."""
+        from _core.topology import get_topology
+        
+        topo = get_topology()
+        assert topo.p_cores > 0, "Should have P-cores"
+        assert topo.e_cores >= 0, "Should report E-cores"
+        assert topo.total_logical == topo.p_cores + topo.e_cores, "Total should be P+E"
+
+    def test_topology_singleton(self) -> None:
+        """Topology should be cached (singleton)."""
+        from _core.topology import get_topology
+        
+        topo1 = get_topology()
+        topo2 = get_topology()
+        assert topo1 is topo2, "Should return same cached instance"
+
+    def test_p_e_core_indices(self) -> None:
+        """P/E core indices should be valid."""
+        from _core.topology import get_p_core_indices, get_e_core_indices
+        
+        p_indices = get_p_core_indices()
+        e_indices = get_e_core_indices()
+        
+        # Indices should not overlap
+        assert len(set(p_indices) & set(e_indices)) == 0, "P/E indices should not overlap"
+        # E-cores come first (perflevel0 = E-cores in macOS)
+        assert e_indices == tuple(range(len(e_indices))), "E-indices should start at 0"
+        # P-cores come after E-cores (perflevel1 = P-cores)
+        assert min(p_indices) > max(e_indices), "P-cores should have higher indices than E-cores"
+
+    def test_is_m1_helper(self) -> None:
+        """is_m1() should work."""
+        from _core.topology import is_m1
+        
+        # On arm64 Darwin, should be True
+        import os
+        if os.uname().machine.lower() == "arm64" and sys.platform == "darwin":
+            assert is_m1() == True, "Should detect Apple Silicon on arm64 Darwin"

@@ -25,6 +25,17 @@ import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 import re
+from utils._patterns import (
+    looks_like_domain as _looks_like_domain,
+    looks_like_ip as _looks_like_ip,
+    normalize_terminal_state,
+    NON_TERMINAL_STATES,
+    infer_mission_intent,
+    extract_domain_from_ct_finding as _extract_domain_from_ct_finding,
+    select_ct_domains_for_passivedns_pivot,
+    NonfeedMissionExitReason,
+    derive_exit_reason,
+)
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
@@ -688,63 +699,6 @@ def lane_is_terminal(outcome_or_dict) -> bool:
         return True
     return False
 TERMINAL_STATES = frozenset(['success', 'success_empty', 'empty', 'attempted', 'skipped', 'error', 'timeout'])
-NON_TERMINAL_STATES = frozenset(['pending', 'running', 'not_attempted', 'missing', '', None])
-
-def normalize_terminal_state(outcome_or_dict) -> str | None:
-    """[F208L] Map an outcome dict to a canonical terminal state string.
-
-    Supported terminal states:
-      - success       : attempted=True, accepted_count > 0
-      - success_empty : attempted=True, raw_count > 0, accepted_count = 0
-      - empty         : attempted=True, raw_count = 0, accepted_count = 0
-      - attempted     : attempted=True, no other qualifier
-      - skipped       : skipped=True
-      - error         : error is not None and not empty string
-      - timeout       : timeout=True
-
-    Non-terminal states (return as-is for identity check):
-      - pending
-      - running
-      - not_attempted
-      - missing
-      - ""  (empty string)
-      - None
-
-    accepted_count=0 alone does NOT make a lane non-terminal.
-    raw_count > 0 with accepted_count = 0 normalizes to success_empty.
-    raw_count = 0 with attempted = True normalizes to empty.
-    """
-    if outcome_or_dict is None:
-        return None
-    d: dict
-    if hasattr(outcome_or_dict, 'to_dict'):
-        d = outcome_or_dict.to_dict()
-    elif isinstance(outcome_or_dict, dict):
-        d = outcome_or_dict
-    else:
-        return None
-    raw_state = d.get('terminal_state')
-    if raw_state is not None and raw_state in NON_TERMINAL_STATES:
-        return raw_state
-    if d.get('skipped'):
-        return 'skipped'
-    if d.get('timeout'):
-        return 'timeout'
-    if d.get('error') is not None and d.get('error') != '':
-        return 'error'
-    if d.get('attempted'):
-        has_raw_count = 'raw_count' in d
-        raw_count = d.get('raw_count', 0)
-        accepted_count = d.get('accepted_count', 0)
-        if accepted_count > 0:
-            return 'success'
-        if has_raw_count and raw_count > 0 and (accepted_count == 0):
-            return 'success_empty'
-        if has_raw_count and raw_count == 0 and (accepted_count == 0):
-            return 'empty'
-        return 'attempted'
-    return None
-
 def terminality_report(required_lanes: tuple[MandatoryLaneTerminality, ...], observed_outcomes: tuple[dict, ...]) -> dict:
     """[F208A] Produce a terminality report comparing required vs observed lane states.
 
@@ -1465,14 +1419,6 @@ class NonfeedMissionSnapshot(Struct):
     def to_dict(self) -> dict:
         return {'nonfeed_mission_active': self.mission_active, 'nonfeed_acquisition_profile': self.acquisition_profile, 'nonfeed_required_families': list(self.required_families), 'nonfeed_optional_families': list(self.optional_families), 'nonfeed_family_status': dict(self.family_status), 'nonfeed_all_required_terminal': self.all_required_terminal, 'nonfeed_any_accepted': self.any_accepted, 'nonfeed_provider_failures': list(self.provider_failures), 'nonfeed_memory_skips': list(self.memory_skips), 'nonfeed_mission_exit_reason': self.mission_exit_reason}
 
-class NonfeedMissionExitReason:
-    """F217B: Canonical mission exit reason values."""
-    MISSION_NOT_FINISHED = ''
-    DIAGNOSTIC_COMPLETE_NONFEED_ACCEPTED = 'diagnostic_complete_nonfeed_accepted'
-    DIAGNOSTIC_COMPLETE_NO_NONFEED_ACCEPTED = 'diagnostic_complete_no_nonfeed_accepted'
-    DIAGNOSTIC_BLOCKED_BY_MEMORY = 'diagnostic_blocked_by_memory'
-    MISSION_INCOMPLETE = 'mission_incomplete'
-
 class NonfeedMissionController:
     """F217B: Canonical nonfeed mission contract for nonfeed_diagnostic profile.
 
@@ -1648,18 +1594,13 @@ class NonfeedMissionController:
     @classmethod
     def _derive_exit_reason(cls, snapshot: NonfeedMissionSnapshot, memory_skipped_families: tuple[str, ...]) -> str:
         """Derive the canonical mission exit reason."""
-        if not snapshot.mission_active:
-            return ''
-        if snapshot.any_accepted:
-            return NonfeedMissionExitReason.DIAGNOSTIC_COMPLETE_NONFEED_ACCEPTED
-        if memory_skipped_families:
-            required_set = set(snapshot.required_families)
-            skipped_set = set(memory_skipped_families)
-            if skipped_set.issuperset(required_set) or all((snapshot.family_status.get(f, 'missing') == 'memory_skip' for f in snapshot.required_families)):
-                return NonfeedMissionExitReason.DIAGNOSTIC_BLOCKED_BY_MEMORY
-        if snapshot.all_required_terminal:
-            return NonfeedMissionExitReason.DIAGNOSTIC_COMPLETE_NO_NONFEED_ACCEPTED
-        return NonfeedMissionExitReason.MISSION_INCOMPLETE
+        return derive_exit_reason(
+            snapshot.any_accepted,
+            snapshot.mission_active,
+            memory_skipped_families,
+            snapshot.required_families,
+            snapshot.family_status,
+        )
 _DOMAIN_OR_IP_RE = re.compile('(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}|\\d{1,3}(?:\\.\\d{1,3}){3}')
 _URL_RE = re.compile('(?:https?://|[a-zA-Z][a-zA-Z0-9+.-]*://)')
 _WALLET_RE = re.compile('(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}|0x[a-fA-F0-9]{40}|L[a-zA-HJ-NP-Z0-9]{32,34}|4[0-9AB][1-9A-HJ-NP-Za-km-z]{92}|X[1-9A-HJ-NP-Za-km-z]{95}|ripple:rvr?[a-zA-HJ-NP-Z0-9]{24,}|dust:qty[0-9a-f]{40}|')
@@ -1694,32 +1635,6 @@ class MissionTargetKind:
 _SAFE_LANES: tuple[str, ...] = (AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR)
 _SAFE_OPTIONAL: tuple[str, ...] = (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS)
 
-def infer_mission_intent(query: str) -> str:
-    """F225A: Infer mission intent from query string.
-
-    Rules:
-      - CVE-* pattern          → cve_recon
-      - crypto wallet/hash     → wallet_recon
-      - email-like indicator   → person_recon
-      - domain/IP/URL         → domain_recon / infra_recon
-      - otherwise             → unknown (safe lanes only)
-
-    Returns a string constant from MissionIntent.
-    No network I/O, no model load. Deterministic.
-    """
-    if _CVE_RE.search(query):
-        return MissionIntent.CVE_RECON
-    if _has_crypto_indicator(query):
-        return MissionIntent.WALLET_RECON
-    if re.match('\\d{1,3}(?:\\.\\d{1,3}){3}$', query.strip()):
-        return MissionIntent.INFRA_RECON
-    if re.search('[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}', query):
-        return MissionIntent.PERSON_RECON
-    if _URL_RE.search(query):
-        return MissionIntent.INFRA_RECON
-    if _has_domain_or_ip(query):
-        return MissionIntent.DOMAIN_RECON
-    return MissionIntent.UNKNOWN
 _MISSION_TARGET_KIND: dict[str, str] = {MissionIntent.DOMAIN_RECON: MissionTargetKind.DOMAIN, MissionIntent.ORG_RECON: MissionTargetKind.ORG, MissionIntent.PERSON_RECON: MissionTargetKind.EMAIL, MissionIntent.WALLET_RECON: MissionTargetKind.WALLET, MissionIntent.CVE_RECON: MissionTargetKind.CVE, MissionIntent.INFRA_RECON: MissionTargetKind.IP}
 
 def _mission_target_kind(intent: str) -> str:
@@ -2090,28 +2005,6 @@ def _extract_ips_from_query(query: str) -> list[str]:
     ip_pattern = re.compile('\\b\\d{1,3}(?:\\.\\d{1,3}){3}\\b')
     return ip_pattern.findall(query)
 
-def _looks_like_ip(s: str) -> bool:
-    """Return True if string looks like an IP address."""
-    return bool(re.match('\\d{1,3}(?:\\.\\d{1,3}){3}$', s))
-
-def _looks_like_domain(value: str) -> bool:
-    """Return True if value looks like a domain name (no IP, has TLD)."""
-    if not value or len(value) > 253:
-        return False
-    if '.' not in value:
-        return False
-    if re.match('^\\d{1,3}(?:\\.\\d{1,3}){3}$', value):
-        return False
-    parts = value.split('.')
-    if len(parts) < 2:
-        return False
-    tld = parts[-1]
-    if len(tld) < 1 or len(tld) > 63:
-        return False
-    if not re.match('^[a-z0-9.\\-_]+$', tld):
-        return False
-    return True
-
 def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
     """
     Shape a PassiveDNS query with fallback domain extraction from raw query.
@@ -2152,80 +2045,4 @@ def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContex
     logger.warning('passive_dns empty_query: seed_domains=%s, seed_ips=%s, raw_query=%r, extracted_ips=%r, extracted_domains=%r', len(seed_context.domains) if seed_context else 0, len(seed_context.ips) if seed_context else 0, base_query, ips, domains)
     return ''
 
-def select_ct_domains_for_passivedns_pivot(ct_candidate_findings: list, *, max_pivots: int=5) -> list[str]:
-    """
-    Sprint R5: Extract deduplicated domains from CT-accepted CanonicalFinding
-    candidates for PassiveDNS one-hop pivot.
 
-    Pure function: deterministic output from deterministic input.
-    No network I/O, no side effects.
-
-    Args:
-        ct_candidate_findings: List of CanonicalFinding (or dict-like) objects
-            with source_type="ct" and payload_text containing domain lines.
-        max_pivots: Default cap on pivot domains (default=5, hard_max=10).
-
-    Returns:
-        Deduplicated list of domain strings (max 10), in first-seen order.
-
-    Invariants:
-        - pivot depth = 1 (caller enforces)
-        - no recursive pivoting
-        - no network I/O
-        - no new queue framework
-        - deterministic: same input always yields same output
-
-    Domain extraction:
-        - Parse "domain: <value>" lines from payload_text
-        - Fallback: query field if no domain line found
-        - Skip: empty/whitespace-only domains
-        - Order: first-seen (dict.fromkeys preserves insertion order)
-    """
-    if not ct_candidate_findings:
-        return []
-    _hard_max = 10
-    _effective_max = min(max_pivots, _hard_max)
-    seen: dict[str, str] = {}
-    for finding in ct_candidate_findings:
-        domain = _extract_domain_from_ct_finding(finding)
-        if domain and domain not in seen:
-            seen[domain] = domain
-            if len(seen) >= _effective_max:
-                break
-    return list(seen.values())
-
-def _extract_domain_from_ct_finding(finding: Any) -> str | None:
-    """
-    Extract domain from a CT CanonicalFinding (or dict-like) object.
-
-    Strategy:
-        1. Try payload_text: parse "domain: <value>" lines
-        2. Fallback: query field
-
-    Returns:
-        Normalized lowercase domain string, or None if not extractable.
-    """
-    payload: str | None = getattr(finding, 'payload_text', None)
-    if payload and isinstance(payload, str):
-        for line in payload.splitlines():
-            line = line.strip()
-            if line.startswith('domain:'):
-                domain = line[len('domain:'):].strip()
-                if domain:
-                    return domain.lower()
-        for line in payload.splitlines():
-            line = line.strip()
-            if line and (not line.startswith('#')) and ('.' in line):
-                if len(line) <= 253 and ' ' not in line and (line.startswith(('www.', 'http', '//')) is False):
-                    if re.match('^[a-z0-9.\\-_]+$', line):
-                        return line.lower()
-    query: str = getattr(finding, 'query', '') or ''
-    if query:
-        domains = _DOMAIN_OR_IP_RE.findall(query)
-        if domains:
-            for d in domains:
-                if d and '.' in d and (not _looks_like_ip(d)):
-                    return d.lower()
-        if _looks_like_domain(query.strip()):
-            return query.strip().lower()
-    return None

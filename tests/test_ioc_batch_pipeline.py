@@ -225,3 +225,93 @@ class TestProcessHtmlPayloadBatch:
             result = await process_html_payload_batch([(SAMPLE_HTML, "https://test.com")])
             assert submitted_fn is _batch_sync_process_html
             assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# E2: Zero-copy batch IOC extraction tests
+# ---------------------------------------------------------------------------
+
+
+class TestBatchExtractIocsFast:
+    """Tests for batch_extract_iocs_fast (extract_iocs_zero_copy Rust path)."""
+
+    @pytest.mark.asyncio
+    async def test_empty_input_returns_empty_list(self):
+        """E2: Empty input → returns empty list."""
+        from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
+
+        result = await batch_extract_iocs_fast([])
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_single_text_extracts_iocs(self):
+        """E2: Single text extracts IOCs correctly."""
+        from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
+
+        texts = ["Server 8.8.8.8 and admin@example.com"]
+        result = await batch_extract_iocs_fast(texts)
+        assert len(result) == 1
+        # Check that IOCs are extracted
+        assert len(result[0]) >= 2  # At least IP and email
+        ioc_types = {ioc_type for _, ioc_type in result[0]}
+        assert "ipv4" in ioc_types
+        assert "email" in ioc_types
+
+    @pytest.mark.asyncio
+    async def test_multiple_texts_preserves_order(self):
+        """E2: Multiple texts return results in same order."""
+        from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
+
+        texts = [
+            "IP: 192.168.1.1",
+            "Email: test@example.com",
+            "Domain: example.org",
+        ]
+        result = await batch_extract_iocs_fast(texts)
+        assert len(result) == 3
+        # Check first text has IP
+        assert any(ioc_type == "ipv4" for _, ioc_type in result[0])
+        # Check second text has email
+        assert any(ioc_type == "email" for _, ioc_type in result[1])
+        # Check third text has domain
+        assert any(ioc_type == "domain" for _, ioc_type in result[2])
+
+    @pytest.mark.asyncio
+    async def test_returns_list_of_tuples(self):
+        """E2: Result is list of (value, type) tuples."""
+        from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
+
+        texts = ["CVE-2024-12345 vulnerability"]
+        result = await batch_extract_iocs_fast(texts)
+        assert len(result) == 1
+        assert len(result[0]) >= 1
+        value, ioc_type = result[0][0]
+        assert ioc_type == "cve"
+        assert value == "CVE-2024-12345"
+
+    @pytest.mark.asyncio
+    async def test_large_batch_handles_gracefully(self):
+        """E2: Large batch (1000 texts) is handled with memory guard."""
+        from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
+
+        # Create 1000 small texts
+        texts = [f"IP: 192.168.1.{i % 256}" for i in range(1000)]
+        result = await batch_extract_iocs_fast(texts)
+        # Should return results for all texts (or be capped at 1000)
+        assert len(result) == 1000
+
+    @pytest.mark.asyncio
+    async def test_hash_extraction_with_validation(self):
+        """E2: Hash extraction validates length correctly."""
+        from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
+
+        texts = [
+            "MD5: d41d8cd98f00b204e9800998ecf8427e",
+            "SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ]
+        result = await batch_extract_iocs_fast(texts)
+        assert len(result) == 2
+        # Check MD5 is extracted
+        assert any(ioc_type == "md5" for _, ioc_type in result[0])
+        # Check SHA256 is extracted
+        assert any(ioc_type == "sha256" for _, ioc_type in result[1])

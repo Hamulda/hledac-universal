@@ -183,6 +183,10 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
     "whisper",
     # NEXTGEN-02: Anti-analysis evasion engine (pre-fetch TLS/HTTP2 challenge detection)
     "anti_analysis",
+    # E3: Rust zstd for L2 cache hot paths (replaces lz4.frame)
+    "compress",
+    # E1: SHA-256 hardware acceleration (sha2 ARM NEON on Apple Silicon)
+    "crypto",
     # misc is used for _TlsDomain backward-compat and html property routing
     "misc",
     )
@@ -242,6 +246,7 @@ if TYPE_CHECKING:
     from .int_counter import _PythonIntCounterDomain, _RustIntCounterDomain
     from .simd import _PythonSimdDomain, _RustSimdDomain
     from .sprint_policies import _PythonSprintPoliciesDomain, _RustSprintPoliciesDomain
+    from .deobfuscate import _RustDeobfuscateDomain, _PythonDeobfuscateDomain, get_domain as _deobfuscate_get_domain
     from .pipeline_compose import PipelineComposeDomain, get_domain as _pipeline_compose_get_domain
     from .signal_batch import SignalBatchDomain, get_domain as _signal_batch_get_domain
     from .federated_qtable import FederatedQTableDomain, get_domain as _federated_qtable_get_domain
@@ -250,8 +255,10 @@ if TYPE_CHECKING:
     from .feed_pipeline import FeedPipelineDomain, get_domain as _feed_pipeline_get_domain
     from .swarm_dag import SwarmDAG, PythonFallbackSwarmDAG, get_domain as _swarm_dag_get_domain
     from .link_predictor import _LinkPredictorDomain
+    from .crypto import _RustCryptoDomain, _PythonCryptoDomain, get_domain as _crypto_get_domain
+    from .compress import _RustCompressDomain, _PythonCompressDomain, get_domain as _compress_get_domain
 
-from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+from _core.feature_flags import FeatureFlag, FeatureFlags
 from _core._util import aclose
 
 logger = logging.getLogger(__name__)
@@ -576,6 +583,10 @@ class AccelBackend:
         return self._get_domain("sprint_policies", _get_submodule("sprint_policies").get_sprint_policies_domain)
 
     @property
+    def deobfuscate(self) -> "_RustDeobfuscateDomain | _PythonDeobfuscateDomain":
+        return self._get_domain("deobfuscate", _deobfuscate_get_domain)
+
+    @property
     def pipeline_compose(self) -> PipelineComposeDomain | None:
         """Rust-backed pipeline operators (MAP/FILTER/FOLD/COUNT).
 
@@ -672,6 +683,35 @@ class AccelBackend:
         return _get_submodule("link_predictor").get_link_predictor_domain(
             self._ensure_probe().ext
     )
+
+    # E1: SHA-256 hardware acceleration domain (sha2 ARM NEON on Apple Silicon)
+    @property
+    def crypto(self) -> Any:
+        """E1: SHA-256 hardware acceleration domain.
+
+        Provides:
+        - batch_sha256_hw: Hardware-accelerated batch SHA-256
+        - batch_encrypt_aes_gcm: Batch AES-256-GCM encryption
+        - batch_decrypt_aes_gcm: Batch AES-256-GCM decryption
+
+        Uses hledac_rust_extensions.crypto_accelerate module with ARM NEON SHA-256.
+        Falls back to Python hashlib when Rust is unavailable.
+        """
+        return self._get_domain("crypto", _crypto_get_domain)
+
+    # E3: Rust zstd for L2 cache hot paths
+    @property
+    def compress(self) -> "_RustCompressDomain | _PythonCompressDomain":
+        """E3: Rust zstd compression domain.
+
+        Provides:
+        - compress_zstd/decompress_zstd: Pure zstd with asyncio.to_thread bridge
+        - 3-5× faster than lz4.frame on M1 for L2 cache hot paths
+
+        Uses hledac_rust_extensions.compress_zstd/decompress_zstd (GIL-released).
+        Falls back to compression.zstd (Python 3.14+) or zstandard package.
+        """
+        return self._get_domain("compress", _compress_get_domain)
 
     # -------------------------------------------------------------------------
     # Internal
@@ -1215,6 +1255,27 @@ class _RustCompatShim:
     @property
     def lsh(self) -> Any:
         return self._accel.lsh
+
+    # E1: SHA-256 hardware acceleration domain
+    @property
+    def crypto(self) -> Any:
+        """E1: SHA-256 hardware acceleration domain.
+        
+        Provides:
+        - batch_sha256_hw: Hardware-accelerated batch SHA-256 (sync wrapper)
+        - batch_encrypt_aes_gcm: Batch AES-256-GCM encryption
+        - batch_decrypt_aes_gcm: Batch AES-256-GCM decryption
+        
+        Uses hledac_rust_extensions.crypto_accelerate module with ARM NEON SHA-256.
+        Falls back to Python hashlib when Rust is unavailable.
+        """
+        return self._accel.crypto
+
+    # E3: Rust zstd for L2 cache hot paths
+    @property
+    def compress(self) -> Any:
+        """E3: Rust zstd compression domain (3-5× faster than lz4.frame on M1)."""
+        return self._accel.compress
 
     # ISSUE-026: Text similarity trigram Jaccard clustering
     @property

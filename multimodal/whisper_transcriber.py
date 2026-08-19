@@ -545,13 +545,20 @@ class TranscriptionRouter:
         if self._rust_whisper_available:
             direct_result = await self._transcribe_whisper_direct(
                 source_path, language, model_size
-    )
+            )
             if direct_result is not None and direct_result.text:
-                # Ensure engine type is RUST_WHISPER
-                return msgspec.structs.replace(
-                    direct_result,
+                # Create new TranscriptionResult with correct engine type (frozen struct)
+                return TranscriptionResult(
+                    text=direct_result.text,
+                    language=direct_result.language,
+                    duration_s=direct_result.duration_s,
+                    confidence=direct_result.confidence,
+                    segments=direct_result.segments,
                     engine=TranscriptionEngine.RUST_WHISPER,
-    )
+                    engine_detail=direct_result.engine_detail,
+                    iocs_extracted=direct_result.iocs_extracted,
+                    iocs=direct_result.iocs,
+                )
             # Rust whisper failed, continue to subprocess fallback
 
         # ── ADVERSARY-001: Sandboxed subprocess via MediaSandboxCoordinator ────
@@ -923,8 +930,15 @@ async def _extract_iocs_from_text_static(
         from hledac.universal.rust.ioc import extract_iocs_flat
         iocs = extract_iocs_flat(result.text)
         ioc_strings = [str(ioc) for ioc in iocs]
-        return msgspec.structs.replace(
-            result,
+        # Create new TranscriptionResult with IOC data (frozen struct requires new instance)
+        return TranscriptionResult(
+            text=result.text,
+            language=result.language,
+            duration_s=result.duration_s,
+            confidence=result.confidence,
+            segments=result.segments,
+            engine=result.engine,
+            engine_detail=result.engine_detail,
             iocs_extracted=len(ioc_strings),
             iocs=ioc_strings,
         )

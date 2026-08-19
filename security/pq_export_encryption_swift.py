@@ -43,37 +43,7 @@ HELPER_NOT_EXECUTABLE = 'HELPER_NOT_EXECUTABLE'
 HELPER_TIMEOUT = 'HELPER_TIMEOUT'
 HELPER_BAD_JSON = 'HELPER_BAD_JSON'
 HELPER_NONZERO_EXIT = 'HELPER_NONZERO_EXIT'
-_REPO_ROOT: Path | None = None
 _STATUS_CACHE_TTL_SECONDS = 30.0
-
-def _detect_repo_root() -> Path | None:
-    """Detect repo root from this file's location."""
-    global _REPO_ROOT
-    if _REPO_ROOT is not None:
-        return _REPO_ROOT
-    try:
-        self_path = Path(__file__).resolve()
-        repo_root = self_path.parent.parent
-        if (repo_root / 'tools' / 'secure_enclave_helper').exists():
-            _REPO_ROOT = repo_root
-            return _REPO_ROOT
-    except Exception:  # noqa: BLE001
-        pass
-    return None
-
-def get_secure_enclave_helper_path() -> Path | None:
-    """
-    Resolve secure-enclave-helper path with priority:
-      a) HLEDAC_SECURE_ENCLAVE_HELPER env var
-      b) repo-root/tools/secure_enclave_helper/.build/release/secure-enclave-helper
-      c) None (fail-soft)
-    """
-    env_path = os.environ.get('HLEDAC_SECURE_ENCLAVE_HELPER')
-    if env_path:
-        p = Path(env_path)
-        if p.exists() and p.is_file():
-            return p
-        return None
     repo_root = _detect_repo_root()
     if repo_root is not None:
         repo_helper = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'

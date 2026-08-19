@@ -48,6 +48,10 @@ _IMPORT_DISPATCH: dict[str, tuple[str, tuple[str, ...]] | tuple[str, str]] = {
     # R4: Unified HTTP Transport
     'HttpTransport': ('.http_client', 'HttpTransport'),
     'HttpResult': ('.http_client', 'HttpResult'),
+    # R15: Per-host rate limiting (Rust primary, Python fallback)
+    'check_rate_limit': ('.rate_limiter', 'check_rate_limit'),
+    'get_rate_limiter_stats': ('.rate_limiter', 'get_rate_limiter_stats'),
+    'RateLimiter': ('.rate_limiter', 'RateLimiter'),
     'HttpTransportConfig': ('.http_client', 'HttpTransportConfig'),
     'Profile': ('.http_client', 'Profile'),
     'QoS': ('.http_client', 'QoS'),

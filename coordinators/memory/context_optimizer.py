@@ -32,6 +32,7 @@ from hledac.universal.coordinators.memory._core import (
     ResearchPhase,
     )
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
+from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 from _core import aclose
 
 logger = logging.getLogger(__name__)
@@ -201,23 +202,20 @@ class ContextOptimizationManager:
         compression_level: int = 3,
     ) -> CompressedContext:
         """
-        Compress context using LZ4.
+        Compress context using Rust zstd (E3: replaces lz4.frame).
 
         Args:
             context_id: Unique identifier
             content: Content to compress
-            compression_level: LZ4 compression level
+            compression_level: zstd compression level (1-22, default 3)
 
         Returns:
             CompressedContext object
         """
         try:
-            import lz4.frame
+            # E3: Use Rust zstd via _encode_zstd (zero-copy, GIL-released)
             original_size = len(content.encode('utf-8'))
-            compressed = lz4.frame.compress(
-                content.encode('utf-8'),
-                compression_level=compression_level,
-    )
+            compressed = _encode_zstd(content.encode('utf-8'), level=compression_level)
             compressed_size = len(compressed)
             words = content.split()
             critical = ' '.join(words[:50]) if len(words) > 50 else content
@@ -232,13 +230,13 @@ class ContextOptimizationManager:
                 important_summary=important,
                 abstract_summary=abstract,
                 full_compressed=compressed,
-                metadata={'compression_level': compression_level},
+                metadata={'compression_level': compression_level, 'codec': 'zstd'},
                 timestamp=time.time(),
     )
             self.stats['compressions'] += 1
             return result
-        except ImportError:
-            logger.warning('LZ4 not available, returning uncompressed')
+        except Exception:
+            logger.warning('zstd compression failed, returning uncompressed')
             return CompressedContext(
                 context_id=context_id,
                 original_size=len(content.encode('utf-8')),
@@ -272,9 +270,9 @@ class ContextOptimizationManager:
         elif detail_level == 'abstract':
             return compressed.abstract_summary
         else:
+            # E3: Use Rust zstd via _decode_zstd (zero-copy, GIL-released)
             try:
-                import lz4.frame
-                return lz4.frame.decompress(compressed.full_compressed).decode('utf-8')
+                return _decode_zstd(compressed.full_compressed).decode('utf-8')
             except Exception:
                 return compressed.important_summary
 

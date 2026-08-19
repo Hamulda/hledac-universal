@@ -2160,9 +2160,20 @@ def _extract_resp_headers(resp_headers: dict) -> tuple[str, str, str]:
 
 
 def _hash_body_bytes(body_bytes: bytes) -> str:
-    """Compute sha256 hex of body bytes; empty string on error."""
+    """Compute sha256 hex of body bytes; empty string on error.
+    
+    E1: Uses hardware-accelerated SHA-256 (ARM NEON on Apple Silicon).
+    Falls back to hashlib on any error.
+    """
     try:
-        return hashlib.sha256(body_bytes).hexdigest()
+        # Decode bytes to string for hardware-accelerated batch function
+        body_str = body_bytes.decode('utf-8', errors='replace')
+        try:
+            from _core.rust_backend import rust
+            hashes = rust.crypto.batch_sha256_hw([body_str])
+            return hashes[0] if hashes else hashlib.sha256(body_bytes).hexdigest()
+        except Exception:
+            return hashlib.sha256(body_bytes).hexdigest()
     except Exception:  # noqa: BLE001
         return ""
 

@@ -62,10 +62,12 @@ try:
         release_fetch_slot,
         get_aimd_telemetry,
         is_aimd_available,
+        apply_backpressure,
     )
     _AIMD_AVAILABLE = True
 except ImportError:
     _AIMD_AVAILABLE = False
+    apply_backpressure = None  # type: ignore[assignment]
     logger.debug("[performance_coordinator] AIMD controller unavailable")
 
 # B1 FIX: Use RayonPoolManager from isolated_executors.py as single source of truth
@@ -758,7 +760,6 @@ class AgentPerformanceOptimizer:
             window: New window ceiling
         """
         if self._aimd is not None:
-            from rust_extensions.wiring.aimd_wiring import apply_backpressure
             apply_backpressure(window)
 
     def get_aimd_telemetry(self) -> dict[str, Any]:

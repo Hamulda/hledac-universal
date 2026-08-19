@@ -456,6 +456,9 @@ class AcquisitionOrchestrator:
                 if ctx.hermes_engine is not None:
                     ctx.hermes_engine._active_iteration_count = cycles_started
 
+                # ── R13: Post-cycle dominance tracking ─────────────────────────
+                await self._update_lane_dominance(ctx, cycle_result)
+
                 # ── Check zero-findings alert ─────────────────────────────────
                 await self._check_zero_findings_alert(ctx)
 
@@ -1818,12 +1821,89 @@ class AcquisitionOrchestrator:
 
     def _feed_dominance_should_fetch(
         self,
-        _ctx: Any,
+        ctx: Any,
         _work: Any,
-        _nonfeed_terminal: bool,
+        nonfeed_terminal: bool,
     ) -> tuple[bool, str]:
-        """Check feed dominance budget before fetching."""
-        return (True, "ok")
+        """Check feed dominance budget before fetching.
+        
+        R13: Uses LaneBalancer to detect feed monopolization and prevent
+        feed-only sprints. If feed dominance is detected and nonfeed is
+        not yet terminal, returns (False, reason) to skip feed fetching.
+        """
+        try:
+            # Get lane_balancer from SprintContext
+            lane_balancer = getattr(ctx, 'lane_balancer', None)
+            if lane_balancer is None:
+                return (True, "ok")
+            
+            # Check if nonfeed lanes are terminal
+            if nonfeed_terminal:
+                return (True, "ok")
+            
+            # Check dominance using internal tracking
+            result = lane_balancer.check_dominance()
+            
+            if result.guard_triggered:
+                # Feed dominance detected - skip feed to allow nonfeed recovery
+                return (False, f"feed_dominance:{result.feed_dominance_class}:{result.reason}")
+            
+            return (True, "ok")
+        except Exception:
+            # Fail-open: allow fetch on errors
+            return (True, "ok")
+
+    async def _update_lane_dominance(
+        self,
+        ctx: Any,
+        cycle_result: CycleResult,
+    ) -> None:
+        """R13: Update lane_balancer with cycle finding counts.
+        
+        Extracts feed/nonfeed counts from CycleResult and records them
+        in the LaneBalancer for dominance tracking.
+        """
+        try:
+            lane_balancer = getattr(ctx, 'lane_balancer', None)
+            if lane_balancer is None:
+                return
+            
+            # Extract counts from cycle result
+            # feed_results = (ok, count)
+            feed_count = 0
+            if cycle_result.feed_results and len(cycle_result.feed_results) >= 2:
+                feed_count = cycle_result.feed_results[1] or 0
+            
+            # nonfeed = public + ct
+            public_count = 0
+            if cycle_result.public_results and len(cycle_result.public_results) >= 2:
+                public_count = cycle_result.public_results[1] or 0
+            
+            ct_count = 0
+            if cycle_result.ct_results and len(cycle_result.ct_results) >= 2:
+                ct_count = cycle_result.ct_results[1] or 0
+            
+            nonfeed_count = public_count + ct_count
+            
+            # Record in lane_balancer
+            if feed_count > 0 or nonfeed_count > 0:
+                lane_balancer.record_findings(feed_count=feed_count, nonfeed_count=nonfeed_count)
+                
+                # Log dominance status at debug level
+                if log.isEnabledFor(logging.DEBUG):
+                    log.debug(
+                        "[R13] Cycle dominance: feed=%d nonfeed=%d (public=%d ct=%d) "
+                        "total=%d ratio=%.2f",
+                        feed_count,
+                        nonfeed_count,
+                        public_count,
+                        ct_count,
+                        feed_count + nonfeed_count,
+                        feed_count / (feed_count + nonfeed_count) if (feed_count + nonfeed_count) > 0 else 0.0,
+                    )
+        except Exception:
+            # Fail-open: dominance tracking errors should not block acquisition
+            pass
 
     # ── Nonfeed probe lane helpers ───────────────────────────────────────
 
@@ -1867,16 +1947,23 @@ class AcquisitionOrchestrator:
     )
 
     def _get_adaptive_concurrency(self) -> int:
-        """Get adaptive concurrency from Rust adaptive_scheduler. Default 5."""
-        # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal._core.rust_backend import rust
-        fn = rust.raw.get_adaptive_mixed_threshold
-        if fn is not None:
-            try:
-                return fn()
-            except Exception:  # noqa: BLE001
-                pass
-        return 5
+        """
+        Get adaptive sidecar lane concurrency based on MLX memory pressure.
+
+        R12-FIX: Uses get_sidecar_lane_concurrency() which properly maps
+        the mixed threshold (16/32/64) to appropriate concurrency (2/3/4).
+
+        Previously used get_adaptive_mixed_threshold() directly which returned
+        batch sizes (16/32/64) instead of concurrency - semantically wrong.
+        """
+        try:
+            from hledac.universal._core.resource_governor import get_sidecar_lane_concurrency
+
+            return get_sidecar_lane_concurrency()
+        except Exception:  # noqa: BLE001
+            pass
+        # Safe default: 3 concurrent sidecar lanes (balanced)
+        return 3
 
     def _build_probe_lane_coros(
         self,

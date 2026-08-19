@@ -202,7 +202,7 @@ class GraphSAGEModel:
                 x = np.maximum(0, x)
         return x
 
-    def to_coreml_spec(self) -> Any:
+    def to_coreml_spec(self) -> "coremltools.Model_pb2.Model":
         """Export model to CoreML specification.
         
         Returns coremltools.Model_pb2.Model spec.

@@ -509,10 +509,10 @@ class CrossModalLSHMatcher:
             return False
 
     def _check_simd_available(self) -> bool:
-        """Check if Rust SIMD similarity is available."""
+        """Check if Rust vDSP SIMD similarity is available via accelerate_wired."""
         try:
-            from hledac.universal.rust_extensions.integrations import get_simd_similarity
-            return get_simd_similarity().available
+            from hledac.universal.rust_extensions.wiring.accelerate_wiring import accelerate_wired
+            return accelerate_wired().available
         except Exception:
             return False
 

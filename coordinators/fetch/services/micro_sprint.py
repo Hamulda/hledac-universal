@@ -90,6 +90,10 @@ class MicroSprintService:
     - Lightweight task management
 
     M1 8GB: Uses __slots__ for memory efficiency.
+
+    ISSUE-OPT-1: Uses asyncio.Event for _running flag instead of bool.
+    STRESS-25 pattern: asyncio.Event provides immediate cancellation response
+    (no polling delay when stop() is called).
     """
     config: MicroSprintConfig = field(default_factory=MicroSprintConfig)
 
@@ -98,7 +102,7 @@ class MicroSprintService:
     )
     _results: dict[str, SprintResult] = field(default_factory=dict)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
-    _running: bool = field(default=False, init=False)
+    _running: asyncio.Event = field(default=None, init=False)  # ISSUE-OPT-1: Event-driven
     _sprint_task: asyncio.Task[None] | None = field(default=None, init=False)
     _entropy_feedback: Any = field(default=None, init=False)
     _stats: dict[str, Any] = field(default_factory=lambda: {
@@ -108,6 +112,12 @@ class MicroSprintService:
         'sprints_executed': 0,
         'total_duration_s': 0.0,
     })
+
+    def __post_init__(self) -> None:
+        # ISSUE-OPT-1: Initialize asyncio.Event lazily
+        if self._running is None:
+            object.__setattr__(self, '_running', asyncio.Event())
+            self._running.set()  # Start in running state
 
     def set_entropy_feedback(self, entropy_service: Any) -> None:
         """Set entropy feedback service for adaptive scheduling."""
@@ -233,16 +243,16 @@ class MicroSprintService:
 
     async def start_sprint_loop(self) -> None:
         """Start continuous sprint execution loop."""
-        if self._running:
+        if self._running.is_set():
             return
 
-        self._running = True
+        self._running.set()  # ISSUE-OPT-1: Set running state
         self._sprint_task = asyncio.create_task(self._sprint_loop())
         logger.info("Micro sprint loop started")
 
     async def stop_sprint_loop(self) -> None:
-        """Stop sprint execution loop."""
-        self._running = False
+        """Stop sprint execution loop. ISSUE-OPT-1: Uses asyncio.Event for immediate response."""
+        self._running.clear()  # ISSUE-OPT-1: Immediately wakes up wait()
         if self._sprint_task:
             self._sprint_task.cancel()
             try:
@@ -252,19 +262,33 @@ class MicroSprintService:
         logger.info("Micro sprint loop stopped")
 
     async def _sprint_loop(self) -> None:
-        """Main sprint loop."""
-        while self._running:
+        """Main sprint loop. ISSUE-OPT-1: Uses asyncio.Event for event-driven cancellation."""
+        while not self._running.is_set():
             try:
                 await self.execute_sprint()
 
-                # Cooldown between sprints
-                await asyncio.sleep(self.config.cooldown_s)
+                # Cooldown between sprints - use Event.wait() for immediate cancellation
+                try:
+                    await asyncio.wait_for(
+                        self._running.wait(),
+                        timeout=self.config.cooldown_s
+                    )
+                    break  # Event was set, exit loop
+                except asyncio.TimeoutError:
+                    pass  # Timeout reached, continue
 
             except asyncio.CancelledError:
                 break
             except Exception as e:  # noqa: BLE001
                 logger.error(f"Sprint loop error: {e}")
-                await asyncio.sleep(self.config.cooldown_s)
+                try:
+                    await asyncio.wait_for(
+                        self._running.wait(),
+                        timeout=self.config.cooldown_s
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    pass
 
     def get_queue_size(self) -> int:
         """Get pending task count."""

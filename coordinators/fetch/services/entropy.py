@@ -194,6 +194,10 @@ class EntropyFeedbackService:
     - Consumer loop for alert processing
 
     M1 8GB: Uses __slots__ for memory efficiency.
+
+    ISSUE-OPT-1: Uses asyncio.Event for _running flag instead of bool.
+    STRESS-25 pattern: asyncio.Event provides immediate cancellation response
+    (no polling delay when stop() is called).
     """
     config: EntropyConfig = field(default_factory=EntropyConfig)
 
@@ -201,7 +205,7 @@ class EntropyFeedbackService:
         default_factory=lambda: asyncio.Queue(maxsize=1000)
     )
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
-    _running: bool = field(default=False, init=False)
+    _running: asyncio.Event = field(default=None, init=False)  # ISSUE-OPT-1: Event-driven
     _consumer_task: asyncio.Task[None] | None = field(default=None, init=False)
     _alert_callbacks: list[Callable[[EntropyResult], Awaitable[None]]] = field(
         default_factory=list, init=False
@@ -212,6 +216,12 @@ class EntropyFeedbackService:
         'alerts_queued': 0,
         'alerts_processed': 0,
     })
+
+    def __post_init__(self) -> None:
+        # ISSUE-OPT-1: Initialize asyncio.Event lazily
+        if self._running is None:
+            object.__setattr__(self, '_running', asyncio.Event())
+            self._running.set()  # Start in running state
 
     def register_alert_callback(self, callback: Callable[[EntropyResult], Awaitable[None]]) -> None:
         """Register callback for entropy alerts."""
@@ -320,16 +330,16 @@ class EntropyFeedbackService:
 
     async def start_consumer(self) -> None:
         """Start alert consumer loop."""
-        if self._running:
+        if self._running.is_set():
             return
 
-        self._running = True
+        self._running.set()  # ISSUE-OPT-1: Set running state
         self._consumer_task = asyncio.create_task(self._consumer_loop())
         logger.info("Entropy feedback consumer started")
 
     async def stop_consumer(self) -> None:
-        """Stop alert consumer loop."""
-        self._running = False
+        """Stop alert consumer loop. ISSUE-OPT-1: Uses asyncio.Event for immediate response."""
+        self._running.clear()  # ISSUE-OPT-1: Immediately wakes up wait()
         if self._consumer_task:
             self._consumer_task.cancel()
             try:
@@ -339,13 +349,21 @@ class EntropyFeedbackService:
         logger.info("Entropy feedback consumer stopped")
 
     async def _consumer_loop(self) -> None:
-        """Alert consumer loop."""
-        while self._running:
+        """Alert consumer loop. ISSUE-OPT-1: Uses asyncio.Event for event-driven cancellation."""
+        while not self._running.is_set():
             try:
-                result = await asyncio.wait_for(
-                    self._alert_queue.get(),
-                    timeout=self.config.update_interval_s
-                )
+                # Use wait_for with Event.wait() for immediate cancellation on stop()
+                try:
+                    result = await asyncio.wait_for(
+                        self._alert_queue.get(),
+                        timeout=self.config.update_interval_s
+                    )
+                except asyncio.TimeoutError:
+                    # Check if we should continue or exit
+                    if self._running.is_set():
+                        continue
+                    else:
+                        break
 
                 # Process alert callbacks
                 for callback in self._alert_callbacks:
@@ -355,8 +373,6 @@ class EntropyFeedbackService:
                     except Exception as e:  # noqa: BLE001
                         logger.error(f"Entropy alert callback error: {e}")
 
-            except asyncio.TimeoutError:
-                continue
             except asyncio.CancelledError:
                 break
             except Exception as e:  # noqa: BLE001

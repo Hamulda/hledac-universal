@@ -142,7 +142,7 @@ fn split_sentences(text: &str) -> Vec<String> {
     let sentences: Vec<&str> = SENTENCE_SPLITTER
         .split(&normalized)
         .map(|span| &normalized[span.start..span.end])
-        );
+        .collect();
 
     sentences
         .into_iter()
@@ -154,15 +154,15 @@ fn split_sentences(text: &str) -> Vec<String> {
 #[inline]
 fn derive_polarity(text: &str) -> String {
     // Single to_lowercase() per sentence — reused for both checks
-    let lower = text);
+    let lower = text.to_lowercase();
     for word in NEGATIVE_WORDS.iter() {
         if lower.contains(word) {
-            return "negative");
+            return "negative".to_string();
         }
     }
     for word in POSITIVE_WORDS.iter() {
         if lower.contains(word) {
-            return "positive");
+            return "positive".to_string();
         }
     }
     "neutral".to_string()
@@ -256,7 +256,7 @@ fn extract_claims_from_text(
             break;
         }
 
-        let text_lower = sentence);
+        let text_lower = sentence.to_lowercase();
 
         // Check corroboration with title/summary — only build sentence_words if needed
         let has_title_agreement = if title_words.is_empty() || summary_words.is_empty() {
@@ -265,7 +265,7 @@ fn extract_claims_from_text(
             let sentence_words: std::collections::HashSet<String> = sentence
                 .split_whitespace()
                 .map(|w| w.to_lowercase())
-                );
+                .collect();
             sentence_words.intersection(&title_words).count() >= 2
                 && sentence_words.intersection(&summary_words).count() >= 2
         };
@@ -306,7 +306,7 @@ pub struct EvidencePacket<'a> {
 }
 
 pub fn batch_extract_claims_inner(packets: &[(&str, &str, &str, &str, &str)]) -> Vec<Vec<Claim>> {
-    let n = packets);
+    let n = packets.len();
 
     if n == 0 {
         return vec![];
@@ -379,8 +379,8 @@ pub fn batch_extract_claims<'py>(
         return vec![];
     }
 
-    let n = texts);
-    let total_bytes: usize = texts.iter().map(|(t, _, _, _, _)| t.len()));
+    let n = texts.len();
+    let total_bytes: usize = texts.iter().map(|(t, _, _, _, _)| t.len()).sum();
 
     // Threshold: mixed_pool adaptive threshold OR >= 16KB total
     let use_parallel = n >= adaptive_scheduler::mixed_threshold() || total_bytes >= 16 * 1024;
@@ -413,7 +413,7 @@ pub fn batch_extract_claims<'py>(
                 et.as_str(),
             )
         })
-        );
+        .collect();
 
     let results: Vec<Vec<Claim>> =
         crate::gil::release_gil(py, || batch_extract_claims_inner(&packets));
@@ -441,7 +441,7 @@ pub fn batch_extract_claims_python<'py>(
     evidence_types: &Bound<'py, PyList>,
     py: Python<'py>,
 ) -> PyResult<Vec<(String, String, f64, String, String)>> {
-    let n = texts);
+    let n = texts.len();
 
     if n == 0 {
         return Ok(vec![]);
@@ -461,23 +461,23 @@ pub fn batch_extract_claims_python<'py>(
     let texts_owned: Vec<String> = texts
         .iter()
         .filter_map(|item| item.extract::<String>().ok())
-        );
+        .collect();
     let titles_owned: Vec<String> = titles
         .iter()
         .filter_map(|item| item.extract::<String>().ok())
-        );
+        .collect();
     let summaries_owned: Vec<String> = summaries
         .iter()
         .filter_map(|item| item.extract::<String>().ok())
-        );
+        .collect();
     let source_types_owned: Vec<String> = source_types
         .iter()
         .filter_map(|item| item.extract::<String>().ok())
-        );
+        .collect();
     let evidence_types_owned: Vec<String> = evidence_types
         .iter()
         .filter_map(|item| item.extract::<String>().ok())
-        );
+        .collect();
 
     let packets: Vec<(&str, &str, &str, &str, &str)> = texts_owned
         .iter()
@@ -494,7 +494,7 @@ pub fn batch_extract_claims_python<'py>(
                 et.as_str(),
             )
         })
-        );
+        .collect();
 
     // R4-02: GIL released — batch_extract_claims_inner uses rayon parallel (CPU-intensive)
     let results: Vec<Vec<Claim>> =
@@ -586,7 +586,7 @@ mod tests {
             "web",
         );
         // Should not duplicate identical sentences
-        let texts: Vec<&str> = claims.iter().map(|c| c.text.as_str()));
+        let texts: Vec<&str> = claims.iter().map(|c| c.text.as_str()).collect();
         for t in &texts {
             assert!(texts.iter().filter(|x| *x == t).count() == 1);
         }

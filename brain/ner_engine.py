@@ -683,7 +683,7 @@ n        Pokud je model již načten, nic nedělá.
             return []
         try:
             import msgspec
-from compat.msgspec_gc_compat import Struct
+            from compat.msgspec_gc_compat import Struct
             import outlines
 
             class EntityList(Struct):

@@ -2,36 +2,53 @@
 Canonical bridge: UnifiedAIOrchestrator → UnifiedResearchEngine.
 Moved from compat/core_unified_ai_orchestrator.py (F350M-R A-01).
 
-
 Provides real implementation by bridging to enhanced_research.py.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
 from _core import aclose
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from hledac.universal.brain.unified_embedding_manager import UnifiedEmbeddingManager
 
 logger = logging.getLogger(__name__)
 
-_UNIFIED_ENGINE: Any | None = None
+_EngineCls: type["UnifiedEmbeddingManager"] | None = None
 
 
-def _get_unified_engine() -> Any:
-    """Lazy-load UnifiedResearchEngine."""
-    global _UNIFIED_ENGINE
-    if _UNIFIED_ENGINE is None:
+def _get_engine_cls() -> type["UnifiedEmbeddingManager"] | None:
+    """Lazy-load engine class (only used at runtime, TYPE_CHECKING safe)."""
+    global _EngineCls
+    if _EngineCls is None:
         try:
-            # Try enhanced_research first, fall back to unified_embedding_manager
-            from hledac.universal.brain.enhanced_research import UnifiedResearchEngine
-            _UNIFIED_ENGINE = UnifiedResearchEngine
+            from hledac.universal.brain.unified_embedding_manager import UnifiedEmbeddingManager
+            _EngineCls = UnifiedEmbeddingManager
         except ImportError:
-            try:
-                from hledac.universal.brain.unified_embedding_manager import UnifiedEmbeddingManager
-                _UNIFIED_ENGINE = UnifiedEmbeddingManager
-            except ImportError as e:
-                logger.error(f'Failed to import UnifiedResearchEngine/UnifiedEmbeddingManager: {e}')
-                raise
-    return _UNIFIED_ENGINE
+            return None
+    return _EngineCls
+
+
+class ResearchResult:
+    """Result container for research operations."""
+    __slots__ = ('summary', 'confidence_score', 'total_sources_found', 'findings', 'coverage_score')
+    
+    def __init__(
+        self,
+        summary: str = '',
+        confidence: float = 0.0,
+        sources: int = 0,
+        findings: list[str] | None = None,
+        coverage: float = 0.0,
+    ) -> None:
+        self.summary = summary
+        self.confidence_score = confidence
+        self.total_sources_found = sources
+        self.findings = findings or []
+        self.coverage_score = coverage
 
 
 class UnifiedAIOrchestrator:
@@ -44,12 +61,12 @@ class UnifiedAIOrchestrator:
     - async process_request(dict) -> dict  — returns {'summary': str, 'confidence': float, ...}
     - async cleanup()             — optional
     """
-    __slots__ = tuple(('_engine', '_engine_cls', '_initialized'))
+    __slots__ = tuple(('_engine', '_initialized'))
 
-    def __init__(self, *args, **kwargs) -> None:
-        self._engine: Any | None = None
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._engine: Any = None
         self._initialized: bool = False
-        self._engine_cls = _get_unified_engine()
+        self._engine_cls = _get_engine_cls()
         logger.debug('UnifiedAIOrchestrator: bridge initialized')
 
     async def initialize(self) -> None:
@@ -57,9 +74,10 @@ class UnifiedAIOrchestrator:
         if self._initialized:
             return
         try:
-            self._engine = self._engine_cls()
-            self._initialized = True
-            logger.info('UnifiedAIOrchestrator: engine initialized')
+            if self._engine_cls is not None:
+                self._engine = self._engine_cls()
+                self._initialized = True
+                logger.info('UnifiedAIOrchestrator: engine initialized')
         except Exception as e:
             logger.warning(f'UnifiedAIOrchestrator: init failed: {e}')
             self._initialized = False
@@ -79,18 +97,24 @@ class UnifiedAIOrchestrator:
             await self.initialize()
         if self._engine is None:
             return {'summary': '', 'confidence': 0.0, 'sources_used': 0, 'findings': []}
+        
         query = request.get('query', '')
         depth_arg = request.get('depth') or request.get('research_depth')
         max_results = request.get('max_results', 50)
-        depth = _map_depth(depth_arg)
+        
         try:
-            result = await self._engine.deep_research(query=query, depth=depth, query_type=None, max_results=max_results)
+            result = await self._engine.deep_research(
+                query=query,
+                depth=depth_arg,
+                query_type=None,
+                max_results=max_results,
+            )
             return {
                 'summary': getattr(result, 'summary', '') or _extract_summary(result),
                 'confidence': getattr(result, 'confidence_score', 0.5),
                 'sources_used': getattr(result, 'total_sources_found', 0),
                 'findings': getattr(result, 'findings', []) or _extract_findings(result),
-                'coverage_score': getattr(result, 'coverage_score', 0.0)
+                'coverage_score': getattr(result, 'coverage_score', 0.0),
             }
         except Exception as e:
             logger.error(f'UnifiedAIOrchestrator.process_request failed: {e}')
@@ -107,38 +131,16 @@ class UnifiedAIOrchestrator:
         self._initialized = False
 
 
-def _map_depth(depth: Any) -> Any:
-    """Map depth value to ResearchDepth enum."""
-    try:
-        from hledac.universal.brain.enhanced_research import ResearchDepth
-    except ImportError:
-        return depth
-    if depth is None:
-        return ResearchDepth.ADVANCED
-    if isinstance(depth, str):
-        try:
-            return ResearchDepth[depth.upper()]
-        except KeyError:
-            return ResearchDepth.ADVANCED
-    if isinstance(depth, int):
-        if depth <= 1:
-            return ResearchDepth.BASIC
-        if depth >= 3:
-            return ResearchDepth.EXHAUSTIVE
-        return ResearchDepth.ADVANCED
-    return ResearchDepth.ADVANCED
-
-
 def _extract_summary(result: Any) -> str:
-    """Extract summary from result."""
+    """Extract summary from result object."""
     if hasattr(result, 'query'):
         findings_count = len(getattr(result, 'findings', []) or [])
         return f"Research on '{result.query}' — {findings_count} findings"
     return str(result)
 
 
-def _extract_findings(result: Any) -> list:
-    """Extract findings list from result."""
+def _extract_findings(result: Any) -> list[str]:
+    """Extract findings list from result object."""
     findings = getattr(result, 'findings', None)
     if findings is not None:
         return findings

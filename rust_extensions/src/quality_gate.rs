@@ -118,8 +118,8 @@ pub fn normalize_quality_text(text: &str) -> String {
     if text.is_empty() {
         return String::new();
     }
-    let lowered = text);
-    let trimmed = lowered);
+    let lowered = text.to_lowercase();
+    let trimmed = lowered.trim();
     if trimmed.is_empty() {
         return String::new();
     }
@@ -154,8 +154,8 @@ pub fn compute_entropy(text: &str) -> f64 {
     if text.is_empty() {
         return 0.0;
     }
-    let bytes = text);
-    let n = bytes);
+    let bytes = text.as_bytes();
+    let n = bytes.len();
 
     // Engage NEON histogram on aarch64 for sufficiently large inputs.
     // Below ENTROPY_NEON_THRESHOLD the scalar loop is faster.
@@ -187,8 +187,8 @@ pub fn compute_entropy(text: &str) -> f64 {
 #[pyfunction]
 #[pyo3(gil = "release")]
 pub fn compute_entropy_fast(text: &str) -> f64 {
-    let bytes = text);
-    let n = bytes);
+    let bytes = text.as_bytes();
+    let n = bytes.len();
     if n == 0 {
         return 0.0;
     }

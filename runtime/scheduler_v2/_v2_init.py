@@ -132,6 +132,42 @@ def _meta_reasoning_coordinator_factory(
     )
 
 
+# R13: Lane Balancer factory for feed dominance prevention + adaptive lane budgets
+def _lane_balancer_factory(
+    *,
+    sprint_duration_s: float = 1800.0,
+) -> Any:
+    """R13: Create LaneBalancer with sprint-duration-adaptive budgets."""
+    from hledac.universal.runtime.scheduler_v2._lane_balancer import LaneBalancer
+
+    # Scale lane budgets based on sprint duration
+    duration_multiplier = sprint_duration_s / 1800.0  # Normalize to 30 min
+
+    # Adaptive lane budgets
+    lane_budgets = {
+        "discovery": 120.0 * duration_multiplier,
+        "ioc_validation": 60.0 * duration_multiplier,
+        "enrichment": 90.0 * duration_multiplier,
+        "public": 30.0 * duration_multiplier,
+        "feed": 20.0 * duration_multiplier,
+        "ct": 15.0 * duration_multiplier,
+        "dns": 10.0 * duration_multiplier,
+        "passive": 10.0 * duration_multiplier,
+        "structured": 25.0 * duration_multiplier,
+        "deep": 40.0 * duration_multiplier,
+        "hot": 5.0 * duration_multiplier,
+        "warm": 15.0 * duration_multiplier,
+        "cold": 45.0 * duration_multiplier,
+    }
+
+    return LaneBalancer(
+        dominance_ratio_threshold=0.95,
+        min_nonfeed_findings=5,
+        strict=False,
+        lane_budgets=lane_budgets,
+    )
+
+
 INJECTIONS: tuple[_Injection, ...] = (
     _Injection(name="policy_manager", factory=_policy_manager_factory, fail_soft=False, order=1),
     _Injection(
@@ -176,6 +212,13 @@ INJECTIONS: tuple[_Injection, ...] = (
         factory=_meta_reasoning_coordinator_factory,
         fail_soft=True,
         order=7,
+    ),
+    # R13: Lane Balancer for feed dominance prevention + adaptive lane budgets
+    _Injection(
+        name="lane_balancer",
+        factory=_lane_balancer_factory,
+        fail_soft=True,
+        order=8,
     ),
 )
 
@@ -382,6 +425,7 @@ class V2Init:
             graph_service=_duckpgq_graph,  # ISSUE-009: Add DuckPGQGraph to services
             runner=_lifecycle_mgr,
             lifecycle=_lifecycle_mgr,
+            lane_balancer=None,  # R13: Will be set after injection
         )
         object.__setattr__(self._scheduler, "_ctx", _updated_ctx)
         self._ctx = _updated_ctx
@@ -398,6 +442,7 @@ class V2Init:
         duckdb_store: Any,
         rl_train_mode: bool,
         sprint_id: str,
+        sprint_duration_s: float,
         resume_from: dict | None,
         resume_step: int,
         query_hash: str,
@@ -418,6 +463,9 @@ class V2Init:
             kwargs["query_hash"] = query_hash
             # SILICON-05: wire semantic gravity field
             self._inject_gravity_field()
+        elif name == "lane_balancer":
+            # R13: Scale lane budgets based on sprint duration
+            kwargs["sprint_duration_s"] = sprint_duration_s
         return kwargs
 
     def _inject_gravity_field(self) -> None:
@@ -448,6 +496,26 @@ class V2Init:
         tp_inject = getattr(self._scheduler, "inject_temporal_predictor", None)
         if tp_inject and temporal_predictor is not None:
             tp_inject(temporal_predictor)
+
+    def _inject_lane_balancer(self, obj: Any) -> None:
+        """R13: Inject LaneBalancer into SprintContext via lane_balancer field."""
+        if obj is None:
+            return
+        try:
+            _ctx = getattr(self._scheduler, "_ctx", None)
+            if _ctx is not None:
+                # Update ctx with lane_balancer
+                _updated_ctx = _ctx.with_services(lane_balancer=obj)
+                object.__setattr__(self._scheduler, "_ctx", _updated_ctx)
+                # Also store on scheduler for direct access
+                object.__setattr__(self._scheduler, "_lane_balancer", obj)
+                _logging.getLogger(__name__).debug(
+                    "[R13] LaneBalancer injected: lanes=%d", obj.lane_count
+                )
+        except Exception as _e:
+            _logging.getLogger(__name__).warning(
+                "[R13] Failed to inject LaneBalancer: %s", _e
+            )
 
     def _warmup_evidence_log(
         self,
@@ -499,6 +567,7 @@ class V2Init:
                 duckdb_store=duckdb_store,
                 rl_train_mode=rl_train_mode,
                 sprint_id=sprint_id,
+                sprint_duration_s=sprint_duration_s,
                 resume_from=resume_from,
                 resume_step=resume_step,
                 query_hash=query_hash,
@@ -508,6 +577,9 @@ class V2Init:
                 obj = inj.factory(**factory_kwargs)
                 if inj.name == "prefetch_pipeline":
                     self._inject_prefetch_pipeline(obj)
+                elif inj.name == "lane_balancer":
+                    # R13: Special handling for LaneBalancer — inject into SprintContext
+                    self._inject_lane_balancer(obj)
                 else:
                     self._inject_object(inj, obj)
             except Exception as e:

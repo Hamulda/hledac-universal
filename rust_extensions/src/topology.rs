@@ -10,8 +10,8 @@
 //!
 //! | Core Type | perflevel | Indices | Use Case |
 //! |-----------|------------|---------|----------|
-//! | P-cores   | perflevel0 | 0-3     | CPU-intensive: SIMD, MLX, Graph |
-//! | E-cores   | perflevel1 | 4-7     | Background: DNS, I/O, Telemetry |
+//! | E-cores   | perflevel0 | 0..e-1  | Background: DNS, I/O, Telemetry |
+//! | P-cores   | perflevel1 | e..total | CPU-intensive: SIMD, MLX, Graph |
 //!
 //! ## Design Principles
 //!
@@ -88,7 +88,7 @@ use crate::qos_class_helpers::qos_class_i32_to_qos_class_t;
 pub struct PerfLevelCluster {
     /// CPU core indices belonging to this cluster.
     pub cpu_ids: Vec<usize>,
-    /// Performance level (0 = P-cores, 1 = E-cores).
+    /// Performance level (0 = E-cores, 1 = P-cores).
     pub perflevel: u32,
     /// Cluster type: "p" for P-cores, "e" for E-cores.
     pub cluster_type: String,
@@ -133,10 +133,10 @@ impl PerfLevelCluster {
 // Constants
 // ============================================================================
 
-/// Performance level 0 (P-cores) sysctl name.
+/// Performance level 0 (E-cores = UTILITY cluster) sysctl name.
 const PERFLEVEL0_CPU: &[u8] = b"hw.perflevel0.physicalcpu\0";
 
-/// Performance level 1 (E-cores) sysctl name.
+/// Performance level 1 (P-cores = PERFORMANCE cluster) sysctl name.
 const PERFLEVEL1_CPU: &[u8] = b"hw.perflevel1.physicalcpu\0";
 
 /// Fallback physical CPU count sysctl name.
@@ -274,7 +274,7 @@ pub fn init_topology() -> &'static TopologyInfo {
 
 /// Detect Apple Silicon topology using sysctlbyname.
 ///
-/// MODERN-33: Uses hw.perflevel0/1.physicalcpu for true P/E partition.
+/// MODERN-33: Uses hw.perflevel0 (E-cores) and hw.perflevel1 (P-cores) for true P/E partition.
 #[cfg(target_os = "macos")]
 fn detect_topology() -> TopologyInfo {
     // First check if we're on Apple Silicon
@@ -285,16 +285,16 @@ fn detect_topology() -> TopologyInfo {
         return TopologyInfo::default();
     }
 
-    // Try to get perflevel0 (P-cores) and perflevel1 (E-cores) counts
-    let p_cores = sysctl_int(PERFLEVEL0_CPU);
-    let e_cores = sysctl_int(PERFLEVEL1_CPU);
+    // Try to get perflevel0 (E-cores) and perflevel1 (P-cores) counts
+    let e_cores = sysctl_int(PERFLEVEL0_CPU);
+    let p_cores = sysctl_int(PERFLEVEL1_CPU);
 
     match (p_cores, e_cores) {
         (Some(p), Some(e)) if p > 0 && e > 0 => {
             // M1 Pro/Max/Ultra or similar with distinct P/E cores
             let total = p + e;
-            let e_core_indices: Vec<usize> = (0..e));
-            let p_core_indices: Vec<usize> = (e..total));
+            let p_core_indices: Vec<usize> = (0..p));
+            let e_core_indices: Vec<usize> = (p..total));
 
             TopologyInfo {
                 p_core_count: p,
@@ -316,8 +316,9 @@ fn detect_topology() -> TopologyInfo {
                 p_core_count: p,
                 e_core_count: e,
                 total_logical,
-                p_core_indices: vec![0, 1, 2, 3],
-                e_core_indices: vec![4, 5, 6, 7],
+                // E-cores first (perflevel 0), P-cores after (perflevel 1)
+                e_core_indices: vec![0, 1, 2, 3],
+                p_core_indices: vec![4, 5, 6, 7],
                 detected: true,
             }
         }

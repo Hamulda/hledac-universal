@@ -48,6 +48,7 @@ class TestRustBackendModule:
             "html", "ioc_dedup", "int_counter", "simd",
             "aho", "evidence", "madvise", "memory",
             "sprint_policies",
+            "deobfuscate",
         ]
         for name in domains:
             assert hasattr(rust, name), f"rust.{name} not accessible"
@@ -714,3 +715,65 @@ class TestRustBackendSprintPoliciesFallback:
         assert result["feed_dominance_ratio"] == 0.96
         assert "guard_triggered" in result
         assert result["guard_triggered"] is True
+
+
+class TestRustBackendDeobfuscateFallback:
+    """Deobfuscation domain — Python fallback tests."""
+
+    def test_deobfuscate_domain_accessible(self):
+        """deobfuscate domain is accessible."""
+        from _core.rust_backend import rust
+        d = rust.deobfuscate
+        assert d is not None
+
+    def test_decode_base64(self):
+        """decode_ioc_candidates decodes base64."""
+        from _core.rust_backend import rust
+        # 'aGVsbG8gd29ybGQ=' is 'hello world' in base64
+        result = rust.deobfuscate.decode('aGVsbG8gd29ybGQ=')
+        assert 'hello world' in result.candidates
+        assert result.layers_stripped >= 1
+        assert 'base64' in result.encodings_detected
+
+    def test_decode_hex(self):
+        """decode_ioc_candidates decodes hex."""
+        from _core.rust_backend import rust
+        # '68656c6c6f' is 'hello' in hex
+        result = rust.deobfuscate.decode('68656c6c6f')
+        assert 'hello' in result.candidates
+        assert 'hex' in result.encodings_detected
+
+    def test_decode_url_percent(self):
+        """decode_ioc_candidates decodes URL percent encoding."""
+        from _core.rust_backend import rust
+        result = rust.deobfuscate.decode('hello%20world')
+        assert 'hello world' in result.candidates
+        assert 'url_percent' in result.encodings_detected
+
+    def test_decode_empty(self):
+        """decode_ioc_candidates handles empty string."""
+        from _core.rust_backend import rust
+        result = rust.deobfuscate.decode('')
+        assert result.candidates == []
+
+    def test_batch_decode(self):
+        """batch_decode_ioc_candidates processes multiple texts."""
+        from _core.rust_backend import rust
+        texts = ['aGVsbG8=', 'V29ybGQ=']  # 'Hello', 'World' in base64
+        results = rust.deobfuscate.batch_decode(texts)
+        assert len(results) == 2
+        assert 'Hello' in results[0].candidates
+        assert 'World' in results[1].candidates
+
+    def test_telemetry(self):
+        """telemetry returns tuple of ints."""
+        from _core.rust_backend import rust
+        t = rust.deobfuscate.telemetry()
+        assert isinstance(t, tuple)
+        assert len(t) == 3
+        assert all(isinstance(x, int) for x in t)
+
+    def test_reset_telemetry(self):
+        """reset_telemetry runs without error."""
+        from _core.rust_backend import rust
+        rust.deobfuscate.reset_telemetry()  # Should not raise

@@ -593,7 +593,13 @@ class Phase1_Initialization:
             pass
         session_id = ctx.session_id
         if session_id is None:
-            session_id = hashlib.sha256(ctx.query.encode()).hexdigest()[:16]
+            # E1: Hardware-accelerated SHA-256 (ARM NEON on Apple Silicon)
+            try:
+                from _core.rust_backend import rust
+                hashes = rust.crypto.batch_sha256_hw([ctx.query])
+                session_id = hashes[0][:16] if hashes else hashlib.sha256(ctx.query.encode()).hexdigest()[:16]
+            except Exception:
+                session_id = hashlib.sha256(ctx.query.encode()).hexdigest()[:16]
         return PipelineContext(**{
             **ctx.__dict__,
             "session_id": session_id,
@@ -1367,7 +1373,14 @@ async def _inject_onion_hits(hits: tuple, query: str, store: Any) -> int:
             result = await async_fetch_public_text(onion_url, timeout_s=30.0, max_bytes=200000)
             if result.error or result.text is None:
                 return None
-            pf_id = hashlib.sha256(f"{query}\x00{onion_url}\x00onion_discovery".encode()).hexdigest()[:16]
+            # E1: Hardware-accelerated SHA-256 (ARM NEON on Apple Silicon)
+            pf_key = f"{query}\x00{onion_url}\x00onion_discovery"
+            try:
+                from _core.rust_backend import rust
+                hashes = rust.crypto.batch_sha256_hw([pf_key])
+                pf_id = hashes[0][:16] if hashes else hashlib.sha256(pf_key.encode()).hexdigest()[:16]
+            except Exception:
+                pf_id = hashlib.sha256(pf_key.encode()).hexdigest()[:16]
             return CanonicalFinding(
                 finding_id=pf_id,
                 query=query,

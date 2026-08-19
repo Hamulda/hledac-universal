@@ -3,7 +3,10 @@ Isolated executors — backed by RustWorkerPool (rayon thread pool).
 
 MODERN-33 + MODERN-34 + NEXTGEN-03: P/E Core Affinity Integration
 ===================================================================
-This module uses Rust rayon pools with proper P/E core affinity:
+This module uses Rust rayon pools with proper P/E core affinity.
+Actual core counts are detected at runtime via _core.topology module.
+
+Topology detection: P-core=Dynamic (see _P_CORE_COUNT), E-core=Dynamic (see _E_CORE_COUNT)
 
 NEXTGEN-03: Asymmetric Topology-Aware Pools:
   - simd_pool → P-cores 0,1 (USER_INITIATED) — ARM NEON SIMD operations
@@ -22,7 +25,7 @@ THREAD-BUDGET-01 + THREAD-BUDGET-02: Unified Thread Budget System
 ============================================================
 This module provides the canonical thread budget enforcement for M1 8GB:
 
-  Budget Composition (M1 8GB: 4P + 4E = 8 logical cores):
+  Budget Composition (Dynamic P-cores + E-cores via _P_CORE_COUNT/_E_CORE_COUNT):
     ┌────────────────────────────────────────────────────────────────┐
     │ Thread Source           │ Count   │ Notes                    │
     ├────────────────────────┼─────────┼───────────────────────────│
@@ -84,6 +87,17 @@ from collections.abc import Callable
 # F350M-R: Lazy imports to break core ↔ runtime cycle
 from typing import TYPE_CHECKING as _TC
 from _core._util import aclose
+
+# MODERN-33: Topology-aware pool sizing using actual P/E core detection
+try:
+    from _core.topology import get_topology, get_p_core_count, get_e_core_count
+    _TOPOLOGY = get_topology()
+    _P_CORE_COUNT = _TOPOLOGY.p_cores
+    _E_CORE_COUNT = _TOPOLOGY.e_cores
+except Exception:
+    # Fail-safe: M1 Air default
+    _P_CORE_COUNT, _E_CORE_COUNT = 4, 4
+    _TOPOLOGY = None
 
 if TYPE_CHECKING:
     from hledac.universal.runtime.worker_pool import RustWorkerPool, get_rust_pool
@@ -1564,8 +1578,8 @@ _DEFAULT_IO_THREADS: int = 1
 # Correct max_cpu = 6 - 3(dispatchers) - 1(min_io) - 1(max_mixed) = 1
 # But we use 2 for the BOOT phase baseline, matching Rust's recommended_cpu_threads().
 # Fallback values must also respect budget, so we use phase-baseline values.
-_MAX_CPU_THREADS: int = 2   # 4 P-cores exist, but budget ceiling = 6 limits this to 2
-_MAX_IO_THREADS: int = 1    # 2 E-cores exist, but budget ceiling limits this to 1
+_MAX_CPU_THREADS: int = min(2, _P_CORE_COUNT)   # Dynamic: P-core count, clamped by budget
+_MAX_IO_THREADS: int = min(1, _E_CORE_COUNT)    # Dynamic: E-core count, clamped by budget
 _MAX_MIXED_THREADS: int = 1  # Budget ceiling limits mixed to 1
 
 # Phase-aware pool configurations — THREAD-BUDGET-02: ALL phases verified to fit ≤ 6
@@ -1960,21 +1974,31 @@ class RayonPoolManager:
                     _DISPATCHER_COUNT,
                     cpu + io + _DISPATCHER_COUNT,
                     _BUDGET_AVAILABLE,
-    )
+                )
 
                 # A2. MODERN-31: Sync MLX Metal memory pressure on init
                 # This initializes the adaptive thread budget based on current MLX state
                 self.sync_metal_memory_pressure()
+                # F1. WIRING_COMPLETE: Apply adaptive sizing immediately after sync.
+                # Without this, adaptive sizing only kicks in after first MLX sync
+                # loop iteration (5s delay). This makes it immediate on startup.
+                try:
+                    self.apply_adaptive_sizing()
+                except Exception as e_adapt:
+                    logger.warning(
+                        "[RayonPoolManager] apply_adaptive_sizing() on init failed: %s",
+                        e_adapt,
+                    )
             except Exception as e:
                 logger.error(
                     "[RayonPoolManager] Rust init failed: %s — CRITICAL: thread safety compromised",
                     e,
-    )
+                )
         else:
             logger.critical(
                 "[RayonPoolManager] Rust elastic_pool bindings unavailable — "
                 "thread budget enforcement DISABLED. This can cause thermal throttling!"
-    )
+            )
 
     @property
     def current_phase(self) -> str:
@@ -2066,6 +2090,11 @@ class RayonPoolManager:
                 # A2. MODERN-31: Sync MLX memory pressure on phase change
                 # This ensures thread budget reflects current MLX state
                 self.sync_metal_memory_pressure()
+                # F1. WIRING_COMPLETE: Removed redundant apply_adaptive_sizing() call.
+                # The phase-specific resize (below) already uses pressure-aware phase configs.
+                # The _mlx_sync_loop handles ongoing pressure-based adjustments every 5s.
+                # apply_adaptive_sizing() here was a no-op: phase resize always overrode it,
+                # AND it created a race with _mlx_sync_loop (periodic resize fighting phase resize).
         except Exception:
             pass  # Non-fatal: adaptive_scheduler telemetry-only
 
@@ -2609,16 +2638,20 @@ class RayonPoolManager:
                             io_size,
                         )
 
-                    # Step 4: Apply adaptive sizing to actually resize pools
-                    # This is the KEY fix — without this, the sync loop was dead code
-                    if self.apply_adaptive_sizing():
-                        logger.debug(
-                            "[RayonPoolManager] [adaptive] Pools resized based on MLX pressure"
-                        )
-                    else:
-                        logger.warning(
-                            "[RayonPoolManager] [adaptive] Adaptive sizing failed"
-                        )
+                    # Step 4: Apply adaptive sizing ONLY when pressure level changed.
+                    # Calling every iteration wastes lock contention when pressure is stable.
+                    # ponytail: always resizes when pressure changes, add hysteresis
+                    #   window (e.g. must be HIGH for N consecutive polls) if throughput
+                    #   matters and pressure flutters.
+                    if cpu_size != prev_cpu or io_size != prev_io:
+                        if self.apply_adaptive_sizing():
+                            logger.debug(
+                                "[RayonPoolManager] [adaptive] Pools resized based on MLX pressure"
+                            )
+                        else:
+                            logger.warning(
+                                "[RayonPoolManager] [adaptive] Adaptive sizing failed"
+                            )
             except Exception as e:
                 logger.warning("[RayonPoolManager] [adaptive] MLX sync error: %s", e)
 

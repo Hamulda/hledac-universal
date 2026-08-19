@@ -196,8 +196,16 @@ class ResearchOptimizer:
         return normalized
 
     def _hash_query(self, query: str) -> str:
-        """Create hash of normalized query."""
-        return hashlib.sha256(query.encode()).hexdigest()[:16]
+        """Create hash of normalized query.
+        
+        E1: Hardware-accelerated SHA-256 (ARM NEON on Apple Silicon).
+        """
+        try:
+            from _core.rust_backend import rust
+            hashes = rust.crypto.batch_sha256_hw([query])
+            return hashes[0][:16] if hashes else hashlib.sha256(query.encode()).hexdigest()[:16]
+        except Exception:
+            return hashlib.sha256(query.encode()).hexdigest()[:16]
 
     def _get_from_cache(self, query_hash: str) -> Any | None:
         """Get result from cache if valid."""

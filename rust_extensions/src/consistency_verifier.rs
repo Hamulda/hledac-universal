@@ -363,7 +363,7 @@ impl Finding {
 
     /// Convert to a Fact for contradiction detection.
     fn to_fact(&self, attribute: &str) -> Option<Fact> {
-        let entity = self);
+        let entity = self.entity();
         if entity.is_empty() {
             return None;
         }
@@ -402,7 +402,7 @@ impl Finding {
         if let Some(ref prov) = self.provenance {
             for item in prov {
                 if let Some(domain) = extract_domain_from_text(item) {
-                    let entity = self);
+                    let entity = self.entity();
                     let norm_domain = normalize_domain(&domain);
                     let norm_entity = normalize_domain(&entity);
                     if norm_domain != norm_entity {
@@ -418,11 +418,11 @@ impl Finding {
             .clone()
             .or_else(|| self.snippet.clone())
             .or_else(|| self.title.clone())
-            );
+;
 
         if !text_content.is_empty() {
             if let Some(domain) = extract_domain_from_text(&text_content) {
-                let entity = self);
+                let entity = self.entity();
                 let norm_domain = normalize_domain(&domain);
                 let norm_entity = normalize_domain(&entity);
                 if norm_domain != norm_entity {
@@ -449,32 +449,32 @@ fn current_timestamp() -> i64 {
 
 /// Check if a value looks like an IP address.
 fn looks_like_ip(value: &str) -> bool {
-    let parts: Vec<&str> = value.split('.'));
+    let parts: Vec<&str> = value.split('.').collect::<Vec<_>>();
     parts.len() == 4 && parts.iter().all(|p| p.parse::<u8>().is_ok())
 }
 
 /// Check if a value looks like a SHA256 hash.
 #[allow(dead_code)]
 fn looks_like_sha256(value: &str) -> bool {
-    let cleaned = value);
+    let cleaned = value.to_string();
     cleaned.len() == 64 && cleaned.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Check if a value looks like a domain.
 fn looks_like_domain(value: &str) -> bool {
-    let v = value.trim());
+    let v = value.trim().to_string();
     !v.is_empty() && v.len() <= 253 && v.split('.').all(|p| !p.is_empty() && p.len() <= 63)
 }
 
 /// Normalize a domain for comparison.
 fn normalize_domain(domain: &str) -> String {
-    let s = domain.trim());
+    let s = domain.trim().to_string();
     s.strip_prefix("www.").unwrap_or(&s).to_string()
 }
 
 /// Extract domain from a URL string.
 fn extract_domain_from_url(url: &str) -> Option<String> {
-    let cleaned = url);
+    let cleaned = url.to_string();
     // Skip protocol prefix or www
     let without_proto = cleaned
         .strip_prefix("https://")
@@ -502,7 +502,7 @@ fn extract_domain_from_url(url: &str) -> Option<String> {
 fn extract_domain_from_text(text: &str) -> Option<String> {
     // Simple heuristic: find domain-like patterns in text
     // Look for patterns like "found at example.com", "resolves to evil.org"
-    let words: Vec<&str> = text.split_whitespace());
+    let words: Vec<&str> = text.split_whitespace().collect();
 
     // First pass: look for explicit URL patterns
     for w in &words {
@@ -521,7 +521,7 @@ fn extract_domain_from_text(text: &str) -> Option<String> {
         let w = w.trim_matches(|c: char| c.is_ascii_punctuation());
         if w.contains('.') && !looks_like_ip(w) && w.len() > 4 && w.len() <= 253 {
             // Check that parts look like valid domain labels
-            let parts: Vec<&str> = w.split('.'));
+            let parts: Vec<&str> = w.split('.').collect();
             if parts.len() >= 2 && parts.iter().all(|p| !p.is_empty() && p.len() <= 63) {
                 return Some(normalize_domain(w));
             }
@@ -539,7 +539,7 @@ fn normalize_ip(ip: &str) -> String {
 
 /// Extract filename from a URL (last path component).
 fn extract_filename_from_url(url: &str) -> Option<String> {
-    let cleaned = url);
+    let cleaned = url.to_string();
     let without_query = cleaned.split('?').next().unwrap_or(cleaned);
     let without_fragment = without_query.split('#').next().unwrap_or(without_query);
     let filename = without_fragment.split('/').last().unwrap_or("");
@@ -566,14 +566,14 @@ fn extract_facts(findings: &[Finding]) -> Vec<Fact> {
     let mut facts: Vec<Fact> = Vec::with_capacity(findings.len() * 2);
 
     for finding in findings {
-        let entity = finding);
+        let entity = finding.entity_value.as_deref().unwrap_or_default();
         if entity.is_empty() {
             continue;
         }
 
-        let source = finding);
-        let timestamp = finding);
-        let ioc_type = finding);
+        let source = finding.source.as_deref().unwrap_or_default();
+        let timestamp = finding.timestamp.unwrap_or(0);
+        let ioc_type = finding.ioc_type.as_deref().unwrap_or_default();
 
         // Tier 1: Direct fact — same entity confirmed by multiple sources
         let fact = Fact::new(&entity, &ioc_type, &entity, &source, timestamp);
@@ -647,7 +647,7 @@ fn detect_group_contradictions(
             .push(fact);
     }
 
-    let values: Vec<String> = value_groups.keys().cloned());
+    let values: Vec<String> = value_groups.keys().cloned().collect();;
 
     // Check for contradictions between different values
     for i in 0..values.len() {
@@ -725,7 +725,7 @@ fn determine_contradiction_type(
     value_a: &str,
     value_b: &str,
 ) -> (ContradictionType, f32) {
-    let attr_lower = attribute);
+    let attr_lower = attribute.to_lowercase();
 
     match attr_lower.as_str() {
         "ip" | "ipv4" | "ipv4_addr" | "ip_resolution" => {
@@ -837,7 +837,7 @@ fn apply_tri_source_voting(
             .insert(fact.value.clone());
     }
 
-    let source_count = source_values);
+    let source_count = source_values.len();
 
     // Need at least 3 sources for tri-source voting
     if source_count < 3 {
@@ -848,8 +848,7 @@ fn apply_tri_source_voting(
     let values: Vec<String> = source_values
         .values()
         .filter(|v| v.len() == 1)
-        .map(|v| v.iter().next().unwrap().clone())
-        );
+        .map(|v| v.iter().next().unwrap().clone());
 
     if values.len() != source_count {
         // Some source has multiple values — not a clean 1:1:1 split
@@ -860,7 +859,7 @@ fn apply_tri_source_voting(
     let mut value_counts: HashMap<String, usize> = HashMap::new();
     for (_source, vals) in &source_values {
         if vals.len() == 1 {
-            let v = vals.iter().next());
+            let v = vals.iter().next().unwrap();
             *value_counts.entry(v.clone()).or_insert(0) += 1;
         }
     }
@@ -902,7 +901,7 @@ fn apply_tri_source_voting(
         for (value, &count) in &value_counts {
             if count == source_count - 1 {
                 // Found the consensus value
-                let consensus_value = value);
+                let consensus_value = value.clone();
 
                 // Find the dissenting source
                 for (source, vals) in &source_values {
@@ -911,7 +910,7 @@ fn apply_tri_source_voting(
                     }
 
                     // Found the dissenter
-                    let dissenting_value = vals.iter().next().unwrap_or(&String::new()));
+                    let dissenting_value = vals.iter().next().copied().unwrap_or_else(|| String::new());
 
                     let suspect = SuspectSource {
                         entity: entity.to_string(),
@@ -955,8 +954,7 @@ fn compute_entity_consistency_score(facts: &[Fact], contradictions: &[Contradict
     let source_count = facts
         .iter()
         .map(|f| &f.source)
-        .collect::<HashSet<_>>()
-        );
+        .collect::<HashSet<_>>();
     if source_count < 2 {
         return 1.0; // Single source = no contradiction possible
     }
@@ -1023,7 +1021,7 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
             // Mark all facts in this group as disputed
             for fact in group_facts {
                 let finding = findings.iter().find(|f| {
-                    let e = f);
+                    let e = f.entity_value.as_deref().unwrap_or_default();
                     !e.is_empty() && normalize_domain(&e) == normalize_domain(&fact.entity)
                 });
                 if let Some(f) = finding {
@@ -1041,7 +1039,7 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
             // Mark all facts in this group with reduced score
             for fact in group_facts {
                 let finding = findings.iter().find(|f| {
-                    let e = f);
+                    let e = f.entity_value.as_deref().unwrap_or_default();
                     !e.is_empty() && normalize_domain(&e) == normalize_domain(&fact.entity)
                 });
                 if let Some(f) = finding {
@@ -1063,7 +1061,7 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
             // Mark all facts in this group as contradictory
             for fact in group_facts {
                 let finding = findings.iter().find(|f| {
-                    let e = f);
+                    let e = f.entity_value.as_deref().unwrap_or_default();
                     !e.is_empty() && normalize_domain(&e) == normalize_domain(&fact.entity)
                 });
                 if let Some(f) = finding {
@@ -1075,8 +1073,8 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
 
     // Phase 2: Classify remaining findings as clean
     for finding in findings {
-        let fid = finding);
-        let entity = finding);
+        let fid = finding.finding_id.as_deref().unwrap_or_default();
+        let entity = finding.entity_value.as_deref().unwrap_or_default();
         if entity.is_empty() {
             continue;
         }
@@ -1095,7 +1093,7 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
     let clean: Vec<CleanFinding> = clean_ids
         .iter()
         .map(|fid| {
-            let finding = findings.iter().find(|f| f.finding_id() == *fid);
+            let finding = findings.iter().find(|f| f.finding_id.as_ref() == Some(fid));
             CleanFinding {
                 finding_id: fid.clone(),
                 entity: finding.map(|f| f.entity()).unwrap_or_default(),
@@ -1104,14 +1102,13 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
                     .unwrap_or_else(|| "unknown".to_string()),
                 consistency_score: 1.0,
             }
-        })
-        );
+        });
 
     let contradictory: Vec<ContradictoryFinding> = contradictory_ids
         .iter()
         .map(|fid| {
-            let finding = findings.iter().find(|f| f.finding_id() == *fid);
-            let entity = finding.map(|f| f.entity()));
+            let finding = findings.iter().find(|f| f.finding_id.as_ref() == Some(fid));
+            let entity = finding.and_then(|f| f.entity_value.as_ref()).map(|s| s.as_str()).unwrap_or_default();
             let score = entity_scores.get(&entity).copied().unwrap_or(0.5);
             ContradictoryFinding {
                 finding_id: fid.clone(),
@@ -1125,14 +1122,13 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
                 conflicting_value: String::new(),
                 conflicting_source: String::new(),
             }
-        })
-        );
+        });
 
     let disputed: Vec<DisputedFinding> = disputed_ids
         .iter()
         .map(|fid| {
-            let finding = findings.iter().find(|f| f.finding_id() == *fid);
-            let entity = finding.map(|f| f.entity()));
+            let finding = findings.iter().find(|f| f.finding_id.as_ref() == Some(fid));
+            let entity = finding.and_then(|f| f.entity_value.as_ref()).map(|s| s.as_str()).unwrap_or_default();
             DisputedFinding {
                 finding_id: fid.clone(),
                 entity: entity.clone(),
@@ -1143,8 +1139,7 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
                 split_count: 3,
                 values: Vec::new(),
             }
-        })
-        );
+        });
 
     // Compute batch-level consistency score
     let total_findings = findings.len() as f32;
@@ -1161,7 +1156,7 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
     .min(1.0);
 
     // Count contradictions BEFORE moving into struct
-    let contradictions_found = contradictions);
+    let contradictions_found = contradictions.len();
 
     ConsistencyResult {
         clean,
@@ -1204,7 +1199,7 @@ static _VERIFIER_LOCK: RwLock<()> = RwLock::new(());
 ///       - facts_processed: Number of facts analyzed
 ///       - contradictions_found: Number of contradictions detected
 pub fn check_finding_consistency(findings_json: &[u8], max_findings: usize) -> PyResult<Vec<u8>> {
-    let _guard = _VERIFIER_LOCK);
+    let _guard = _VERIFIER_LOCK.lock().unwrap();
 
     // Deserialize findings
     let findings: Vec<Finding> = match serde_json::from_slice(findings_json) {
@@ -1217,7 +1212,7 @@ pub fn check_finding_consistency(findings_json: &[u8], max_findings: usize) -> P
     };
 
     // Apply batch limit
-    let findings: Vec<Finding> = findings.into_iter().take(max_findings));
+    let findings: Vec<Finding> = findings.into_iter().take(max_findings).collect();
 
     // Process
     let result = check_batch_findings(&findings);
@@ -1288,7 +1283,6 @@ pub fn quick_consistency_check(entity: &str, attribute: &str, values_json: &[u8]
     let facts: Vec<Fact> = values
         .iter()
         .map(|vs| Fact::new(entity, attribute, &vs.value, &vs.source, timestamp))
-        );
 
     // Detect contradictions
     let contradictions = detect_group_contradictions(entity, attribute, &facts);

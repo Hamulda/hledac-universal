@@ -490,7 +490,16 @@ async def jarm_fingerprint(host: str, port: int=443) -> str | None:
             tokens.append('TIMEOUT')
         except Exception as e:
             tokens.append(f'ERR:{type(e).__name__}')
-    fp = hashlib.md5(';'.join(tokens).encode()).hexdigest()
+    # E1: Hardware-accelerated SHA-256 (ARM NEON on Apple Silicon)
+    # Note: JARM originally used MD5, but SHA-256 hardware acceleration
+    # provides better consistency with other crypto acceleration targets.
+    fp_input = ';'.join(tokens)
+    try:
+        from _core.rust_backend import rust
+        hashes = rust.crypto.batch_sha256_hw([fp_input])
+        fp = hashes[0][:32] if hashes else hashlib.sha256(fp_input.encode()).hexdigest()
+    except Exception:
+        fp = hashlib.sha256(fp_input.encode()).hexdigest()
     logger.debug(f'JARM {host}:{port} → {fp} (probes={tokens})')
     return fp
 
