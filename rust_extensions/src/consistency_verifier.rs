@@ -363,7 +363,7 @@ impl Finding {
 
     /// Convert to a Fact for contradiction detection.
     fn to_fact(&self, attribute: &str) -> Option<Fact> {
-        let entity = self.entity();
+        let entity = self.entity_value.as_deref().unwrap_or_default();
         if entity.is_empty() {
             return None;
         }
@@ -402,7 +402,7 @@ impl Finding {
         if let Some(ref prov) = self.provenance {
             for item in prov {
                 if let Some(domain) = extract_domain_from_text(item) {
-                    let entity = self.entity();
+                    let entity = self.entity_value.as_deref().unwrap_or_default();
                     let norm_domain = normalize_domain(&domain);
                     let norm_entity = normalize_domain(&entity);
                     if norm_domain != norm_entity {
@@ -417,12 +417,11 @@ impl Finding {
             .text
             .clone()
             .or_else(|| self.snippet.clone())
-            .or_else(|| self.title.clone())
-;
+            .or_else(|| self.title.clone());
 
         if !text_content.is_empty() {
             if let Some(domain) = extract_domain_from_text(&text_content) {
-                let entity = self.entity();
+                let entity = self.entity_value.as_deref().unwrap_or_default();
                 let norm_domain = normalize_domain(&domain);
                 let norm_entity = normalize_domain(&entity);
                 if norm_domain != norm_entity {
@@ -449,7 +448,7 @@ fn current_timestamp() -> i64 {
 
 /// Check if a value looks like an IP address.
 fn looks_like_ip(value: &str) -> bool {
-    let parts: Vec<&str> = value.split('.').collect::<Vec<_>>();
+    let parts: Vec<&str> = value.split('.').collect();
     parts.len() == 4 && parts.iter().all(|p| p.parse::<u8>().is_ok())
 }
 
@@ -647,7 +646,7 @@ fn detect_group_contradictions(
             .push(fact);
     }
 
-    let values: Vec<String> = value_groups.keys().cloned().collect();;
+    let values: Vec<String> = value_groups.keys().cloned().collect();
 
     // Check for contradictions between different values
     for i in 0..values.len() {
@@ -954,7 +953,8 @@ fn compute_entity_consistency_score(facts: &[Fact], contradictions: &[Contradict
     let source_count = facts
         .iter()
         .map(|f| &f.source)
-        .collect::<HashSet<_>>();
+        .collect::<HashSet<_>>()
+.collect::<HashSet<_>>();
     if source_count < 2 {
         return 1.0; // Single source = no contradiction possible
     }
@@ -1098,7 +1098,8 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
                 finding_id: fid.clone(),
                 entity: finding.map(|f| f.entity()).unwrap_or_default(),
                 ioc_type: finding
-                    .map(|f| f.ioc_type())
+                    .map(|f| f.ioc_type.clone())
+                    .flatten()
                     .unwrap_or_else(|| "unknown".to_string()),
                 consistency_score: 1.0,
             }
@@ -1108,13 +1109,16 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
         .iter()
         .map(|fid| {
             let finding = findings.iter().find(|f| f.finding_id.as_ref() == Some(fid));
-            let entity = finding.and_then(|f| f.entity_value.as_ref()).map(|s| s.as_str()).unwrap_or_default();
+            let entity = finding
+                .and_then(|f| f.entity_value.as_ref().map(|s| s.as_str()).map(|s| s.to_string()))
+                .unwrap_or_default();
             let score = entity_scores.get(&entity).copied().unwrap_or(0.5);
             ContradictoryFinding {
                 finding_id: fid.clone(),
                 entity: entity.clone(),
                 ioc_type: finding
-                    .map(|f| f.ioc_type())
+                    .map(|f| f.ioc_type.clone())
+                    .flatten()
                     .unwrap_or_else(|| "unknown".to_string()),
                 consistency_score: score,
                 contradiction_type: "source_conflict".to_string(),
@@ -1122,24 +1126,29 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
                 conflicting_value: String::new(),
                 conflicting_source: String::new(),
             }
-        });
+        })
+        .collect();
 
     let disputed: Vec<DisputedFinding> = disputed_ids
         .iter()
         .map(|fid| {
             let finding = findings.iter().find(|f| f.finding_id.as_ref() == Some(fid));
-            let entity = finding.and_then(|f| f.entity_value.as_ref()).map(|s| s.as_str()).unwrap_or_default();
+            let entity = finding
+                .and_then(|f| f.entity_value.as_ref().map(|s| s.as_str()).map(|s| s.to_string()))
+                .unwrap_or_default();
             DisputedFinding {
                 finding_id: fid.clone(),
                 entity: entity.clone(),
                 ioc_type: finding
-                    .map(|f| f.ioc_type())
+                    .map(|f| f.ioc_type.clone())
+                    .flatten()
                     .unwrap_or_else(|| "unknown".to_string()),
                 consistency_score: 0.0,
                 split_count: 3,
                 values: Vec::new(),
             }
-        });
+        })
+        .collect();
 
     // Compute batch-level consistency score
     let total_findings = findings.len() as f32;
@@ -1283,6 +1292,7 @@ pub fn quick_consistency_check(entity: &str, attribute: &str, values_json: &[u8]
     let facts: Vec<Fact> = values
         .iter()
         .map(|vs| Fact::new(entity, attribute, &vs.value, &vs.source, timestamp))
+        .collect();
 
     // Detect contradictions
     let contradictions = detect_group_contradictions(entity, attribute, &facts);
@@ -1395,6 +1405,6 @@ mod tests {
         assert!(
             score < 1.0,
             "Score should be less than 1.0 with contradiction"
-        );
+        )
     }
 }

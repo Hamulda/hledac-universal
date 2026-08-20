@@ -86,6 +86,21 @@ def _python_hamming_dist(a: int, b: int) -> int:
     return (a ^ b).bit_count()
 
 
+def _python_find_near_duplicates(fingerprints: list[int], threshold: int = 3) -> list[tuple[int, int]]:
+    """Pure-Python fallback: find near-duplicate fingerprint pairs.
+
+    G4 Extension: O(n²) brute-force. Threshold = max Hamming distance for near-duplicate.
+    """
+    n = len(fingerprints)
+    results: list[tuple[int, int]] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            dist = _python_hamming_dist(fingerprints[i], fingerprints[j])
+            if dist <= threshold:
+                results.append((i, j))
+    return results
+
+
 def _python_is_near_duplicate(text_a: str, text_b: str, threshold: int = 3, ngram_size: int = 2) -> bool:
     """Pure-Python is_near_duplicate check."""
     fp_a = _python_compute_simhash(text_a, ngram_size)
@@ -246,6 +261,23 @@ class _RustSimhashDomain:
             return [_python_compute_simhash(t) for t in texts]
         return self._ext.batch_compute_simhash(texts)
 
+    def find_near_duplicates(self, fingerprints: list[int], threshold: int = 3) -> list[tuple[int, int]]:
+        """[SAFE-3] Find near-duplicate pairs from pre-computed fingerprints.
+
+        G4 Extension: Added find_near_duplicates for batch near-duplicate detection.
+        O(n²) brute-force over fingerprints. Used by semantic_deduplicator.py.
+        """
+        if self._ffi_cb is not None:
+            def rust_call() -> list[tuple[int, int]]:
+                return self._ext.find_near_duplicates(fingerprints, threshold)
+            result = self._ffi_cb.call_or_fallback(
+                FFI_MODULE_SIMHASH, rust_call, (fingerprints, threshold)
+            )
+            if result.success:
+                return result.value  # type: ignore[return-value]
+            return _python_find_near_duplicates(fingerprints, threshold)
+        return self._ext.find_near_duplicates(fingerprints, threshold)
+
 
 class _PythonSimhashDomain:
     """
@@ -285,6 +317,11 @@ class _PythonSimhashDomain:
     # C4: Added SimHashStore
     def SimHashStore(self, threshold: int = 3, ngram_size: int = 2) -> _PythonSimHashStore:
         return _PythonSimHashStore(threshold, ngram_size)
+
+    # G4: Added find_near_duplicates
+    @staticmethod
+    def find_near_duplicates(fingerprints: list[int], threshold: int = 3) -> list[tuple[int, int]]:
+        return _python_find_near_duplicates(fingerprints, threshold)
 
 
 def _fnv64_hash(s: str) -> int:

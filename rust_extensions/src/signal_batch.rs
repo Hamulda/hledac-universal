@@ -886,6 +886,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_compute_scores))?;
     m.add_function(wrap_pyfunction!(batch_aggregate_signals))?;
     m.add_function(wrap_pyfunction!(batch_quality_score))?;
+    m.add_function(wrap_pyfunction!(batch_fallback_decide))?;
     Ok(())
 }
 
@@ -1009,5 +1010,246 @@ mod tests {
         let r = aggregate_signals_inner(&signals, &weights, true);
         assert!((r[0] - 3.0_f32).abs() < 1e-6); // only source 1
         assert!((r[1] - 4.0_f32).abs() < 1e-6);
+    }
+}
+
+// ============================================================================
+// G6: Feed Decision Batch — Sprint integration
+// ============================================================================
+
+/// Minimum chars threshold for article fallback (mirrors feed_decision.rs).
+const MIN_ARTICLE_FALLBACK_CHARS: i32 = 150;
+
+/// Batch fallback decision using feed_decision_classify logic.
+/// Uses rayon for parallel processing.
+///
+/// Input dict keys:
+///   - assembled_text_len: i32
+///   - pre_fallback_hits_count: i32
+///   - quality_band: str ("high", "medium", "low", "unknown")
+///   - metadata_boost: bool
+///   - language_mismatch: bool
+///   - article_fallback_used: bool
+///   - article_fallback_attempted: bool
+///   - post_fallback_findings_count: i32
+///   - adapter_source_priority_bias: f64
+///   - adapter_metadata_richness_band: str ("high", "medium", "low")
+///
+/// Returns list of (reason, should_fetch, forced, wasted, helpful, skip_because).
+#[pyfunction]
+#[pyo3(signature = (decisions,))]
+pub fn batch_fallback_decide(
+    _py: Python<'_>,
+    decisions: &Bound<'_, PyList>,
+) -> PyResult<Vec<(String, bool, bool, bool, bool, String)>> {
+    use rayon::prelude::*;
+
+    let n = decisions.len();
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Extract all params into owned Vec for rayon
+    let params: Vec<(i32, i32, String, bool, bool, bool, bool, i32, f64, String)> = decisions
+        .iter()
+        .map(|item| {
+            let dict = item.cast::<pyo3::types::PyDict>();
+            let get_i32 = |d: &Bound<'_, pyo3::types::PyDict>, key: &str, default: i32| -> i32 {
+                d.get_item(key).ok().flatten().and_then(|v| v.extract().ok()).unwrap_or(default)
+            };
+            let get_bool = |d: &Bound<'_, pyo3::types::PyDict>, key: &str, default: bool| -> bool {
+                d.get_item(key).ok().flatten().and_then(|v| v.extract().ok()).unwrap_or(default)
+            };
+            let get_f64 = |d: &Bound<'_, pyo3::types::PyDict>, key: &str, default: f64| -> f64 {
+                d.get_item(key).ok().flatten().and_then(|v| v.extract().ok()).unwrap_or(default)
+            };
+            let get_str = |d: &Bound<'_, pyo3::types::PyDict>, key: &str, default: &'static str| -> String {
+                d.get_item(key).ok().flatten().and_then(|v| v.extract().ok()).unwrap_or_else(|| default.to_string())
+            };
+            
+            (
+                get_i32(dict, "assembled_text_len", 0),
+                get_i32(dict, "pre_fallback_hits_count", 0),
+                get_str(dict, "quality_band", "unknown"),
+                get_bool(dict, "metadata_boost", false),
+                get_bool(dict, "language_mismatch", false),
+                get_bool(dict, "article_fallback_used", false),
+                get_bool(dict, "article_fallback_attempted", false),
+                get_i32(dict, "post_fallback_findings_count", 0),
+                get_f64(dict, "adapter_source_priority_bias", 0.0),
+                get_str(dict, "adapter_metadata_richness_band", "unknown"),
+            )
+        })
+        .collect();
+
+    // Parallel classification via rayon
+    let results: Vec<(String, bool, bool, bool, bool, String)> = params
+        .par_iter()
+        .map(|(assembled_text_len, pre_fallback_hits_count, quality_band, metadata_boost,
+               language_mismatch, article_fallback_used, article_fallback_attempted,
+               post_fallback_findings_count, adapter_source_priority_bias, adapter_metadata_richness_band)| {
+            fallback_decide_inner(
+                *assembled_text_len,
+                *pre_fallback_hits_count,
+                quality_band,
+                *metadata_boost,
+                *language_mismatch,
+                *article_fallback_used,
+                *article_fallback_attempted,
+                *post_fallback_findings_count,
+                *adapter_source_priority_bias,
+                adapter_metadata_richness_band,
+            )
+        })
+        .collect();
+
+    Ok(results)
+}
+
+/// Inner pure function for fallback decision (mirrors feed_decision_classify).
+fn fallback_decide_inner(
+    assembled_text_len: i32,
+    pre_fallback_hits_count: i32,
+    quality_band: &str,
+    metadata_boost: bool,
+    language_mismatch: bool,
+    _article_fallback_used: bool,
+    article_fallback_attempted: bool,
+    post_fallback_findings_count: i32,
+    adapter_source_priority_bias: f64,
+    adapter_metadata_richness_band: &str,
+) -> (String, bool, bool, bool, bool, String) {
+    // Case 1: pre-fallback hits exist → wasteful fallback
+    if pre_fallback_hits_count > 0 {
+        return (
+            "feed_native_had_signal".to_string(),
+            false,
+            false,
+            true,
+            false,
+            "feed-native already carried hits".to_string(),
+        );
+    }
+
+    // Case 2: article fallback was not attempted
+    if !article_fallback_attempted {
+        if assembled_text_len >= MIN_ARTICLE_FALLBACK_CHARS
+            && (quality_band == "high" || quality_band == "medium")
+        {
+            return (
+                "skipped_high_quality".to_string(),
+                false,
+                false,
+                false,
+                false,
+                format!("high quality ({}), assembled {} chars", quality_band, assembled_text_len),
+            );
+        }
+        if adapter_source_priority_bias >= 0.1 && assembled_text_len >= MIN_ARTICLE_FALLBACK_CHARS {
+            return (
+                "skipped_adapter_bias".to_string(),
+                false,
+                false,
+                false,
+                false,
+                format!("adapter source_priority_bias={:.2}", adapter_source_priority_bias),
+            );
+        }
+        return (
+            "no_fetch_warranted".to_string(),
+            false,
+            false,
+            false,
+            false,
+            format!("assembled={}, quality={}", assembled_text_len, quality_band),
+        );
+    }
+
+    // Case 3: forced by metadata/content mismatch
+    if metadata_boost && !language_mismatch && assembled_text_len < MIN_ARTICLE_FALLBACK_CHARS {
+        if post_fallback_findings_count > 0 {
+            return ("forced_metadata_mismatch".to_string(), true, true, false, true, String::new());
+        }
+        return ("forced_no_yield".to_string(), true, true, true, false, String::new());
+    }
+
+    // Case 4: aged but structured entry
+    if assembled_text_len >= MIN_ARTICLE_FALLBACK_CHARS && quality_band == "low" {
+        if post_fallback_findings_count > 0 {
+            return ("aged_structured_yield".to_string(), true, true, false, true, String::new());
+        }
+        return ("aged_structured_no_yield".to_string(), true, true, true, false, String::new());
+    }
+
+    // Case 5: adapter-mandated fallback
+    if adapter_metadata_richness_band == "high" && assembled_text_len < MIN_ARTICLE_FALLBACK_CHARS {
+        if post_fallback_findings_count > 0 {
+            return ("forced_adapter_metadata".to_string(), true, true, false, true, String::new());
+        }
+        return ("forced_adapter_no_yield".to_string(), true, true, true, false, String::new());
+    }
+
+    // Case 6: normal below-threshold fallback
+    if post_fallback_findings_count > 0 {
+        return ("normal_fallback_yield".to_string(), true, false, false, true, String::new());
+    }
+    ("normal_fallback_no_yield".to_string(), true, false, false, false, String::new())
+}
+
+#[cfg(test)]
+mod feed_decision_tests {
+    use super::*;
+
+    #[test]
+    fn test_batch_fallback_decide_empty() {
+        let results = fallback_decide_inner(0, 0, "unknown", false, false, false, false, 0, 0.0, "unknown");
+        assert_eq!(results.0, "no_fetch_warranted");
+    }
+
+    #[test]
+    fn test_batch_fallback_pre_hits() {
+        let results = fallback_decide_inner(200, 5, "high", false, false, false, true, 0, 0.0, "high");
+        assert_eq!(results.0, "feed_native_had_signal");
+        assert!(!results.1); // should_fetch = false
+        assert!(results.3);  // wasted = true
+    }
+
+    #[test]
+    fn test_batch_fallback_high_quality_skip() {
+        let results = fallback_decide_inner(200, 0, "high", false, false, false, false, 0, 0.0, "high");
+        assert_eq!(results.0, "skipped_high_quality");
+        assert!(!results.1); // should_fetch = false
+    }
+
+    #[test]
+    fn test_batch_fallback_forced_yield() {
+        let results = fallback_decide_inner(100, 0, "medium", true, false, false, true, 3, 0.0, "low");
+        assert_eq!(results.0, "forced_metadata_mismatch");
+        assert!(results.1);  // should_fetch = true
+        assert!(results.2);  // forced = true
+        assert!(!results.3); // wasted = false
+        assert!(results.4);  // helpful = true
+    }
+
+    #[test]
+    fn test_batch_fallback_normal_yield() {
+        let results = fallback_decide_inner(100, 0, "low", false, false, false, true, 2, 0.0, "low");
+        assert_eq!(results.0, "aged_structured_yield");
+        assert!(results.4); // helpful = true
+    }
+
+    #[test]
+    fn test_batch_fallback_adapter_forced() {
+        let results = fallback_decide_inner(80, 0, "low", false, false, false, true, 1, 0.0, "high");
+        assert_eq!(results.0, "forced_adapter_metadata");
+        assert!(results.2); // forced = true
+    }
+
+    #[test]
+    fn test_batch_fallback_no_yield() {
+        let results = fallback_decide_inner(80, 0, "low", false, false, false, true, 0, 0.0, "low");
+        assert_eq!(results.0, "normal_fallback_no_yield");
+        assert!(results.1); // should_fetch = true
+        assert!(!results.4); // helpful = false
     }
 }

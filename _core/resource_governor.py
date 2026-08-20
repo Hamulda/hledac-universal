@@ -1314,11 +1314,11 @@ class M1ThermalMonitor:
 
     @staticmethod
     def _get_cpu_core_count() -> int:
-        """Počet CPU jader (P+E jádra)."""
+        """Počet CPU jader (P+E jádra) via _core.topology."""
         try:
-            import psutil as _psutil
-
-            return _psutil.cpu_count(logical=False) or 8
+            from _core.topology import get_topology
+            t = get_topology()
+            return t.p_cores + t.e_cores
         except Exception:
             return 8  # Default pro M1
 

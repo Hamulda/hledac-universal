@@ -1185,20 +1185,8 @@ class SourceFamilyOutcome(Struct, frozen=True):
     def to_dict(self) -> dict:
         return {'family': self.family, 'attempted': self.attempted, 'skipped': self.skipped, 'skip_reason': self.skip_reason, 'raw_count': self.raw_count, 'built_count': self.built_count, 'accepted_count': self.accepted_count, 'error': self.error, 'timeout': self.timeout, 'duration_s': round(self.duration_s, 3) if self.duration_s is not None else None, 'terminal_state': self.terminal_state}
 
-def normalize_source_family_name(value: str) -> str:
-    """Normalize a source family name to its canonical lowercase form.
-
-    Maps mixed-case variants to their canonical lowercase representation so that
-    "CT", "ct", "Ct" all resolve to "ct", preventing duplicate outcomes for the same
-    logical family in a single acquisition report.
-
-    Canonical families: feed, public, ct, wayback, passive_dns, academic, ipfs, pivot.
-    """
-    if not isinstance(value, str):
-        return 'unknown'
-    _v = value.strip().lower()
-    _alias_map = {'ct': 'ct', 'public': 'public', 'feed': 'feed', 'wayback': 'wayback', 'passive_dns': 'passive_dns', 'academic': 'academic', 'ipfs': 'ipfs', 'pivot': 'pivot', 'blockchain': 'blockchain', 'ct_log': 'ct', 'passivedns': 'passive_dns', 'passive-dns': 'passive_dns'}
-    return _alias_map.get(_v, _v)
+# normalize_source_family_name imported from utils._patterns
+from hledac.universal.utils._patterns import normalize_source_family_name
 _TERMINAL_PRIORITY = {'ATTEMPTED_ACCEPTED': 0, 'ATTEMPTED_TIMEOUT': 1, 'ATTEMPTED_ERROR': 2, 'ATTEMPTED_NO_RESULTS': 3, 'SKIPPED_BY_MEMORY': 4, 'SKIPPED_BY_POLICY': 5, 'SKIPPED': 6, 'NEVER_SCHEDULED': 7, 'UNKNOWN': 8}
 
 

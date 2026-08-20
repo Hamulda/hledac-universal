@@ -81,18 +81,38 @@ T = TypeVar("T")
 
 
 # ---------------------------------------------------------------------------
-# Centralized Rust Backend Access
+# Centralized Rust Backend Access (Lazy Import - ISSUE-007 FIX)
 # ---------------------------------------------------------------------------
-from _core.rust_backend import rust as _rust_backend
+# Lazy import to avoid circular dependency issues with _core.rust_backend
+_rust_backend = None
+
+
+def _get_rust_backend():
+    """Lazy getter for rust backend."""
+    global _rust_backend
+    if _rust_backend is None:
+        try:
+            from _core.rust_backend import rust as _rb
+            _rust_backend = _rb
+        except Exception:
+            # Return a dummy object that indicates unavailability
+            class NoRust:
+                is_available = False
+            _rust_backend = NoRust()
+    return _rust_backend
 
 
 def _rust_available(module_name: str) -> bool:
     """Check if a Rust module is available."""
-    return (
-        _rust_backend.is_available
-        and hasattr(_rust_backend, module_name)
-        and getattr(_rust_backend, module_name, None) is not None
-    )
+    try:
+        rb = _get_rust_backend()
+        return (
+            rb.is_available
+            and hasattr(rb, module_name)
+            and getattr(rb, module_name, None) is not None
+        )
+    except Exception:
+        return False
 
 
 # ============================================================================
@@ -2848,5 +2868,89 @@ __all__ = [
     "get_ioc_dedup",
     "get_signal_batch",
     "get_aimd",  # C13: AIMD controller singleton
+    "MPSCIntegration",  # G5.MPSC_POOL: Bounded MPSC queue
     "get_deobfuscate",  # C14: IOC deobfuscation
+    "get_mpsc",  # G5.MPSC_POOL: Factory function
 ]
+
+
+# ============================================================================
+# G5.MPSC_POOL: Multi-Producer Single-Consumer Pool Integration
+# ============================================================================
+# Source: rust_extensions/src/mpsc_pool.rs
+# Purpose: Bounded MPSC queue replacing asyncio.Queue for fetch coordinator
+# Target: coordinators/fetch_coordinator.py:_micro_sprint_queue, _entropy_bridge_queue
+# Benefit: Lock-free via crossbeam, ARM LSE atomics, zero-copy serialization
+
+
+_mpsc_instance: "MPSCIntegration | None" = None
+
+
+class MPSCIntegration:
+    """
+    Facade for mpsc_pool.rs Rust module.
+
+    Provides bounded MPSC queue with:
+    - Lock-free send/recv via crossbeam-channel
+    - Pipe-based async wake-up (no polling)
+    - Non-blocking send() with backpressure signal
+    - msgspec serialization for zero-copy transfer
+
+    M1 8GB: Pre-allocated ring buffer (2048 slots × 512 bytes ≈ 1 MiB)
+    """
+
+    __slots__ = ("_available", "_queue", "_default_capacity")
+
+    def __init__(self, default_capacity: int = 32) -> None:
+        self._default_capacity = default_capacity
+        # Lazy initialization
+        self._available = _rust_available("mpsc_pool")
+        self._queue = None
+
+    @property
+    def available(self) -> bool:
+        """Check if Rust mpsc_pool is available."""
+        return self._available
+
+    @property
+    def queue(self) -> Any:
+        """Get or create default queue instance."""
+        if self._queue is None:
+            from rust_extensions.wiring.mpsc_pool_wiring import get_mpsc_queue
+
+            self._queue = get_mpsc_queue(self._default_capacity)
+        return self._queue
+
+    def get_queue(self, capacity: int | None = None) -> Any:
+        """
+        Get an MPSCQueue with specified capacity.
+
+        Args:
+            capacity: Queue depth (None = use default_capacity)
+
+        Returns:
+            MPSCQueue instance
+        """
+        from rust_extensions.wiring.mpsc_pool_wiring import get_mpsc_queue
+
+        cap = capacity or self._default_capacity
+        return get_mpsc_queue(cap)
+
+
+def get_mpsc() -> MPSCIntegration:
+    """
+    Get singleton MPSC integration instance.
+
+    G5.MPSC_POOL: Wired to fetch_coordinator for micro-sprint queue.
+
+    Returns:
+        MPSCIntegration singleton
+    """
+    global _mpsc_instance
+    if _mpsc_instance is None:
+        _mpsc_instance = MPSCIntegration(default_capacity=32)
+        if _mpsc_instance.available:
+            logger.info("[MPSC] Rust mpsc_pool.rs integration: ENABLED")
+        else:
+            logger.info("[MPSC] Rust mpsc_pool.rs integration: DISABLED (using asyncio.Queue fallback)")
+    return _mpsc_instance

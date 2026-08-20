@@ -76,7 +76,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any
+from utils._patterns import cosine_similarity, batch_cosine_similarity  # noqa: E402, Generic, TypeVar
 from collections.abc import Callable
 from operator import attrgetter, itemgetter
 from otel._buffer import BoundedRing
@@ -606,31 +607,13 @@ def _python_dedup_check_and_add(item: str, seen_set: set[str]) -> bool:
             seen_set.pop()
     return False
 
-def _python_simd_cosine_similarity(a: list[float], b: list[float]) -> float:
-    """
-    Pure Python fallback for simd_cosine_similarity.
-    
-    Computes cosine similarity without SIMD acceleration.
-    M1 8GB: Safe, no external dependencies.
-    """
-    if len(a) != len(b) or len(a) == 0:
-        return 0.0
-    dot_product = sum((x * y for x, y in zip(a, b)))
-    norm_a = sum((x * x for x in a)) ** 0.5
-    norm_b = sum((x * x for x in b)) ** 0.5
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot_product / (norm_a * norm_b)
-
 def _python_batch_simd_cosine_similarity(vectors: list[list[float]], query: list[float]) -> list[float]:
     """
     Pure Python fallback for batch_simd_cosine_similarity.
     
     Computes cosine similarity for multiple vectors without SIMD.
     """
-    if not vectors or not query:
-        return []
-    return [_python_simd_cosine_similarity(v, query) for v in vectors]
+    return batch_cosine_similarity(vectors, query)
 
 def _noop_simd_cosine_similarity(*args: Any, **kwargs: Any) -> float:
     """No-op for simd_cosine_similarity — returns 0.0 (no similarity)."""

@@ -391,6 +391,39 @@ impl SimHashStore {
     }
 }
 
+// ===== find_near_duplicates — called from semantic_deduplicator.py =====
+
+/// Finds all near-duplicate pairs in a batch of pre-computed fingerprints.
+/// O(n²) brute-force over fingerprints. Threshold: ≤ threshold bits differ.
+///
+/// ## Arguments
+/// - `fingerprints`: Pre-computed SimHash fingerprints (list of u64)
+/// - `threshold`: Max Hamming distance for near-duplicate (default: 3)
+///
+/// ## Returns
+/// List of (i, j) index pairs where texts[i] and texts[j] are near-duplicates.
+///
+/// Used by: `semantic_deduplicator.py::find_near_duplicates_in_batch()`
+///
+/// ## Performance
+/// - <100 items: O(n²) acceptable (worst case ~5K comparisons)
+/// - >1000 items: Consider partitioning by top-K bits or LSH index
+#[pyfunction]
+#[pyo3(signature = (fingerprints, threshold=3))]
+pub fn find_near_duplicates(fingerprints: Vec<u64>, threshold: u32) -> Vec<(u32, u32)> {
+    let n = fingerprints.len();
+    let mut results: Vec<(u32, u32)> = Vec::with_capacity(n * 2);
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let dist = hamming_distance(fingerprints[i], fingerprints[j]);
+            if dist <= threshold {
+                results.push((i as u32, j as u32));
+            }
+        }
+    }
+    results
+}
+
 // ===== Module Registration =====
 
 /// Registers all SimHash functions and classes with Python module.
@@ -401,6 +434,7 @@ impl SimHashStore {
 /// - `batch_compute_simhash(texts, ngram_size=2)` → Vec<u64>
 /// - `hamming_dist(a, b)` → u32
 /// - `is_near_duplicate(text_a, text_b, threshold=3, ngram_size=2)` → bool
+/// - `find_near_duplicates(fingerprints, threshold=3)` → Vec<(u32,u32)]
 /// - `SimHashStore(threshold=3, ngram_size=2)` → class
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(simhash))?;
@@ -408,6 +442,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_compute_simhash))?;
     m.add_function(wrap_pyfunction!(hamming_dist))?;
     m.add_function(wrap_pyfunction!(is_near_duplicate))?;
+    m.add_function(wrap_pyfunction!(find_near_duplicates))?;
     m.add_class::<SimHashStore>()?;
     Ok(())
 }
@@ -519,5 +554,40 @@ mod tests {
         let texts: Vec<String> = (0..50).map(|i| format!("item {}", i)));
         let result = batch_compute_simhash(texts.clone(), 2);
         assert_eq!(result.len(), 50);
+    }
+
+    #[test]
+    fn test_find_near_duplicates_basic() {
+        let fps = vec![0x123456789ABCDEF0u64, 0x123456789AbCDE03, 0xDEADBEEF12345678];
+        // fp[0] and fp[1] differ by 3 bits → threshold=3: near-duplicate
+        let result = find_near_duplicates(fps.clone(), 3);
+        assert_eq!(result.len(), 1, "Should find 1 near-duplicate pair");
+        assert_eq!(result[0], (0, 1), "Pair should be (0, 1)");
+    }
+
+    #[test]
+    fn test_find_near_duplicates_none() {
+        let fps = vec![0x123456789ABCDEF0u64, 0xDEADBEEF12345678];
+        // Different texts → Hamming distance large → no near-duplicates
+        let result = find_near_duplicates(fps, 3);
+        assert!(result.is_empty(), "Should find no near-duplicates for different texts");
+    }
+
+    #[test]
+    fn test_find_near_duplicates_multiple() {
+        let fp1 = 0x123456789ABCDEF0u64;
+        let fp2 = fp1 ^ 0b11u64; // differ by 2 bits
+        let fp3 = fp1 ^ 0b1010u64; // differ by 3 bits
+        let fp4 = 0xDEADBEEF12345678u64; // completely different
+        let fps = vec![fp1, fp2, fp3, fp4];
+        let result = find_near_duplicates(fps, 3);
+        // fp1↔fp2 (dist=2), fp1↔fp3 (dist=3), fp2↔fp3 (dist=1)
+        assert_eq!(result.len(), 3, "Should find 3 near-duplicate pairs");
+    }
+
+    #[test]
+    fn test_find_near_duplicates_empty() {
+        let result = find_near_duplicates(vec![], 3);
+        assert!(result.is_empty());
     }
 }

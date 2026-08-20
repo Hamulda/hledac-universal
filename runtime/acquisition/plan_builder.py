@@ -32,6 +32,7 @@ from hledac.universal.runtime.acquisition.mission import infer_mission_intent
 from hledac.universal.runtime.acquisition.nonfeed_outcomes import (
     AcquisitionStrategySnapshot,
 )
+from hledac.universal.utils._patterns import normalize_source_family_name
 
 
 # Stable canonical schema version for acquisition report (F208C)
@@ -52,26 +53,6 @@ _CRYPTO_WALLET_RE = re.compile(
     r"\b(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b"
 )
 _CRYPTO_HASH_RE = re.compile(r"\b[a-fA-F0-9]{64}\b")
-# Source family name aliases (module-level constant — avoids dict allocation per call)
-_SOURCE_FAMILY_ALIASES: dict[str, str] = {
-    "FEED": "FEED",
-    "PUBLIC": "PUBLIC",
-    "CT": "CT",
-    "WAYBACK": "WAYBACK",
-    "PASSIVE_DNS": "PASSIVE_DNS",
-    "DNS": "PASSIVE_DNS",
-    "BLOCKCHAIN": "BLOCKCHAIN",
-    "STEALTH": "STEALTH",
-    "PIVOT_EXECUTOR": "PIVOT_EXECUTOR",
-    "PIVOT": "PIVOT_EXECUTOR",
-    "ACADEMIC": "ACADEMIC",
-    "IPFS": "IPFS",
-    "DOH": "DOH",
-    "OPEN_SOURCE": "OPEN_SOURCE",
-    "SHODAN": "SHODAN",
-    "CENSYS": "CENSYS",
-    "GREYNOISE": "GREYNOISE",
-}
 # Terminal state priority (module-level constant — avoids dict allocation per call)
 _TERMINAL_STATE_PRIORITY: dict[str, int] = {
     "COMPLETE": 0,
@@ -477,22 +458,6 @@ def lane_skip_reason(
     return plan.reason
 
 
-# ── Source family normalization ─────────────────────────────────────────────────────
-
-
-def normalize_source_family_name(value: str) -> str:
-    """
-    Normalize source family name to canonical form.
-
-    GHOST_INVARIANTS:
-      - No network I/O, no model/MLX load
-      - Deterministic: same input always same output
-    """
-    if not value:
-        return "UNKNOWN"
-    normalized = value.upper().strip()
-    return _SOURCE_FAMILY_ALIASES.get(normalized, "UNKNOWN")
-
 
 def _pick_best_terminal(outcomes: list[dict]) -> str:
     """Pick the best terminal state from a list of outcomes."""
@@ -516,7 +481,7 @@ def canonicalize_source_family_outcomes(outcomes: list[dict]) -> list[dict]:
     """
     family_map: dict[str, dict] = {}
     for outcome in outcomes:
-        family = outcome.get("family", "UNKNOWN")
+        family = outcome.get("family", "unknown")
         if family not in family_map:
             family_map[family] = {
                 "family": family,

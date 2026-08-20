@@ -51,7 +51,8 @@ import os
 import platform
 import threading
 from collections.abc import Sequence
-__all__ = ['set_mlx_affinity', 'set_io_affinity', 'get_p_core_mask', 'get_e_core_mask', 'get_core_topology', 'CoreType', 'is_apple_silicon', 'get_cluster_utilization', 'ClusterUtilization']
+from typing import Any
+__all__ = ['set_mlx_affinity', 'set_io_affinity', 'get_p_core_mask', 'get_e_core_mask', 'get_core_topology', 'CoreType', 'is_apple_silicon', 'get_cluster_utilization', 'ClusterUtilization', 'set_affinity', 'get_affinity']
 logger = logging.getLogger(__name__)
 
 class CoreType:
@@ -63,16 +64,32 @@ class CoreType:
 def is_apple_silicon() -> bool:
     """Check if running on Apple Silicon (M1/M2/M3/M4)."""
     return platform.system() == 'Darwin' and platform.machine() == 'arm64'
-_libc = ctypes.CDLL(None)
+
+# Lazy-loaded ctypes bindings (loaded on first use)
+_libc: Any = None
+pthread_setaffinity_np: Any = None
 CPU_SETSIZE = 1024
-CPU_MASK_SIZE = ctypes.sizeof(ctypes.c_uint32 * (CPU_SETSIZE // 32))
+CPU_MASK_SIZE = 128  # 1024 bits = 128 bytes
 
 class _cpuset_macos(ctypes.Structure):
     """macOS cpuset structure for pthread_setaffinity_np."""
     _fields_ = [('__bits', ctypes.c_uint32 * (CPU_SETSIZE // 32))]
-pthread_setaffinity_np = _libc.pthread_setaffinity_np
-pthread_setaffinity_np.argtypes = ([ctypes.c_long, ctypes.c_size_t, ctypes.POINTER(_cpuset_macos)],)
-pthread_setaffinity_np.restype = ctypes.c_int
+
+def _ensure_pthread_affinity() -> bool:
+    """Lazy load pthread_setaffinity_np on first use."""
+    global _libc, pthread_setaffinity_np
+    if _libc is None:
+        _libc = ctypes.CDLL(None)
+        try:
+            pthread_setaffinity_np = _libc.pthread_setaffinity_np
+            pthread_setaffinity_np.argtypes = ([ctypes.c_long, ctypes.c_size_t, ctypes.POINTER(_cpuset_macos)],)
+            pthread_setaffinity_np.restype = ctypes.c_int
+        except AttributeError:
+            # pthread_setaffinity_np not available (older macOS)
+            _libc = None
+            pthread_setaffinity_np = None
+            return False
+    return True
 
 def _mask_to_cpuset(mask: int) -> _cpuset_macos:
     """Convert integer bitmask to macOS cpuset structure."""
@@ -94,6 +111,9 @@ def _set_thread_affinity(mask: int) -> bool:
     """
     if not is_apple_silicon():
         logger.debug('[CPUAffinity] Not Apple Silicon, skipping affinity')
+        return False
+    if not _ensure_pthread_affinity():
+        logger.debug('[CPUAffinity] pthread_setaffinity_np not available')
         return False
     try:
         cpuset = _mask_to_cpuset(mask)
@@ -427,3 +447,83 @@ def get_cluster_utilization() -> ClusterUtilization:
 _thread_cpu_cache: dict | None = None
 _last_sample: float | None = None
 _last_cpu_time: float = 0.0
+
+# ── F5: Darwin Affinity API (MODERN-26 wiring) ─────────────────────────────
+
+def set_affinity(pool_type: str) -> bool:
+    """
+    F5. Darwin Affinity: Set CPU affinity based on pool type.
+
+    Pool type to core mapping:
+        "cpu", "mlx", "simd", "graph" → P-cores (CPU-bound)
+        "io"                          → E-cores (I/O-bound)
+        "mixed"                       → P-cores (adaptive CPU-biased)
+
+    MODERN-26: Wired into RustWorkerPool.__init__ via this API.
+    Falls back gracefully when darwin_affinity Rust module unavailable.
+
+    Usage:
+        set_affinity("cpu")   # MLX, SIMD, graph → P-cores
+        set_affinity("io")    # DuckDB, network   → E-cores
+
+    Returns:
+        True if affinity set successfully, False otherwise
+    """
+    # Try Rust darwin_affinity module first (preferred, Mach APIs)
+    try:
+        from hledac.universal._core.rust_backend import rust
+        da = rust.darwin_affinity
+        if da is not None:
+            if pool_type in ("cpu", "mlx", "simd", "graph", "mixed"):
+                da.apply_pcore_affinity_py()
+                return True
+            elif pool_type == "io":
+                da.apply_ecore_affinity_py()
+                return True
+    except Exception:
+        pass  # Fall through to pure Python
+
+    # Fallback: pure Python pthread_setaffinity_np
+    if pool_type in ("cpu", "mlx", "simd", "graph", "mixed"):
+        return set_mlx_affinity()
+    elif pool_type == "io":
+        return set_io_affinity()
+    return False
+
+
+def get_affinity() -> dict:
+    """
+    F5. Darwin Affinity: Get current thread affinity state.
+
+    Returns:
+        dict with keys:
+            - core_type: "p_core", "e_core", or "unknown"
+            - mask: integer bitmask of allowed cores
+            - darwin_affinity_used: True if Rust darwin_affinity was used
+    """
+    import threading
+    result = {
+        "core_type": "unknown",
+        "mask": 0,
+        "darwin_affinity_used": False,
+    }
+    topology = _detect_m1_topology()
+    p_mask = topology.get("p_core_mask", 0)
+    e_mask = topology.get("e_core_mask", 0)
+
+    # Detect which cores are allowed
+    if p_mask > 0 and e_mask > 0:
+        # Both available - determine from topology
+        if is_apple_silicon():
+            # Check if we have E-cores (M1 Pro/Max/Ultra)
+            if topology.get("e_cores", 0) > 0:
+                result["core_type"] = "p_core"  # Default to P if both available
+            else:
+                result["core_type"] = "p_core"  # M1 standard = P only
+    elif p_mask > 0:
+        result["core_type"] = "p_core"
+    elif e_mask > 0:
+        result["core_type"] = "e_core"
+
+    result["mask"] = p_mask | e_mask
+    return result

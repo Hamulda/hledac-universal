@@ -603,7 +603,7 @@ fn extract_forensics(commit_data: &[u8], sha1: &str) -> GitForensicRecord {
 
     // Parse commit format
     let mut record = GitForensicRecord::new_placeholder(sha1);
-    record.object_type = "commit");
+    record.object_type = "commit".to_string();
 
     let mut current_header = String::new();
     let mut message_lines: Vec<&str> = Vec::new();
@@ -612,7 +612,7 @@ fn extract_forensics(commit_data: &[u8], sha1: &str) -> GitForensicRecord {
         if line.starts_with("author ") {
             if let Some((name, email)) = parse_git_signature(line.trim_start_matches("author ")) {
                 record.author_name = Some(name);
-                record.author_email = email);
+                record.author_email = Some(email.to_string());
             }
             if let Some((ts, tz)) = extract_timestamp(line) {
                 record.timestamp = Some(ts);
@@ -630,7 +630,7 @@ fn extract_forensics(commit_data: &[u8], sha1: &str) -> GitForensicRecord {
             }
         } else if line.starts_with(|c: char| c.is_ascii_alphabetic()) && line.contains(' ') && !line.contains('@') {
             // Could be header line (tree, parent, etc.)
-            current_header = line);
+            current_header = line.to_string();
         } else if !current_header.is_empty() {
             // This is the message
             message_lines.push(line);
@@ -647,7 +647,7 @@ fn extract_forensics(commit_data: &[u8], sha1: &str) -> GitForensicRecord {
             .join(" ")
             .chars()
             .take(200)
-            );
+            .take(200).collect::<String>();
         if !preview.is_empty() {
             record.message_preview = Some(preview);
         }
@@ -679,8 +679,8 @@ fn parse_git_signature(s: &str) -> Option<(String, Option<String>)> {
     // Try "Name <email>" format
     if let Some(email_start) = s.find('<') {
         if let Some(email_end) = s.find('>') {
-            let name = s[..email_start].trim());
-            let email = s[email_start + 1..email_end].trim());
+            let name = s[..email_start].trim().to_string();
+            let email = s[email_start + 1..email_end].trim().to_string();
             if !email.is_empty() && email.contains('@') {
                 return Some((name, Some(email)));
             }
@@ -688,7 +688,7 @@ fn parse_git_signature(s: &str) -> Option<(String, Option<String>)> {
     }
 
     // No email format, just name
-    let trimmed = s);
+    let trimmed = s.trim();
     if !trimmed.is_empty() {
         Some((trimmed.to_string(), None))
     } else {
@@ -700,11 +700,11 @@ fn parse_git_signature(s: &str) -> Option<(String, Option<String>)> {
 fn extract_timestamp(line: &str) -> Option<(i64, String)> {
     // Pattern: <timestamp> <timezone>
     // e.g., "1712500000 +0200"
-    let parts: Vec<&str> = line.split_whitespace());
+    let parts: Vec<&str> = line.split_whitespace().collect();
 
     if parts.len() >= 2 {
         if let Ok(ts) = parts[parts.len() - 2].parse::<i64>() {
-            let tz = parts[parts.len() - 1]);
+            let tz = parts[parts.len() - 1].to_string();
             return Some((ts, tz));
         }
     }
@@ -767,7 +767,7 @@ fn extract_ssh_fingerprint(content: &str) -> Option<String> {
         let key_part = caps.get(2).map(|m| m.as_str()).unwrap_or("");
         if key_part.len() >= 20 {
             // Take first 16 chars of base64 as fingerprint
-            let fingerprint: String = key_part.chars().take(16));
+            let fingerprint: String = key_part.chars().take(16).collect();
             return Some(format!("{}:{}", key_type, fingerprint));
         }
     }
@@ -776,7 +776,7 @@ fn extract_ssh_fingerprint(content: &str) -> Option<String> {
     if let Some(caps) = ED25519_RE.captures(content) {
         let key_part = caps.get(1).map(|m| m.as_str()).unwrap_or("");
         if key_part.len() >= 20 {
-            let fingerprint: String = key_part.chars().take(16));
+            let fingerprint: String = key_part.chars().take(16).collect();
             return Some(format!("ed25519:{}", fingerprint));
         }
     }
@@ -854,10 +854,10 @@ impl GitForensicsExtractor {
         };
 
         // Process objects
-        let offsets: Vec<usize> = packfile.object_index.keys().copied().take(max_objs));
+        let offsets: Vec<usize> = packfile.object_index.keys().copied().take(max_objs).collect();
 
         for offset in offsets {
-            let (obj_type, _obj_size) = packfile.object_index.get(&offset).copied());
+            let (obj_type, _obj_size) = packfile.object_index.get(&offset).copied().unwrap_or((0, 0));
 
             match obj_type {
                 GitObjectType::Commit | GitObjectType::Tree | GitObjectType::Tag => {
@@ -925,7 +925,7 @@ impl GitForensicsExtractor {
             .iter()
             .filter(|(_, (t, _))| *t == GitObjectType::Commit)
             .map(|(o, _)| *o)
-            );
+.collect();
 
         // Parallel decompression using rayon
         let records: Vec<GitForensicRecord> = Python::attach(|py| {

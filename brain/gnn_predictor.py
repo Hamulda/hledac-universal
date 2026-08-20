@@ -1038,8 +1038,8 @@ class GNNPredictor:
 
         # Memory guard
         try:
-            from hledac.universal.resource_allocator import get_memory_pressure_level
-            if get_memory_pressure_level() == 'critical':
+            from _core.memory import memory_pressure_level
+            if memory_pressure_level() >= 2:  # 2 = CRITICAL
                 return []
         except Exception:  # noqa: BLE001
             pass

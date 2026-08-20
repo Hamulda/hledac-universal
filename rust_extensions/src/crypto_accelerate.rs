@@ -189,5 +189,68 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_sha256_hw))?;
     m.add_function(wrap_pyfunction!(batch_encrypt_aes_gcm))?;
     m.add_function(wrap_pyfunction!(batch_decrypt_aes_gcm))?;
+    m.add_function(wrap_pyfunction!(encrypt_aes_gcm_raw))?;
+    m.add_function(wrap_pyfunction!(decrypt_aes_gcm_raw))?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Single-item encryption with pre-derived key (security/encryption.py hot path)
+// ---------------------------------------------------------------------------
+// Unlike batch_encrypt_aes_gcm which does PBKDF2 key derivation, these functions
+// take a pre-derived 32-byte key. This avoids redundant PBKDF2 for callers that
+// already have the key (e.g., security/encryption.py).
+
+/// Encrypt single plaintext with pre-derived AES-256 key.
+/// Input key: 32 bytes (AES-256)
+/// Input plaintext: raw bytes
+/// Output: nonce(12) || ciphertext || tag(16) — same format as Python cryptography lib
+#[pyfunction]
+pub fn encrypt_aes_gcm_raw(key: Vec<u8>, plaintext: String) -> Vec<u8> {
+    let key: [u8; 32] = match key.try_into() {
+        Ok(k) => k,
+        Err(_) => return vec![],
+    };
+    
+    let cipher = Aes256Gcm::new_from_slice(&key).expect("valid AES-256 key");
+    let mut nonce_bytes = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    
+    // aes-gcm encrypt returns ciphertext || tag (tag appended)
+    let ciphertext_with_tag = match cipher.encrypt(nonce, plaintext.as_bytes()) {
+        Ok(ct) => ct,
+        Err(_) => return vec![],
+    };
+    
+    // Format: nonce || ciphertext || tag
+    let mut result = Vec::with_capacity(12 + ciphertext_with_tag.len());
+    result.extend_from_slice(&nonce_bytes);
+    result.extend_from_slice(&ciphertext_with_tag);
+    result
+}
+
+/// Decrypt single ciphertext with pre-derived AES-256 key.
+/// Input key: 32 bytes (AES-256)
+/// Input encrypted: nonce(12) || ciphertext || tag(16)
+/// Output: plaintext as String, or None on failure
+#[pyfunction]
+pub fn decrypt_aes_gcm_raw(key: Vec<u8>, encrypted: Vec<u8>) -> Option<String> {
+    let key: [u8; 32] = match key.try_into() {
+        Ok(k) => k,
+        Err(_) => return None,
+    };
+    
+    if encrypted.len() < 12 + 16 {
+        return None;
+    }
+    
+    let cipher = Aes256Gcm::new_from_slice(&key).ok()?;
+    let nonce = Nonce::from_slice(&encrypted[..12]);
+    let ciphertext_with_tag = &encrypted[12..];
+    
+    // aes-gcm decrypt expects ciphertext || tag
+    let plaintext = cipher.decrypt(nonce, ciphertext_with_tag).ok()?;
+    
+    String::from_utf8(plaintext).ok()
 }

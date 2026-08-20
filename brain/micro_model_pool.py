@@ -40,7 +40,6 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from enum import Enum, auto
 from typing import Any, Protocol, runtime_checkable
 import mlx.core as mx
 import mlx_lm
@@ -208,40 +207,8 @@ def get_uma_monitor() -> UmaFragmentationMonitor:
         _uma_monitor = UmaFragmentationMonitor()
     return _uma_monitor
 
-class TaskType(Enum):
-    """Task categories for micro-model routing."""
-    CODE = auto()
-    TRANSLATION = auto()
-    EMBEDDINGS = auto()
-    CLASSIFICATION = auto()
-    SYNTHESIS = auto()
-    TRIAGE = auto()
-    GENERAL = auto()
-
-@dataclass(frozen=True, slots=True)
-class MicroModelSpec:
-    """Immutable specification for a micro-model in the swarm."""
-    name: str
-    model_path: str
-    task_type: TaskType
-    quant: str = 'q4'
-    memory_mb: int = 350
-    max_tokens: int = 2048
-    priority: int = 0
-    warmup_prompt: str = ''
-    code_patterns: tuple[str, ...] = ()
-    sql_patterns: tuple[str, ...] = ()
-    translation_patterns: tuple[str, ...] = ()
-    embedding_keywords: tuple[str, ...] = ()
-
-    @property
-    def full_path(self) -> str:
-        """Get full quantized model path."""
-        if self.quant == 'q4':
-            return f'{self.model_path}-4bit'
-        elif self.quant == 'q8':
-            return f'{self.model_path}-8bit'
-        return self.model_path
+# Imported from registry — shared with content_router (no MLX imports)
+from ._micro_model_registry import MICRO_MODELS, MicroModelSpec, TaskType
 
 @dataclass(slots=True)
 class LoadedMicroModel:
@@ -254,7 +221,7 @@ class LoadedMicroModel:
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
     load_time: float = 0.0
-MICRO_MODELS: dict[str, MicroModelSpec] = {'qwen_coder': MicroModelSpec(name='Qwen2.5-0.5B-Instruct', model_path='mlx-community/Qwen2.5-0.5B-Instruct-mlx', task_type=TaskType.CODE, quant='q4', memory_mb=350, max_tokens=4096, priority=10, code_patterns=('def\\s+\\w+\\s*\\(', 'class\\s+\\w+', 'import\\s+\\w+', 'from\\s+\\w+\\s+import', 'function\\s*\\w*\\s*\\(', '=>\\s*\\{', 'const\\s+\\w+\\s*=', 'let\\s+\\w+\\s*=', 'var\\s+\\w+\\s*=', '#include', 'public\\s+class', 'private\\s+void', 'async\\s+def', '@\\w+\\s*\\(', '```\\w*'), sql_patterns=('SELECT\\s+.+\\s+FROM', 'INSERT\\s+INTO', 'UPDATE\\s+\\w+\\s+SET', 'DELETE\\s+FROM', 'CREATE\\s+TABLE', 'ALTER\\s+TABLE', 'DROP\\s+TABLE', 'JOIN\\s+\\w+\\s+ON', 'WHERE\\s+\\w+')), 'phi35_mini': MicroModelSpec(name='Phi-3.5-mini-instruct', model_path='mlx-community/Phi-3.5-mini-instruct-4bit', task_type=TaskType.SYNTHESIS, quant='q4', memory_mb=700, max_tokens=4096, priority=8, translation_patterns=('\\b(translate|translation|Übersetzung|traduction|traducción)\\b', '\\b(from\\s+\\w+\\s+to\\s+\\w+)\\b', '\\b(english|german|french|spanish|chinese|japanese|korean)\\s+(to|into|ins?)\\b')), 'smollm_triage': MicroModelSpec(name='SmolLM2-360M-Instruct', model_path='mlx-community/SmolLM2-360M-Instruct-mlx', task_type=TaskType.TRIAGE, quant='q4', memory_mb=200, max_tokens=512, priority=15), 'nomic_embed': MicroModelSpec(name='nomic-embed-text-v1.5', model_path='mlx-community/nomic-embed-text-v1.5-quantized', task_type=TaskType.EMBEDDINGS, quant='q4', memory_mb=274, max_tokens=8192, priority=12, embedding_keywords=('embed', 'similarity', 'semantic', 'vector', 'embedding', 'compare', 'rank', 'search', 'find related', 'most similar'))}
+
 
 @runtime_checkable
 class IMicroModelPool(Protocol):

@@ -162,6 +162,22 @@ def get_rust_pool(pool_type: PoolType = "cpu") -> "RustWorkerPool":
     with _pool_lock:
         if pool_type not in _rust_pools:
             _rust_pools[pool_type] = RustWorkerPool(pool_type=pool_type)
+            # F5 FIX: One-time telemetry — verify affinity was applied on pool creation.
+            # This is not the AFFINITY FIX (that's in submit()), this is just telemetry.
+            # The actual affinity setting moved from __init__ → submit() because
+            # __init__ runs on Python init thread, not rayon worker thread.
+            try:
+                from hledac.universal.utils.cpu_affinity import get_affinity
+                aff = get_affinity()
+                logger.debug(
+                    "[RustWorkerPool] [F5 telemetry] pool=%s affinity=%s mask=%d darwin=%s",
+                    pool_type,
+                    aff.get("core_type", "unknown"),
+                    aff.get("mask", 0),
+                    aff.get("darwin_affinity_used", False),
+                )
+            except Exception:
+                pass  # Non-fatal telemetry
         return _rust_pools[pool_type]
 
 
@@ -375,6 +391,18 @@ class RustWorkerPool:
         self._active_count = 0
         self._lock = threading.Lock()
         self._async_lock: asyncio.Lock | None = None
+        # F5 FIX: _apply_pool_affinity() called from __init__ was timing BUG.
+        # __init__ runs on the Python init/main thread, NOT the rayon worker.
+        # Affinity MUST be applied inside submit() where fn runs on rayon worker.
+        # See _do_submit() for the actual fix.
+
+    def _apply_pool_affinity(self) -> None:
+        """F5: Apply CPU affinity based on pool type. MODERN-26."""
+        try:
+            from hledac.universal.utils.cpu_affinity import set_affinity
+            set_affinity(self._pool_type)
+        except Exception:
+            pass  # Fail-safe: affinity is best-effort
 
     def _check_available(self) -> bool:
         """Return True if Rust rayon channel dispatch extension is available."""
@@ -462,12 +490,25 @@ class RustWorkerPool:
 
         def _do_submit() -> int:
             """Run in asyncio-to_thread worker: submit work to rayon dispatcher and return handle."""
+            # F5 FIX: Set affinity INSIDE the rayon worker thread (not Python init thread).
+            # __init__ timing bug: _apply_pool_affinity() called in __init__ only affected
+            # the Python init/main thread — not the rayon workers that execute fn.
+            # By wrapping fn here, set_affinity() is called from the rayon worker thread
+            # that actually runs the work, so darwin_affinity.rs applies to the right thread.
+            def _fn_with_affinity() -> Any:
+                try:
+                    from hledac.universal.utils.cpu_affinity import set_affinity
+                    set_affinity(self._pool_type)
+                except Exception:
+                    pass  # Fail-safe: affinity is best-effort
+                return fn(*args)
+
             # TEL-02: Pass trace_id/span_id as u128 for cross-language trace propagation.
             return rayon_submit_channel(
                 self._pool_type,
                 n_items,
-                fn,
-                args,
+                _fn_with_affinity,
+                (),
                 trace_id,
                 span_id,
     )
@@ -535,7 +576,18 @@ class RustWorkerPool:
         rayon_abort_channel = channels.abort
         rayon_drop_channel = channels.drop
 
-        handle = rayon_submit_channel(self._pool_type, n_items, fn, args)
+        # F5 FIX: Wrap fn with affinity — applies on rayon worker thread (same timing fix as submit()).
+        # submit_sync caller may be any thread; fn runs on rayon worker, so affinity
+        # must be set from WITHIN fn, not from the calling thread.
+        def _fn_with_affinity_sync() -> Any:
+            try:
+                from hledac.universal.utils.cpu_affinity import set_affinity
+                set_affinity(self._pool_type)
+            except Exception:
+                pass  # Fail-safe: affinity is best-effort
+            return fn(*args)
+
+        handle = rayon_submit_channel(self._pool_type, n_items, _fn_with_affinity_sync, ())
         try:
             return rayon_join_channel(handle, None)
         except RuntimeError as e:

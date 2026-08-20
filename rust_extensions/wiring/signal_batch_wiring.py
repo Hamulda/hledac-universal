@@ -110,6 +110,33 @@ def batch_quality_score(
     )
 
 
+
+def batch_fallback_decide(
+    decisions: list[dict[str, Any]],
+) -> list[tuple[str, bool, bool, bool, bool, str]]:
+    """
+    Batch fallback decision using Rust rayon parallelization.
+
+    G6: Replaces Python if-elif tree in live_feed_pipeline.py with Rust batch.
+
+    Input dict keys:
+        - assembled_text_len (i32)
+        - pre_fallback_hits_count (i32)
+        - quality_band (str)
+        - metadata_boost (bool)
+        - language_mismatch (bool)
+        - article_fallback_used (bool)
+        - article_fallback_attempted (bool)
+        - post_fallback_findings_count (i32)
+        - adapter_source_priority_bias (f64)
+        - adapter_metadata_richness_band (str)
+
+    Returns:
+        List of (reason, should_fetch, forced, wasted, helpful, skip_because) tuples.
+    """
+    return _signal_batch.batch_fallback_decide(decisions)
+
+
 # Check availability at import time for logging
 if _signal_batch.available:
     logger.info("[SignalBatch] Rust signal_batch.rs integration: ENABLED")

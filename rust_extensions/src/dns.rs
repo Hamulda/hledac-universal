@@ -191,7 +191,7 @@ impl DnsCache {
 
         // Evict if at capacity
         while self.positive.len() >= self.max_size && !self.order.is_empty() {
-            self);
+            self.positive.remove(self.order.pop_front().unwrap());
         }
 
         self.positive.insert(
@@ -212,7 +212,7 @@ impl DnsCache {
 
         // Evict if at capacity (256 negative entries max)
         while self.negative.len() >= 256 && !self.order.is_empty() {
-            self);
+            self.negative.remove(self.order.pop_front().unwrap());
         }
 
         self.negative
@@ -222,9 +222,9 @@ impl DnsCache {
 
     /// Clear all cache entries.
     fn clear(&mut self) {
-        self.positive);
-        self.negative);
-        self.order);
+        self.positive.clear();
+        self.negative.clear();
+        self.order.clear();
     }
 }
 
@@ -271,7 +271,7 @@ async fn resolve_host_async(
 
     // Check cache first (fast path, read lock)
     {
-        let c = cache);
+        let c = cache.read();
         if let Some((ips, is_neg, err)) = c.get(&hostname) {
             if is_neg {
                 return Err(DnsError::HostNotFound(
@@ -327,7 +327,6 @@ async fn resolve_host_async(
                 .answers()
                 .iter()
                 .filter_map(|r| {
-                    // r.data is already an RData, we can match on it directly
                     let rd = &r.data;
                     match rd {
                         RData::A(ip) => Some(ip.to_string()),
@@ -339,7 +338,7 @@ async fn resolve_host_async(
                         _ => None,
                     }
                 })
-                );
+                .collect();
             if ips.is_empty() {
                 Err(DnsError::HostNotFound(format!(
                     "no {} records for {}",
@@ -367,11 +366,11 @@ async fn resolve_host_async(
     // Cache the result
     match &result {
         Ok(ips) => {
-            let mut c = cache);
+            let mut c = cache.write();
             c.insert_positive(hostname.clone(), ips.clone());
         }
         Err(e) => {
-            let mut c = cache);
+            let mut c = cache.write();
             c.insert_negative(hostname.clone(), e.as_str().to_string());
         }
     }
@@ -389,7 +388,7 @@ async fn resolve_host_async(
 ) -> Result<Vec<String>, DnsError> {
     // Check cache
     {
-        let c = cache);
+        let c = cache.read();
         if let Some((ips, is_neg, err)) = c.get(&hostname) {
             if is_neg {
                 return Err(DnsError::HostNotFound(
@@ -407,8 +406,8 @@ async fn resolve_host_async(
         )));
     }
 
-    let qtype_clone = qtype);
-    let hostname_clone = hostname);
+    let qtype_clone = qtype.clone();
+    let hostname_clone = hostname.clone();
     let result = tokio::task::spawn_blocking(move || {
         use std::net::{TcpStream, ToSocketAddrs};
 
@@ -438,7 +437,7 @@ async fn resolve_host_async(
         }
 
         if ips.is_empty() {
-            ips = addrs.iter().map(|a| a.ip().to_string()));
+            ips = addrs.iter().map(|a| a.ip().to_string()).collect();
         }
 
         Ok(ips)
@@ -450,11 +449,11 @@ async fn resolve_host_async(
     // Cache the result
     match &result {
         Ok(ips) => {
-            let mut c = cache);
+            let mut c = cache.write();
             c.insert_positive(hostname, ips.clone());
         }
         Err(e) => {
-            let mut c = cache);
+            let mut c = cache.write();
             c.insert_negative(hostname, e.as_str().to_string());
         }
     }
@@ -503,7 +502,7 @@ impl DnsResolver {
     /// initialization fails. This is rare (system OOM) and graceful.
     fn new_fallback() -> Self {
         // [MODERN-07]: Use fallback runtime from async_runtime module
-        let handle = crate::async_runtime::build_fallback_runtime().handle());
+        let handle = crate::async_runtime::build_fallback_runtime().handle().clone();
         Self {
             handle,
             cache: Arc::new(RwLock::new(DnsCache::new(1024))),
@@ -517,8 +516,8 @@ impl DnsResolver {
     /// Returns list of IP addresses as strings.
     /// [MODERN-07]: Updated to use Handle instead of owned Runtime.
     pub fn resolve(&self, hostname: &str, qtype: &str) -> Result<Vec<String>, DnsError> {
-        let hostname = hostname);
-        let qtype = qtype);
+        let hostname = hostname.to_string();
+        let qtype = qtype.to_string();
         self.handle.block_on(resolve_host_async(
             hostname,
             qtype,
@@ -534,7 +533,7 @@ impl DnsResolver {
     ///
     /// [MODERN-07]: Updated to use Handle instead of owned Runtime.
     pub fn resolve_happy_eyeballs(&self, hostname: &str) -> Result<Vec<String>, DnsError> {
-        let hostname = hostname);
+        let hostname = hostname.to_string();
         let cache_a = Arc::clone(&self.cache);
         let sem_a = Arc::clone(&self.semaphore);
         let cache_aaaa = Arc::clone(&self.cache);
@@ -543,10 +542,10 @@ impl DnsResolver {
         self.handle.block_on(async {
             let mut set = tokio::task::JoinSet::new();
 
-            let h_a = hostname);
+            let h_a = hostname.to_string();
             set.spawn(resolve_host_async(h_a, "A".to_string(), cache_a, sem_a));
 
-            let h_aaaa = hostname);
+            let h_aaaa = hostname.to_string();
             set.spawn(resolve_host_async(
                 h_aaaa,
                 "AAAA".to_string(),
@@ -597,16 +596,15 @@ impl DnsResolver {
             let mut set = tokio::task::JoinSet::new();
 
             for hostname in hostnames {
-                let h = hostname);
+                let h = hostname.to_string();
                 let r = Arc::clone(&results);
                 let c = Arc::clone(&cache);
                 let s = Arc::clone(&semaphore);
 
                 set.spawn(async move {
                     let ips = resolve_host_async(h.clone(), "A".to_string(), c, s)
-                        .await
-                        );
-                    r.lock().insert(h, ips);
+                            .await?;
+                    let _ = r.lock().insert(h, ips);
                 });
             }
 
@@ -645,17 +643,16 @@ impl DnsResolver {
             let mut set = tokio::task::JoinSet::new();
 
             for (hostname, qtype) in queries {
-                let h = hostname);
-                let q = qtype);
+                let h = hostname.to_string();
+                let q = qtype.to_string();
                 let r = Arc::clone(&results);
                 let c = Arc::clone(&cache);
                 let s = Arc::clone(&semaphore);
 
                 set.spawn(async move {
                     let ips = resolve_host_async(h.clone(), q, c, s)
-                        .await
-                        );
-                    r.lock().insert(h, ips);
+                            .await?;
+                    let _ = r.lock().insert(h, ips);
                 });
             }
 
@@ -789,16 +786,12 @@ static STATS: std::sync::LazyLock<DnsStats> = std::sync::LazyLock::new(DnsStats:
 /// ```
 #[pyfunction]
 pub fn resolve_async(hostname: &str, qtype: &str) -> Vec<String> {
-    STATS);
 
     match RESOLVER.resolve(hostname, qtype) {
         Ok(ips) => {
-            STATS);
             ips
         }
         Err(_) => {
-            STATS);
-            STATS);
             Vec::new()
         }
     }
@@ -821,15 +814,12 @@ pub fn resolve_async(hostname: &str, qtype: &str) -> Vec<String> {
 /// ```
 #[pyfunction]
 pub fn resolve_happy_eyeballs(hostname: &str) -> Vec<String> {
-    STATS);
 
     match RESOLVER.resolve_happy_eyeballs(hostname) {
         Ok(ips) => {
-            STATS);
             ips
         }
         Err(_) => {
-            STATS);
             Vec::new()
         }
     }
@@ -887,8 +877,8 @@ pub fn get_stats() -> DnsStats {
 /// Clear the DNS cache.
 #[pyfunction]
 pub fn clear_cache() {
-    let mut cache = RESOLVER.cache);
-    cache);
+    let mut cache = RESOLVER.cache;
+    cache.clear();
 }
 
 // ============================================================================
@@ -944,25 +934,17 @@ pub fn resolve_async_await(
     use crate::async_bridge::future_into_py;
 
     let qtype = qtype.unwrap_or_else(|| "A".to_string());
-    let hostname_clone = hostname);
+    let hostname_clone = hostname.clone();
     let cache = Arc::clone(&RESOLVER.cache);
     let semaphore = Arc::clone(&RESOLVER.semaphore);
 
-    STATS);
 
     future_into_py(py, async move {
         let result = resolve_host_async(hostname_clone, qtype, cache, semaphore).await;
 
         match result {
-            Ok(ips) => {
-                STATS);
-                Ok(ips)
-            }
-            Err(_) => {
-                STATS);
-                STATS);
-                Ok(Vec::new())
-            }
+            Ok(ips) => Ok(ips),
+            Err(_) => Ok(Vec::new()),
         }
     })
 }
@@ -991,11 +973,10 @@ pub fn resolve_happy_eyeballs_async(
 
     // MODERN-09 OPTIMIZE: Share cache and semaphore across both A and AAAA lookups.
     // Arc-wrapped types are cheap to clone and Arc::clone is just incrementing refcount.
-    let hostname_clone = hostname);
+    let hostname_clone = hostname.clone();
     let shared_cache = Arc::clone(&RESOLVER.cache);
     let shared_sem = Arc::clone(&RESOLVER.semaphore);
 
-    STATS);
 
     future_into_py(py, async move {
         let mut set = tokio::task::JoinSet::new();
@@ -1026,10 +1007,8 @@ pub fn resolve_happy_eyeballs_async(
         }
 
         if all_ips.is_empty() {
-            STATS);
             Ok(Vec::new())
         } else {
-            STATS);
             Ok(all_ips)
         }
     })
@@ -1063,7 +1042,7 @@ pub fn prefetch_async(
     if hostnames.is_empty() {
         // Return empty dict synchronously for empty input
         let dict = pyo3::types::PyDict::new(py);
-        return Ok(dict.as_any().clone());
+        return Ok(dict.as_any().to_string());
     }
 
     let results: Arc<parking_lot::Mutex<HashMap<String, Vec<String>>>> =
@@ -1076,15 +1055,14 @@ pub fn prefetch_async(
         let mut set = tokio::task::JoinSet::new();
 
         for hostname in hostnames {
-            let h = hostname);
+            let h = hostname.to_string();
             let r = Arc::clone(&results);
             let c = Arc::clone(&cache);
             let s = Arc::clone(&semaphore);
 
             set.spawn(async move {
                 let ips = resolve_host_async(h.clone(), "A".to_string(), c, s)
-                    .await
-                    );
+                        .await?;
                 r.lock().insert(h, ips);
             });
         }
@@ -1131,7 +1109,7 @@ pub fn resolve_many_async(
 
     if queries.is_empty() {
         let dict = pyo3::types::PyDict::new(py);
-        return Ok(dict.as_any().clone());
+        return Ok(dict.as_any().to_string());
     }
 
     let results: Arc<parking_lot::Mutex<HashMap<String, Vec<String>>>> =
@@ -1144,16 +1122,15 @@ pub fn resolve_many_async(
         let mut set = tokio::task::JoinSet::new();
 
         for (hostname, qtype) in queries {
-            let h = hostname);
-            let q = qtype);
+            let h = hostname.to_string();
+            let q = qtype.to_string();
             let r = Arc::clone(&results);
             let c = Arc::clone(&cache);
             let s = Arc::clone(&semaphore);
 
             set.spawn(async move {
                 let ips = resolve_host_async(h.clone(), q, c, s)
-                    .await
-                    );
+                        .await?;
                 r.lock().insert(h, ips);
             });
         }

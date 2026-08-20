@@ -125,7 +125,7 @@ fn build_cpu_pool(num_threads: usize) -> Result<ThreadPool, String> {
                 }
                 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
                 apply_affinity_hint(n);
-                builder);
+                builder.run();
             });
             Ok(())
         })
@@ -160,7 +160,7 @@ fn build_io_pool(num_threads: usize) -> Result<ThreadPool, String> {
                 }
                 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
                 apply_affinity_hint(n);
-                builder);
+                builder.run();
             });
             Ok(())
         })
@@ -230,7 +230,7 @@ fn build_simd_pool() -> Result<ThreadPool, String> {
         .thread_name(|i| format!("hledac-simd-{}", i))
         // NOTE: spawn_fifo removed - not available in this rayon version
         .spawn_handler(move |builder| {
-            let core_ids = simd_cores);
+            let core_ids = simd_cores.clone();
             let _ = thread::spawn(move || {
                 #[cfg(target_os = "macos")]
                 {
@@ -248,7 +248,7 @@ fn build_simd_pool() -> Result<ThreadPool, String> {
                 {
                     apply_affinity_to_cores(&core_ids);
                 }
-                builder);
+                builder.run();
             });
             Ok(())
         })
@@ -284,7 +284,7 @@ fn build_mlx_pool() -> Result<ThreadPool, String> {
         .thread_name(|i| format!("hledac-mlx-{}", i))
         // NOTE: spawn_fifo removed - not available in this rayon version
         .spawn_handler(move |builder| {
-            let core_ids = mlx_cores);
+            let core_ids = mlx_cores.clone();
             let _ = thread::spawn(move || {
                 #[cfg(target_os = "macos")]
                 {
@@ -302,7 +302,7 @@ fn build_mlx_pool() -> Result<ThreadPool, String> {
                 {
                     apply_affinity_to_cores(&core_ids);
                 }
-                builder);
+                builder.run();
             });
             Ok(())
         })
@@ -349,7 +349,7 @@ fn build_graph_pool() -> Result<ThreadPool, String> {
                 {
                     apply_affinity_to_cores(&[core_id]);
                 }
-                builder);
+                builder.run();
             });
             Ok(())
         })
@@ -407,7 +407,7 @@ pub fn resize_cpu_pool(num_threads: usize) {
     match build_cpu_pool(n) {
         Ok(pool) => {
             let new_pool = Arc::new(pool);
-            let mut guard = CPU_POOL);
+            let mut guard = CPU_POOL.write();
             *guard = Some(new_pool);
             // MODERN-31: Update global budget for unified accounting
             crate::adaptive_scheduler::set_cpu_budget(n);
@@ -434,7 +434,7 @@ pub fn resize_cpu_pool(num_threads: usize) {
 pub fn resize_io_pool(num_threads: usize) {
     // Read current CPU pool size to enforce total <= 8 (accounting for dispatchers)
     let cpu_count = {
-        let guard = CPU_POOL);
+        let guard = CPU_POOL.read();
         match &*guard {
             Some(pool) => pool.current_num_threads(),
             None => 0,
@@ -447,7 +447,7 @@ pub fn resize_io_pool(num_threads: usize) {
     match build_io_pool(n) {
         Ok(pool) => {
             let new_pool = Arc::new(pool);
-            let mut guard = IO_POOL);
+            let mut guard = IO_POOL.write();
             *guard = Some(new_pool);
             // MODERN-31: Update global budget for unified accounting
             crate::adaptive_scheduler::set_io_budget(n);
@@ -463,7 +463,7 @@ pub fn resize_io_pool(num_threads: usize) {
 
 /// Get current CPU pool thread count, or 0 if not initialized.
 pub fn get_cpu_pool_threads() -> usize {
-    let guard = CPU_POOL);
+    let guard = CPU_POOL.read();
     match &*guard {
         Some(pool) => pool.current_num_threads(),
         None => 0,
@@ -472,7 +472,7 @@ pub fn get_cpu_pool_threads() -> usize {
 
 /// Get current I/O pool thread count, or 0 if not initialized.
 pub fn get_io_pool_threads() -> usize {
-    let guard = IO_POOL);
+    let guard = IO_POOL.read();
     match &*guard {
         Some(pool) => pool.current_num_threads(),
         None => 0,
@@ -512,7 +512,7 @@ pub fn init_default_pools() {
 fn init_dedicated_pools() {
     match build_simd_pool() {
         Ok(pool) => {
-            let mut guard = SIMD_POOL);
+            let mut guard = SIMD_POOL.write();
             *guard = Some(Arc::new(pool));
         }
         Err(e) => {
@@ -522,7 +522,7 @@ fn init_dedicated_pools() {
 
     match build_mlx_pool() {
         Ok(pool) => {
-            let mut guard = MLX_POOL);
+            let mut guard = MLX_POOL.write();
             *guard = Some(Arc::new(pool));
         }
         Err(e) => {
@@ -532,7 +532,7 @@ fn init_dedicated_pools() {
 
     match build_graph_pool() {
         Ok(pool) => {
-            let mut guard = GRAPH_POOL);
+            let mut guard = GRAPH_POOL.write();
             *guard = Some(Arc::new(pool));
         }
         Err(e) => {
@@ -552,7 +552,7 @@ fn init_dedicated_pools() {
 /// Falls back to 1-thread pool if full build fails.
 pub fn get_cpu_pool() -> Arc<ThreadPool> {
     {
-        let guard = CPU_POOL);
+        let guard = CPU_POOL.read();
         if let Some(ref pool) = *guard {
             return Arc::clone(pool);
         }
@@ -568,7 +568,7 @@ pub fn get_cpu_pool() -> Arc<ThreadPool> {
             Arc::new(build_cpu_pool(1).expect("fallback 1-thread pool should always succeed"))
         }
     };
-    let mut guard = CPU_POOL);
+    let mut guard = CPU_POOL.write();
     if let Some(ref existing) = *guard {
         // Another thread initialized first — use that pool instead.
         return Arc::clone(existing);
@@ -584,7 +584,7 @@ pub fn get_cpu_pool() -> Arc<ThreadPool> {
 /// Falls back to 1-thread pool if full build fails.
 pub fn get_io_pool() -> Arc<ThreadPool> {
     {
-        let guard = IO_POOL);
+        let guard = IO_POOL.read();
         if let Some(ref pool) = *guard {
             return Arc::clone(pool);
         }
@@ -600,7 +600,7 @@ pub fn get_io_pool() -> Arc<ThreadPool> {
             Arc::new(build_io_pool(1).expect("fallback 1-thread pool should always succeed"))
         }
     };
-    let mut guard = IO_POOL);
+    let mut guard = IO_POOL.write();
     if let Some(ref existing) = *guard {
         // Another thread initialized first — use that pool instead.
         return Arc::clone(existing);
@@ -631,7 +631,7 @@ pub fn io_pool() -> Arc<ThreadPool> {
 /// Get the SIMD pool for ARM NEON operations.
 pub fn get_simd_pool() -> Arc<ThreadPool> {
     {
-        let guard = SIMD_POOL);
+        let guard = SIMD_POOL.read();
         if let Some(ref pool) = *guard {
             return Arc::clone(pool);
         }
@@ -640,7 +640,7 @@ pub fn get_simd_pool() -> Arc<ThreadPool> {
     match build_simd_pool() {
         Ok(p) => {
             let pool = Arc::new(p);
-            let mut guard = SIMD_POOL);
+            let mut guard = SIMD_POOL.write();
             *guard = Some(Arc::clone(&pool));
             pool
         }
@@ -654,7 +654,7 @@ pub fn get_simd_pool() -> Arc<ThreadPool> {
 /// Get the MLX pool for Metal dispatch.
 pub fn get_mlx_pool() -> Arc<ThreadPool> {
     {
-        let guard = MLX_POOL);
+        let guard = MLX_POOL.read();
         if let Some(ref pool) = *guard {
             return Arc::clone(pool);
         }
@@ -663,7 +663,7 @@ pub fn get_mlx_pool() -> Arc<ThreadPool> {
     match build_mlx_pool() {
         Ok(p) => {
             let pool = Arc::new(p);
-            let mut guard = MLX_POOL);
+            let mut guard = MLX_POOL.write();
             *guard = Some(Arc::clone(&pool));
             pool
         }
@@ -677,7 +677,7 @@ pub fn get_mlx_pool() -> Arc<ThreadPool> {
 /// Get the Graph pool for Kuzu traversal.
 pub fn get_graph_pool() -> Arc<ThreadPool> {
     {
-        let guard = GRAPH_POOL);
+        let guard = GRAPH_POOL.read();
         if let Some(ref pool) = *guard {
             return Arc::clone(pool);
         }
@@ -686,7 +686,7 @@ pub fn get_graph_pool() -> Arc<ThreadPool> {
     match build_graph_pool() {
         Ok(p) => {
             let pool = Arc::new(p);
-            let mut guard = GRAPH_POOL);
+            let mut guard = GRAPH_POOL.write();
             *guard = Some(Arc::clone(&pool));
             pool
         }
@@ -699,7 +699,7 @@ pub fn get_graph_pool() -> Arc<ThreadPool> {
 
 /// Get thread count for SIMD pool.
 pub fn get_simd_pool_threads() -> usize {
-    let guard = SIMD_POOL);
+    let guard = SIMD_POOL.read();
     match &*guard {
         Some(pool) => pool.current_num_threads(),
         None => 0,
@@ -708,7 +708,7 @@ pub fn get_simd_pool_threads() -> usize {
 
 /// Get thread count for MLX pool.
 pub fn get_mlx_pool_threads() -> usize {
-    let guard = MLX_POOL);
+    let guard = MLX_POOL.read();
     match &*guard {
         Some(pool) => pool.current_num_threads(),
         None => 0,
@@ -717,7 +717,7 @@ pub fn get_mlx_pool_threads() -> usize {
 
 /// Get thread count for Graph pool.
 pub fn get_graph_pool_threads() -> usize {
-    let guard = GRAPH_POOL);
+    let guard = GRAPH_POOL.read();
     match &*guard {
         Some(pool) => pool.current_num_threads(),
         None => 0,

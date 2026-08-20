@@ -175,12 +175,13 @@ class SystemDetector:
             return None, None
 
     def _detect_cpu(self) -> tuple[int, int]:
-        """Detect CPU logical and physical counts."""
+        """Detect CPU logical and physical counts via _core.topology."""
         try:
             cpu_logical = os.cpu_count() or 0
             try:
-                psutil = _psutil_mod()
-                cpu_physical = psutil.cpu_count(logical=False) or cpu_logical
+                from _core.topology import get_topology
+                t = get_topology()
+                cpu_physical = t.p_cores + t.e_cores
             except Exception:  # noqa: BLE001
                 cpu_physical = cpu_logical
             return cpu_logical, cpu_physical

@@ -93,6 +93,7 @@ from ..knowledge.sprint_delta_index import MmapDeltaIndex, get_mmap_delta_index
 
 # B4: DedupBloom — lock-free bloom filter for fast URL queue dedup
 from rust_extensions.wiring.dedup_bloom_wiring import DedupBloom, get_dedup_bloom
+from rust_extensions.wiring.mpsc_pool_wiring import MPSCQueue as _RustMPSCQueue
 
 from .base import UniversalCoordinator
 
@@ -1578,7 +1579,10 @@ class FetchCoordinator(UniversalCoordinator):
         # F360-R: Counter for periodic entropy pruning (every N calls)
         self._entropy_prune_counter: int = 0
         # UNIFIED-003: Micro-sprint queue — bounded queue for re-fetch requests
-        self._micro_sprint_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=32)
+        # G5.MPSC_POOL: Use Rust MPSCPool if available, fallback to asyncio.Queue
+        # Capacity matches asyncio.Queue maxsize=32
+        self._micro_sprint_queue: _RustMPSCQueue = _RustMPSCQueue(capacity=32)
+        self._micro_sprint_rust_available = self._micro_sprint_queue.available
         self._micro_sprint_worker_task: asyncio.Task[None] | None = None
         # [META]-015: Cache for original findings before micro-sprint re-fetch.
         # Maps entity_id -> list of original findings (dict with source, content, confidence).
@@ -5503,7 +5507,7 @@ class FetchCoordinator(UniversalCoordinator):
             logger.warning(
                 '[ISSUE-022-03] Micro-sprint queue FULL (%d/%d), dropping alert for entity=%s',
                 self._micro_sprint_queue.qsize(),
-                self._micro_sprint_queue.maxsize,
+                self._micro_sprint_queue.capacity,
                 entity_id,
     )
 
@@ -5527,7 +5531,12 @@ class FetchCoordinator(UniversalCoordinator):
         while self._running:
             try:
                 # Wait for request with timeout to allow graceful shutdown
-                request = await safe_wait_for(self._micro_sprint_queue.get(), timeout=5.0)
+                # G5.MPSC_POOL: MPSCQueue.get() is async-compatible
+                # If Rust available, use MPSCQueue's async get; else fallback
+                if self._micro_sprint_rust_available:
+                    request = await self._micro_sprint_queue.get()
+                else:
+                    request = await safe_wait_for(self._micro_sprint_queue.get(), timeout=5.0)
 
                 if not self._running:
                     break

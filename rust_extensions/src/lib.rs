@@ -22,12 +22,12 @@
 // - topology: Network topology - no callers
 // - tracing: Tracing infrastructure - no direct callers (internal only)
 // - deobfuscate: Deobfuscation - no callers
-// - mpsc_pool: Multi-producer single-consumer - no callers
+// - mpsc_pool: Multi-producer single-consumer - AKTIVNÍ via fetch_coordinator
 // - spsc_queue: Single-producer single-consumer - no callers
 // - adaptive_scheduler: Adaptive scheduling - no callers
 // - circuit_breaker: Circuit breaker - no callers
 // - claims_extraction: Claims extraction - no callers
-// - compress: Compression - no callers
+// - compress: Compression - G3: compress_zstd/decompress_zstd (ZOMBIE → AKTIVNÍ)
 // - crypto_accelerate: Crypto acceleration - no callers
 // - data: Data module - no callers
 // - elastic_pool: Elastic pool - no callers
@@ -65,7 +65,7 @@
 // - arrow_batch_builder: Arrow batch builder - no callers
 // - arrow_c_data: Arrow C data - no callers
 // - arrow_ipc_mmap: Arrow IPC mmap - no callers
-// - aimd_controller: AIMD controller - no callers
+// - aimd_controller: AIMD controller - wired via circuit_breaker.rs Layer 2
 // - federated_qtable: Federated Q-table - no callers
 // - lmdb_dht: LMDB DHT - no callers
 // - simdjson_extract: SIMD JSON extract - no callers
@@ -322,8 +322,7 @@ mod simd_similarity;
 #[allow(dead_code)]
 mod simdjson_extract;
 
-// ZOMBIE: No Python callers
-#[allow(dead_code)]
+// G4: simhash_ext — ACTIVATED (near-duplicate detection via Rust SIMD)
 mod simhash_ext;
 
 mod sprint_policies;
@@ -332,9 +331,7 @@ mod sprint_policies;
 #[allow(dead_code)]
 mod spsc_queue;
 
-// FIX: mpsc_pool was declared as file but never in lib.rs - added now
-// ZOMBIE: No Python callers
-#[allow(dead_code)]
+// G5.MPSC_POOL: Wired to fetch_coordinator.py for typed channel queue
 mod mpsc_pool;
 
 // ZOMBIE: No Python callers
@@ -781,6 +778,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     url_ops::register_functions(&m)?;
     xxhash_ext::register_functions(&m)?;
     zero_copy::register_functions(&m)?;
+    simhash_ext::register_functions(&m)?;  // G4: Always registered (no feature gate)
 
     // Additional modules discovered with Python API
     aho_corasick_simd::register_module(&m)?;
@@ -804,7 +802,6 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "simdjson")]
     {
         simdjson_extract::register_functions(&m)?;
-        simhash_ext::register_functions(&m)?;
     }
     #[cfg(feature = "tls13")]
     tls_metadata::register_functions(&m)?;

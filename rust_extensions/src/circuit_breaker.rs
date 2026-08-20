@@ -62,6 +62,76 @@ const HALF_OPEN_PROBES: u32 = 3;
 const RECOVERY_TIMEOUT_SECS: u64 = 30;
 
 // ---------------------------------------------------------------------------
+// AIMD Layer 2 Integration
+// ---------------------------------------------------------------------------
+// AIMD (Additive Increase, Multiplicative Decrease) provides adaptive rate
+// limiting on top of circuit breaking. When failures occur, AIMD reduces the
+// concurrency window. On success, AIMD gradually increases it.
+//
+// Design:
+// - Lazy initialization: AIMD controller created on first use
+// - Thread-safe: Uses AtomicU32 for counter state
+// - M1 8GB safe: ~16 bytes, zero allocations on hot path
+
+/// AIMD Layer 2 state for adaptive rate limiting.
+struct AIMDLayer2 {
+    successes: AtomicU32,
+    failures: AtomicU32,
+    window: AtomicU64, // f64 bits
+}
+
+impl AIMDLayer2 {
+    const SUCCESS_THRESHOLD: u32 = 8;
+    const ADDITIVE_INCREMENT: f64 = 2.0;
+    const MIN_WINDOW: f64 = 1.0;
+    const MAX_WINDOW: f64 = 25.0;
+
+    fn new() -> Self {
+        Self {
+            successes: AtomicU32::new(0),
+            failures: AtomicU32::new(0),
+            window: AtomicU64::new(10.0f64.to_bits()), // Start at 10
+        }
+    }
+
+    fn record_success_unchecked(&self) {
+        let prev = self.successes.fetch_add(1, Ordering::Relaxed);
+        if prev + 1 >= Self::SUCCESS_THRESHOLD {
+            // Reset and increase window
+            self.successes.store(0, Ordering::Relaxed);
+            let old_bits = self.window.load(Ordering::Relaxed);
+            let old = f64::from_bits(old_bits);
+            let new = (old + Self::ADDITIVE_INCREMENT).min(Self::MAX_WINDOW);
+            self.window.store(new.to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    fn record_failure_unchecked(&self) {
+        self.failures.fetch_add(1, Ordering::Relaxed);
+        self.successes.store(0, Ordering::Relaxed); // Reset on failure
+        let old_bits = self.window.load(Ordering::Relaxed);
+        let old = f64::from_bits(old_bits);
+        // Multiply by 0.75 (25% reduction on failure)
+        let new = (old * 0.75).max(Self::MIN_WINDOW);
+        self.window.store(new.to_bits(), Ordering::Relaxed);
+    }
+
+    fn get_window(&self) -> f64 {
+        f64::from_bits(self.window.load(Ordering::Relaxed))
+    }
+}
+
+impl Default for AIMDLayer2 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Global AIMD Layer 2 instance.
+/// Lazy initialization: created on first circuit_breaker_record_failure call.
+static AIMD_LAYER2: std::sync::LazyLock<AIMDLayer2> = std::sync::LazyLock::new(AIMDLayer2::default);
+
+// ---------------------------------------------------------------------------
 // Domain State (stored in RwLock-protected AHashMap per domain)
 // ---------------------------------------------------------------------------
 
@@ -127,6 +197,9 @@ impl DomainState {
         self.state.store(STATE_CLOSED, Ordering::Relaxed);
         self.recovery_timeout
             .store(RECOVERY_TIMEOUT_SECS, Ordering::Relaxed);
+
+        // Layer 2: Notify AIMD controller for gradual recovery
+        AIMD_LAYER2.record_success_unchecked();
     }
 
     fn record_failure(&self, is_timeout: bool) {
@@ -135,22 +208,31 @@ impl DomainState {
 
         let prev = self.failure_count.fetch_add(1, Ordering::Relaxed);
 
+        // Layer 2: Notify AIMD controller for adaptive rate limiting
+        AIMD_LAYER2.record_failure_unchecked();
+
         if is_timeout {
             // Timeout: increment but don't immediately trip
             // Threshold check on next is_open call
             if prev + 1 >= FAILURE_THRESHOLD {
                 self.state.store(STATE_OPEN, Ordering::Relaxed);
+                // Layer 2: Aggressive reduction on circuit trip
+                AIMD_LAYER2.record_failure_unchecked();
             }
         } else {
             // Hard error: immediate trip
             if prev + 1 >= FAILURE_THRESHOLD {
                 self.state.store(STATE_OPEN, Ordering::Relaxed);
+                // Layer 2: Aggressive reduction on circuit trip
+                AIMD_LAYER2.record_failure_unchecked();
             }
         }
     }
 
     fn record_half_open_success(&self) -> bool {
         let probes = self.half_open_probes.fetch_add(1, Ordering::Relaxed) + 1;
+        // Layer 2: Successful half-open probe = partial AIMD recovery
+        AIMD_LAYER2.record_success_unchecked();
         if probes >= HALF_OPEN_PROBES {
             self.record_success();
             true
@@ -162,6 +244,21 @@ impl DomainState {
 
 // ---------------------------------------------------------------------------
 // Global Circuit Breaker Registry
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Layer 2: AIMD Integration for Adaptive Rate Limiting
+// ---------------------------------------------------------------------------
+// AIMD Layer 2 provides adaptive rate limiting on top of circuit breaking.
+// When circuit breaker records a failure, AIMD reduces the concurrency window.
+// When circuit breaker records success, AIMD gradually increases the window.
+//
+// AIMD State Machine:
+//   - record_failure() → window *= 0.75 (25% reduction)
+//   - record_success() (8×) → window += 2.0 (capped at 25)
+//   - Window clamped to [1.0, 25.0]
+//
+// M1 8GB: ~16 bytes per AIMD instance, zero allocations on hot path.
 // ---------------------------------------------------------------------------
 
 /// Global registry of circuit breakers per domain.
@@ -287,6 +384,27 @@ pub fn circuit_breaker_get_stats(domain: &str) -> (u8, u32, u64) {
     (s, fc, age)
 }
 
+/// circuit_breaker_aimd_get_window() -> f64
+///
+/// Get current AIMD Layer 2 window size.
+/// Returns the adaptive concurrency limit derived from circuit breaker failures.
+#[pyfunction]
+pub fn circuit_breaker_aimd_get_window() -> f64 {
+    AIMD_LAYER2.get_window()
+}
+
+/// circuit_breaker_aimd_reset() -> None
+///
+/// Reset AIMD Layer 2 state (for testing).
+#[pyfunction]
+pub fn circuit_breaker_aimd_reset() {
+    AIMD_LAYER2.successes.store(0, Ordering::Relaxed);
+    AIMD_LAYER2.failures.store(0, Ordering::Relaxed);
+    AIMD_LAYER2
+        .window
+        .store(10.0f64.to_bits(), Ordering::Relaxed);
+}
+
 /// Register circuit_breaker functions in the Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(circuit_breaker_is_open))?;
@@ -295,6 +413,8 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(circuit_breaker_half_open_probe))?;
     m.add_function(wrap_pyfunction!(circuit_breaker_clear_all))?;
     m.add_function(wrap_pyfunction!(circuit_breaker_get_stats))?;
+    m.add_function(wrap_pyfunction!(circuit_breaker_aimd_get_window))?;
+    m.add_function(wrap_pyfunction!(circuit_breaker_aimd_reset))?;
     Ok(())
 }
 

@@ -244,8 +244,9 @@ pub fn compress_page(data: &[u8]) -> PyResult<Vec<u8>> {
     use crate::gil::release_gil;
     Python::attach(|py| {
         release_gil(py, || {
-            compress_page_impl(data)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("compress_page: {}", e)))
+            compress_page_impl(data).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("compress_page: {}", e))
+            })
         })
     })
 }
@@ -265,8 +266,9 @@ pub fn decompress_page(wire: &[u8]) -> PyResult<Vec<u8>> {
     use crate::gil::release_gil;
     Python::attach(|py| {
         release_gil(py, || {
-            decompress_page_impl(wire)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("decompress_page: {}", e)))
+            decompress_page_impl(wire).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("decompress_page: {}", e))
+            })
         })
     })
 }
@@ -411,8 +413,9 @@ pub fn compress_page_dict(data: &[u8], dict_id: u32) -> PyResult<Vec<u8>> {
     use crate::gil::release_gil;
     Python::attach(|py| {
         release_gil(py, || {
-            compress_page_with_dict_impl(data, dict_id)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("compress_page_dict: {}", e)))
+            compress_page_with_dict_impl(data, dict_id).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("compress_page_dict: {}", e))
+            })
         })
     })
 }
@@ -483,8 +486,9 @@ pub fn lz4_decompress_raw(compressed: &[u8]) -> PyResult<Vec<u8>> {
             wire.extend_from_slice(&size.to_le_bytes());
             wire.extend_from_slice(compressed);
 
-            lz4_flex::decompress_size_prepended(&wire)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("lz4_decompress_raw: {}", e)))
+            lz4_flex::decompress_size_prepended(&wire).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("lz4_decompress_raw: {}", e))
+            })
         })
     })
 }
@@ -557,8 +561,12 @@ pub fn lz4_decompress_jsonl_batch(compressed: &[u8]) -> PyResult<Vec<Vec<u8>>> {
             wire.extend_from_slice(&size.to_le_bytes());
             wire.extend_from_slice(compressed);
 
-            let decompressed = lz4_flex::decompress_size_prepended(&wire)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("lz4_decompress_jsonl_batch: {}", e)))?;
+            let decompressed = lz4_flex::decompress_size_prepended(&wire).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "lz4_decompress_jsonl_batch: {}",
+                    e
+                ))
+            })?;
             let lines: Vec<Vec<u8>> = decompressed
                 .split(|&b| b == b'\n')
                 .map(|s| s.to_vec())
@@ -569,6 +577,96 @@ pub fn lz4_decompress_jsonl_batch(compressed: &[u8]) -> PyResult<Vec<Vec<u8>>> {
 }
 
 /// Register compression functions with a Python module.
+// ---------------------------------------------------------------------------
+// Pure zstd compression (E3 hot path)
+// ---------------------------------------------------------------------------
+
+/// Pure zstd compression — no header, no auto-codec selection.
+///
+/// G3: Direct zstd encode/decode for msgspec payloads in memory.
+/// Expected speedup: 3-5× vs Python compression.zstd on M1.
+///
+/// Args:
+///   data: bytes — raw data to compress
+///   level: i32 — zstd compression level (1 fast — 22 max; default 3)
+///
+/// Returns:
+///   bytes — raw zstd-compressed data (no header)
+///
+/// ## GIL Handling
+/// Releases GIL during CPU-bound zstd compression.
+fn compress_zstd_impl(data: &[u8], level: i32) -> Result<Vec<u8>, &'static str> {
+    // Clamp level to valid range
+    let level = level.clamp(1, 22);
+    zstd::encode_all(data, level).map_err(|_| "zstd encode failed")
+}
+
+/// Pure zstd decompression — no header.
+///
+/// G3: Direct zstd decode for msgspec payloads in memory.
+/// Expected speedup: 3-5× vs Python compression.zstd on M1.
+///
+/// Args:
+///   compressed: bytes — raw zstd-compressed data
+///
+/// Returns:
+///   bytes — decompressed original data
+///
+/// ## GIL Handling
+/// Releases GIL during CPU-bound zstd decompression.
+fn decompress_zstd_impl(compressed: &[u8]) -> Result<Vec<u8>, &'static str> {
+    zstd::decode_all(compressed).map_err(|_| "zstd decode failed")
+}
+
+/// Compress data with zstd (pure, no wire format).
+///
+/// Python-facing API for G3: Rust zstd hot path.
+///
+/// Args:
+///   data: bytes — data to compress
+///   level: i32 — compression level (1-22, default 3)
+///
+/// Returns:
+///   bytes — zstd-compressed data
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound zstd compression.
+#[pyfunction]
+pub fn compress_zstd(data: &[u8], level: i32) -> PyResult<Vec<u8>> {
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || {
+            compress_zstd_impl(data, level).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("compress_zstd: {}", e))
+            })
+        })
+    })
+}
+
+/// Decompress zstd-compressed data (pure, no wire format).
+///
+/// Python-facing API for G3: Rust zstd hot path.
+///
+/// Args:
+///   compressed: bytes — zstd-compressed data
+///
+/// Returns:
+///   bytes — decompressed data
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound zstd decompression.
+#[pyfunction]
+pub fn decompress_zstd(compressed: &[u8]) -> PyResult<Vec<u8>> {
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || {
+            decompress_zstd_impl(compressed).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("decompress_zstd: {}", e))
+            })
+        })
+    })
+}
+
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compress_page))?;
     m.add_function(wrap_pyfunction!(decompress_page))?;
@@ -581,6 +679,8 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lz4_decompress_raw))?;
     m.add_function(wrap_pyfunction!(lz4_compress_jsonl_batch))?;
     m.add_function(wrap_pyfunction!(lz4_decompress_jsonl_batch))?;
+    m.add_function(wrap_pyfunction!(compress_zstd))?;
+    m.add_function(wrap_pyfunction!(decompress_zstd))?;
     Ok(())
 }
 

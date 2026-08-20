@@ -211,6 +211,73 @@ async def _rust_batch_decrypt_async(
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Rust single-item crypto (large payload hot path)
+# ---------------------------------------------------------------------------
+# For single large items (>4 KB), use encrypt_aes_gcm_raw/decrypt_aes_gcm_raw
+# which accept pre-derived keys (no PBKDF2 overhead).
+
+_RUST_RAW_AVAILABLE: bool = False
+_RUST_RAW_ENCRYPT: Any = None
+_RUST_RAW_DECRYPT: Any = None
+
+# Threshold for Rust single-item acceleration
+_RUST_LARGE_THRESHOLD: int = 4096
+
+
+def _init_rust_raw_crypto() -> bool:
+    """Try to import Rust single-item crypto functions."""
+    global _RUST_RAW_AVAILABLE, _RUST_RAW_ENCRYPT, _RUST_RAW_DECRYPT
+    try:
+        from hledac.universal._core.rust_backend import rust
+
+        raw = getattr(rust, "raw", None)
+        _RUST_RAW_ENCRYPT = getattr(raw, "encrypt_aes_gcm_raw", None)
+        _RUST_RAW_DECRYPT = getattr(raw, "decrypt_aes_gcm_raw", None)
+        if _RUST_RAW_ENCRYPT is not None and _RUST_RAW_DECRYPT is not None:
+            _RUST_RAW_AVAILABLE = True
+            return True
+    except Exception:
+        pass
+    _RUST_RAW_AVAILABLE = False
+    _RUST_RAW_ENCRYPT = None
+    _RUST_RAW_DECRYPT = None
+    return False
+
+
+def _encrypt_rust_raw(key: bytes, plaintext: bytes) -> bytes | None:
+    """Single-item encrypt via Rust (for large payloads). Returns None on failure."""
+    if not _RUST_RAW_AVAILABLE or _RUST_RAW_ENCRYPT is None:
+        return None
+    try:
+        # Rust expects plaintext as string (latin-1 encoding preserves bytes)
+        plaintext_str = plaintext.decode("latin-1")
+        result = _RUST_RAW_ENCRYPT(list(key), plaintext_str)
+        return bytes(result) if result else None
+    except Exception as e:
+        logger.debug(f"Rust encrypt_aes_gcm_raw failed: {e}")
+        return None
+
+
+def _decrypt_rust_raw(key: bytes, encrypted: bytes) -> bytes | None:
+    """Single-item decrypt via Rust (for large payloads). Returns None on failure."""
+    if not _RUST_RAW_AVAILABLE or _RUST_RAW_DECRYPT is None:
+        return None
+    try:
+        # Rust expects Vec<u8> - pass as bytes (PyO3 handles conversion)
+        result = _RUST_RAW_DECRYPT(list(key), bytes(encrypted))
+        if result is not None:
+            # Rust returns String (UTF-8), convert back to bytes using latin-1
+            # (bijective encoding that preserves all byte values 0-255)
+            if isinstance(result, str):
+                return result.encode("latin-1")
+            return bytes(result)
+        return None
+    except Exception as e:
+        logger.debug(f"Rust decrypt_aes_gcm_raw failed: {e}")
+        return None
+
+
 # Pure-Python fallback (AES-256-GCM via cryptography.hazmat)
 # ---------------------------------------------------------------------------
 
@@ -454,6 +521,7 @@ class SecretVault:
 
         # Initialize Rust crypto
         _init_rust_crypto()
+        _init_rust_raw_crypto()
         self._rust_available = _RUST_CRYPTO_AVAILABLE
 
         # Lock for thread-safe operations
@@ -526,20 +594,41 @@ class SecretVault:
 
     def _encrypt_python(self, plaintext: bytes) -> bytes:
         """
-        Pure-Python AES-256-GCM encryption using pre-derived key.
+        AES-256-GCM encryption using pre-derived key.
 
         Blob format: 0x01 || nonce(12) || ciphertext || tag(16)
         Salt stored separately in LMDB metadata (_vault_salt).
+
+        M1 optimization:
+            - >4 KB: Rust encrypt_aes_gcm_raw (AES-NI, ~4-8× faster)
+            - <=4 KB: Python cryptography (hardware AES-NI via OpenSSL)
         """
+        # Try Rust for large payloads
+        if len(plaintext) > _RUST_LARGE_THRESHOLD:
+            result = _encrypt_rust_raw(self._derived_key, plaintext)
+            if result is not None:
+                return b"\x01" + result  # Prepend version byte
+        # Fall back to Python
         return _aead_encrypt(plaintext, self._derived_key)
 
     def _decrypt_python(self, encrypted: bytes) -> bytes | None:
         """
-        Pure-Python AES-256-GCM decryption.
+        AES-256-GCM decryption.
 
         Handles v1 format (AES-256-GCM) and legacy Fernet (AES-128-CBC)
         for migration. Returns None on any failure.
+
+        M1 optimization:
+            - >4 KB: Rust decrypt_aes_gcm_raw (AES-NI, ~4-8× faster)
+            - <=4 KB: Python cryptography (hardware AES-NI via OpenSSL)
         """
+        # Try Rust for large payloads (v1 format: 0x01 + nonce + ct + tag)
+        if len(encrypted) > _RUST_LARGE_THRESHOLD + 29:  # 29 = 1(version) + 12(nonce) + 16(tag)
+            if encrypted[0] == 0x01:
+                rust_result = _decrypt_rust_raw(self._derived_key, encrypted[1:])
+                if rust_result is not None:
+                    return rust_result
+        # Fall back to Python
         return _aead_decrypt(encrypted, self._derived_key)
 
     def _serialize(self, data: dict[str, Any]) -> bytes:

@@ -29,8 +29,8 @@ from typing import Any
 
 # Types from parent module — needed for msgspec.Struct field annotations (evaluated at class def time)
 from .pq_crypto import PQAvailability, PQSignature, PQStatus, PostQuantumError
-from utils._patterns import get_secure_enclave_helper_path  # noqa: E402,F401
 from _core import aclose
+from utils._patterns import get_secure_enclave_helper_path  # noqa: E402,F401
 
 logger = logging.getLogger(__name__)
 HELPER_MISSING = 'HELPER_MISSING'
@@ -39,12 +39,6 @@ HELPER_TIMEOUT = 'HELPER_TIMEOUT'
 HELPER_BAD_JSON = 'HELPER_BAD_JSON'
 HELPER_NONZERO_EXIT = 'HELPER_NONZERO_EXIT'
 _STATUS_CACHE_TTL_SECONDS = 30.0
-    repo_root = _detect_repo_root()
-    if repo_root is not None:
-        repo_helper = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'
-        if repo_helper.exists() and repo_helper.is_file():
-            return repo_helper
-    return None
 
 def _get_helper_path() -> Path | None:
     """Internal alias for get_secure_enclave_helper_path()."""

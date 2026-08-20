@@ -92,6 +92,7 @@ from hledac.universal.pipeline._feed_dtos import (
     compute_feed_economics_verdict_python,
     compute_feed_branch_verdict_python,
     _MIN_ARTICLE_FALLBACK_CHARS,
+    batch_classify_fallback_decisions,
     )
 
 

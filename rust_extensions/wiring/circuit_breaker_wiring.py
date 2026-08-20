@@ -134,3 +134,35 @@ if _circuit_breaker.available:
     logger.info("[CircuitBreaker] Rust circuit_breaker.rs integration: ENABLED")
 else:
     logger.info("[CircuitBreaker] Rust circuit_breaker.rs integration: DISABLED (using Python fallback)")
+
+
+# ---------------------------------------------------------------------------
+# Layer 2: AIMD Integration
+# ---------------------------------------------------------------------------
+# AIMD provides adaptive rate limiting on top of circuit breaking.
+# When circuit breaker records failures, AIMD reduces the concurrency window.
+# When circuit breaker records success, AIMD gradually increases it.
+# ---------------------------------------------------------------------------
+
+def get_aimd_window() -> float:
+    """
+    Get current AIMD Layer 2 window size.
+
+    Returns the adaptive concurrency limit derived from circuit breaker failures.
+    This value can be used to size semaphore acquisition for HTTP fetches.
+    """
+    try:
+        from hledac_rust_extensions import circuit_breaker_aimd_get_window
+        return circuit_breaker_aimd_get_window()
+    except (ImportError, AttributeError):
+        # Fallback: return reasonable default
+        return 10.0
+
+
+def reset_aimd() -> None:
+    """Reset AIMD Layer 2 state (for testing)."""
+    try:
+        from hledac_rust_extensions import circuit_breaker_aimd_reset
+        circuit_breaker_aimd_reset()
+    except (ImportError, AttributeError):
+        pass

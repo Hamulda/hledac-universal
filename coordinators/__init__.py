@@ -127,14 +127,8 @@ from .research_optimizer import (
     optimized_research,
     )
 
-# Resource allocator
-from .resource_allocator import (
-    IntelligentResourceAllocator,
-    Priority,
-    ResourceAllocation,
-    ResourceRequest,
-    ResourceType,
-    )
+# DEPRECATED [ARCH-001]: resource_allocator imports removed
+# Use _core.topology, _core.memory_pressure, and _core.resource_governor instead
 from .security_coordinator import (
     SecurityContext,
     SecurityCoordinator,

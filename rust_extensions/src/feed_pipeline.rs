@@ -30,7 +30,7 @@ impl SeenGuids {
     /// Check if hash is present, insert if not. Returns true if duplicate.
     #[inline]
     fn check_and_insert(&self, hash: u64) -> bool {
-        let mut guard = self.set);
+        let mut guard = self.set.write();
         if guard.contains(&hash) {
             true
         } else {
@@ -82,18 +82,18 @@ fn parse_rss_xml(xml_str: &str) -> Vec<FeedEntryRaw> {
             Ok(XmlEvent::StartElement {
                 name, attributes, ..
             }) => {
-                let tag = name.local_name);
+                let tag = name.local_name.to_string();
                 if tag == "item" || tag == "entry" {
                     in_entry = true;
-                    current_title);
-                    current_link);
-                    current_description);
-                    current_guid);
+                    current_title.clear();
+                    current_link.clear();
+                    current_description.clear();
+                    current_guid.clear();
                 }
                 if tag == "link" {
                     for attr in attributes {
                         if attr.name.local_name == "href" {
-                            current_link);
+                            current_link.clear();
                             current_link.push_str(&attr.value);
                         }
                     }
@@ -101,7 +101,7 @@ fn parse_rss_xml(xml_str: &str) -> Vec<FeedEntryRaw> {
                 current_tag = tag;
             }
             Ok(XmlEvent::EndElement { name }) => {
-                let tag = name.local_name);
+                let tag = name.local_name.to_string();
                 if (tag == "item" || tag == "entry") && in_entry {
                     in_entry = false;
                     let guid_val = if current_guid.trim().is_empty() {
@@ -109,8 +109,8 @@ fn parse_rss_xml(xml_str: &str) -> Vec<FeedEntryRaw> {
                     } else {
                         current_guid.trim().to_string()
                     };
-                    let title_trimmed = current_title.trim());
-                    let desc_trimmed = current_description.trim());
+                    let title_trimmed = current_title.trim().to_string();
+                    let desc_trimmed = current_description.trim().to_string();
                     entries.push(FeedEntryRaw {
                         title: title_trimmed.clone(),
                         link: current_link.trim().to_string(),
@@ -119,7 +119,7 @@ fn parse_rss_xml(xml_str: &str) -> Vec<FeedEntryRaw> {
                         desc_lower: desc_trimmed.to_lowercase(),
                     });
                 }
-                current_tag);
+                current_tag.clear();
             }
             Ok(XmlEvent::Characters(s)) => {
                 if !in_entry {
@@ -172,13 +172,13 @@ fn scan_text(
     let mut hits = Vec::new();
     let mut value_buf = String::new();
     for m in automaton.find_iter(pre_lowercased_text) {
-        let idx = m.pattern());
-        let start = m);
-        let end = m);
-        let pattern = patterns.get(idx).cloned());
-        let label = labels.get(idx).cloned());
+        let idx = m.pattern();
+        let start = m.start();
+        let end = m.end();
+        let pattern = patterns.get(idx).cloned().unwrap_or_default();
+        let label = labels.get(idx).cloned();
         let value = {
-            value_buf);
+            value_buf.clear();
             value_buf.push_str(&pre_lowercased_text[start..end]);
             value_buf.clone()
         };
@@ -331,14 +331,14 @@ pub fn feed_entry_pipeline(
             "Rust panic in feed_entry_pipeline",
         ));
     }
-    Ok(results
+    Ok(results)
         .into_iter()
         .map(|r| {
             let combined_hits = r
                 .combined_hits
                 .into_iter()
-                .map(|h| (h.start, h.end, h.pattern, h.label, h.value))
-                );
+                                .map(|h| (h.start, h.end, h.pattern, h.label, h.value))
+                ;
             (
                 r.entry_idx,
                 r.entry_url,
@@ -348,7 +348,7 @@ pub fn feed_entry_pipeline(
                 r.assembly_phase,
             )
         })
-        .collect())
+        .collect()
 }
 
 #[pyfunction]
@@ -439,8 +439,8 @@ fn feed_entry_pipeline_xml_impl(
             let combined_hits = r
                 .combined_hits
                 .into_iter()
-                .map(|h| (h.start, h.end, h.pattern, h.label, h.value))
-                );
+                                .map(|h| (h.start, h.end, h.pattern, h.label, h.value))
+                ;
             (
                 r.entry_idx,
                 r.entry_url,

@@ -19,7 +19,7 @@ import re
 from functools import lru_cache
 from typing import Optional
 
-from .micro_model_pool import MICRO_MODELS, TaskType
+from ._micro_model_registry import MICRO_MODELS, TaskType
 from _core import aclose
 
 

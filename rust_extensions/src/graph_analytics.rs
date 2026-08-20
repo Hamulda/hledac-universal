@@ -90,20 +90,22 @@ fn build_graph(
             id: (*id).to_string(),
             node_type: node_type.clone(),
         });
-        node_indices.insert(*id, idx);
+        node_indices.insert(*id, idx as u64);
     }
 
     // Add edges
     for (from, to, weight) in edges {
         if let (Some(&from_idx), Some(&to_idx)) = (node_indices.get(from), node_indices.get(to)) {
             // Check degree limits
-            let from_degree = graph.edges(from_idx));
-            let to_degree = graph.edges(to_idx));
+            let from_degree = graph.edges(from_idx).count();
+            let to_degree = graph.edges(to_idx).count();
             if from_degree < MAX_EDGES_PER_NODE && to_degree < MAX_EDGES_PER_NODE {
                 graph.add_edge(from_idx, to_idx, IOCEdge { weight: *weight });
+
                 // For undirected semantics, add reverse edge if not already present
                 if !graph.contains_edge(to_idx, from_idx) {
                     graph.add_edge(to_idx, from_idx, IOCEdge { weight: *weight });
+
                 }
             }
         }
@@ -130,7 +132,7 @@ fn build_undirected_graph(
             id: (*id).to_string(),
             node_type: node_type.clone(),
         });
-        node_indices.insert(*id, idx);
+        node_indices.insert(*id, idx as u64);
     }
 
     // Add edges (undirected) — enforce MAX_EDGES_PER_NODE degree limit for consistency
@@ -147,11 +149,13 @@ fn build_undirected_graph(
             };
             if !added_edges.contains(&edge_key) {
                 // Enforce degree limit (same as build_graph)
-                let from_degree = graph.edges(from_idx));
-                let to_degree = graph.edges(to_idx));
+                let from_degree = graph.edges(from_idx).count();
+                let to_degree = graph.edges(to_idx).count();
                 if from_degree < MAX_EDGES_PER_NODE && to_degree < MAX_EDGES_PER_NODE {
                     added_edges.insert(edge_key);
+
                     graph.add_edge(from_idx, to_idx, IOCEdge { weight: *weight });
+
                 }
             }
         }
@@ -181,7 +185,7 @@ fn louvain_communities_impl(
     resolution: f64,
     max_iter: usize,
 ) -> HashMap<u64, u32> {
-    let n = graph);
+    let n = graph.node_count();
     if n == 0 {
         return HashMap::new();
     }
@@ -191,19 +195,20 @@ fn louvain_communities_impl(
         .node_indices()
         .enumerate()
         .map(|(i, idx)| (idx, i as u32))
-        );
+        .collect();
     let mut community_weights: HashMap<u32, f64> = HashMap::new();
 
     // Calculate total edge weight (m) and node degrees
-    let m: f64 = graph.edge_references().map(|e| e.weight().weight));
+    let m: f64 = graph.edge_references().map(|e| e.weight().weight).sum();
     if m == 0.0 {
-        return node_indices.iter().map(|(&id, _)| (id, 0)));
+        return node_indices.iter().map(|(&id, _)| (id, 0)).collect();
     }
 
     let mut k_i: HashMap<NodeIndex, f64> = HashMap::new();
     for idx in graph.node_indices() {
-        let deg: f64 = graph.edges(idx).map(|e| e.weight().weight));
+        let deg: f64 = graph.edges(idx).map(|e| e.weight().weight).sum();
         k_i.insert(idx, deg);
+
         *community_weights.entry(community[&idx]).or_insert(0.0) += deg;
     }
 
@@ -219,13 +224,13 @@ fn louvain_communities_impl(
             let k_i_val = k_i[&idx];
 
             // Calculate modularity gain for moving to each neighbor's community
-            let neighbors: Vec<_> = graph.neighbors(idx));
+            let neighbors: Vec<_> = graph.neighbors(idx).collect();
             let mut best_comm = current_comm;
             let mut best_gain = 0.0;
 
             // Get communities of neighbors
             let neighbor_communities: HashSet<u32> =
-                neighbors.iter().map(|&n| community[&n]));
+                neighbors.iter().map(|&n| community[&n]).collect();
 
             for &comm in &neighbor_communities {
                 // Calculate modularity gain
@@ -239,12 +244,13 @@ fn louvain_communities_impl(
                             .edges_connecting(idx, n)
                             .map(|e| e.weight().weight)
                             .sum::<f64>()
-                    })
-                    );
+                    };
 
                 let comm_weight = community_weights.get(&comm).copied().unwrap_or(0.0);
+
                 let delta_q =
                     (sum_to_comm - resolution * k_i_val * comm_weight / (2.0 * m)) / (2.0 * m);
+
 
                 if delta_q > best_gain {
                     best_gain = delta_q;
@@ -255,6 +261,7 @@ fn louvain_communities_impl(
             if best_comm != current_comm {
                 // Move node to new community
                 community.insert(idx, best_comm);
+
 
                 // Update community weights
                 *community_weights.entry(current_comm).or_insert(0.0) -= k_i_val;
@@ -271,10 +278,12 @@ fn louvain_communities_impl(
         .copied()
         .collect::<HashSet<_>>()
         .into_iter()
-        );
+        .collect::<Vec<_>>();
+
     let mut comm_map: HashMap<u32, u32> = HashMap::new();
     for (new_id, &old_id) in unique_communities.iter().enumerate() {
         comm_map.insert(old_id, new_id as u32);
+
     }
 
     // Convert back to node_id -> community_id
@@ -311,17 +320,22 @@ pub fn rust_pagerank<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let (node_indices, graph) = build_graph(&nodes, &edges);
 
-    let n = graph);
+
+    let n = graph.node_indices().count();
     if n == 0 {
         return Ok(PyDict::new(py));
+
     }
 
     // Use petgraph's pagerank if graph is suitable, otherwise manual implementation
     let pagerank_scores: Vec<f64> = if n <= MAX_NODES && !edges.is_empty() {
         // Clamp parameters
         let damping = damping.clamp(0.0, 1.0);
+
         let tol = tol.max(1e-10);
+
         let max_iter = max_iter.min(PAGERANK_MAX_ITER);
+
 
         // Convert to static graph for petgraph
         let n_usize = n;
@@ -330,10 +344,11 @@ pub fn rust_pagerank<'py>(
         for (from, to, weight) in &edges {
             if let (Some(&from_idx), Some(&to_idx)) = (node_indices.get(from), node_indices.get(to))
             {
-                let from_i = from_idx);
-                let to_i = to_idx);
+                let from_i = *from_idx as u64);
+                let to_i = *to_idx as u64);
                 if from_i < n_usize && to_i < n_usize {
                     adj[from_i].push((to_i, *weight));
+
                     adj[to_i].push((from_i, *weight)); // Undirected for PageRank
                 }
             }
@@ -350,7 +365,8 @@ pub fn rust_pagerank<'py>(
                 if neighbors.is_empty() {
                     continue;
                 }
-                let sum_w: f64 = neighbors.iter().map(|&(_, w)| w));
+                let sum_w: f64 = neighbors.iter().map(|&(_, w)| w).sum::<f64>();
+
                 if sum_w == 0.0 {
                     continue;
                 }
@@ -365,10 +381,12 @@ pub fn rust_pagerank<'py>(
                 .iter()
                 .zip(new_pr.iter())
                 .map(|(a, b)| (a - b).abs())
-                );
+                .sum::<f64>();
+
 
             // Normalize new_pr in-place
-            let sum: f64 = new_pr.iter());
+            let sum: f64 = new_pr.iter().sum::<f64>();
+
             if sum > 0.0 {
                 for p in &mut new_pr {
                     *p /= sum;
@@ -388,23 +406,21 @@ pub fn rust_pagerank<'py>(
         }
 
         pr
-    } else {
-        // Fallback: uniform scores
-        vec![1.0 / n as f64; n]
-    };
 
     // Build index->node_id mapping (sorted by NodeIndex to match adj order)
     let mut index_to_id: Vec<u64> = vec![0; n];
     for (id, &idx) in &node_indices {
-        let pos = idx);
+        let pos = idx as u64);
         if pos < n {
             index_to_id[pos] = *id;
         }
     }
 
     let result = PyDict::new(py);
+
     for (i, &node_id) in index_to_id.iter().enumerate() {
         let _ = result.set_item(node_id, pagerank_scores[i]);
+
     }
 
     Ok(result)
@@ -431,11 +447,15 @@ pub fn rust_louvain_communities<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let (node_indices, graph) = build_undirected_graph(&nodes, &edges);
 
+
     let communities = louvain_communities_impl(&node_indices, &graph, resolution, max_iter);
 
+
     let result = PyDict::new(py);
+
     for (node_id, comm_id) in communities {
         let _ = result.set_item(node_id, comm_id);
+
     }
 
     Ok(result)
@@ -457,11 +477,15 @@ pub fn rust_scc<'py>(
     edges: Vec<(u64, u64, f64)>,
 ) -> PyResult<Bound<'py, PyList>> {
     let (node_indices, graph) = build_graph(&nodes, &edges);
+
     let sccs = compute_scc_impl(&node_indices, &graph);
 
+
     let result = PyList::empty(py);
+
     for component in sccs {
         let _ = result.append(PyList::new(py, component)?);
+
     }
     Ok(result)
 }
@@ -489,24 +513,29 @@ pub fn rust_graph_analytics_all<'py>(
     resolution: f64,
 ) -> PyResult<Bound<'py, PyDict>> {
     let (node_indices, graph_dir) = build_graph(&nodes, &edges);
+
     let (node_indices_undir, graph_undir) = build_undirected_graph(&nodes, &edges);
 
+
     // Build undirected adjacency list ONCE for PageRank
-    let n = node_indices);
+    let n = node_indices.len();
     let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
     for (from, to, weight) in &edges {
         if let (Some(&from_idx), Some(&to_idx)) = (node_indices.get(from), node_indices.get(to)) {
-            let from_i = from_idx);
-            let to_i = to_idx);
+            let from_i = *from_idx as u64);
+            let to_i = *to_idx as u64);
             if from_i < n && to_i < n {
                 adj[from_i].push((to_i, *weight));
+
                 adj[to_i].push((from_i, *weight));
+
             }
         }
     }
 
     // PageRank via shared helper (no clone)
     let pr_scores = compute_pagerank_on_adj(&adj, damping, PAGERANK_TOLERANCE, PAGERANK_MAX_ITER);
+
 
     // Louvain on undirected graph
     let communities = louvain_communities_impl(
@@ -519,10 +548,11 @@ pub fn rust_graph_analytics_all<'py>(
     // SCC on directed graph
     let sccs = compute_scc_impl(&node_indices, &graph_dir);
 
+
     // Build index->node_id mapping for PageRank result
     let mut index_to_id: Vec<u64> = vec![0; n];
     for (id, &idx) in &node_indices {
-        let pos = idx);
+        let pos = idx as u64);
         if pos < n {
             index_to_id[pos] = *id;
         }
@@ -530,26 +560,36 @@ pub fn rust_graph_analytics_all<'py>(
 
     // PageRank dict
     let py_pr = PyDict::new(py);
+
     for (i, &node_id) in index_to_id.iter().enumerate() {
         let _ = py_pr.set_item(node_id, pr_scores[i]);
+
     }
 
     // Communities dict
     let py_communities = PyDict::new(py);
+
     for (node_id, comm_id) in &communities {
         let _ = py_communities.set_item(node_id, comm_id);
+
     }
 
     // SCC as list of components
     let py_scc = PyList::empty(py);
+
     for component in sccs {
         let _ = py_scc.append(PyList::new(py, component)?);
+
     }
 
     let result = PyDict::new(py);
+
     let _ = result.set_item("pagerank", py_pr);
+
     let _ = result.set_item("communities", py_communities);
+
     let _ = result.set_item("scc", py_scc);
+
 
     Ok(result)
 }
@@ -565,7 +605,7 @@ fn compute_pagerank_on_adj(
     tol: f64,
     max_iter: usize,
 ) -> Vec<f64> {
-    let n = adj);
+    let n = adj.len();
     if n == 0 {
         return vec![];
     }
@@ -580,7 +620,8 @@ fn compute_pagerank_on_adj(
             if neighbors.is_empty() {
                 continue;
             }
-            let sum_w: f64 = neighbors.iter().map(|&(_, w)| w));
+            let sum_w: f64 = neighbors.iter().map(|&(_, w)| w).sum::<f64>();
+
             if sum_w == 0.0 {
                 continue;
             }
@@ -596,14 +637,16 @@ fn compute_pagerank_on_adj(
             .map(|(a, b)| (a - b).abs())
             );
 
-        let sum: f64 = new_pr.iter());
         if sum > 0.0 {
-            for p in &mut new_pr {
+            if sum > 0.0 {
+                for p in &mut new_pr {
                 *p /= sum;
             }
-        } else {
+                }
+            } else {
             let uniform = 1.0 / n as f64;
-            for p in &mut new_pr {
+            if sum > 0.0 {
+                for p in &mut new_pr {
                 *p = uniform;
             }
         }
@@ -631,17 +674,20 @@ fn compute_scc_impl(
 
     for idx in graph.node_indices() {
         let new_idx = pet_graph.add_node(());
-        idx_map.insert(idx, new_idx);
+
+        idx_map.insert(idx, new_idx as u64);
     }
 
     for edge in graph.edge_indices() {
-        let (from, to) = graph.edge_endpoints(edge));
+        let (from, to) = graph.edge_endpoints(edge);
         if let (Some(&pf), Some(&pt)) = (idx_map.get(&from), idx_map.get(&to)) {
             pet_graph.add_edge(pf, pt, 1.0);
+
         }
     }
 
     let sccs: Vec<Vec<NodeIndex>> = kosaraju_scc(&pet_graph);
+
 
     let reverse_map: HashMap<NodeIndex, u64> = idx_map
         .iter()
@@ -656,6 +702,7 @@ fn compute_scc_impl(
                 );
             if py_component.is_empty() {
                 None
+                }
             } else {
                 Some(py_component)
             }
@@ -685,7 +732,9 @@ mod tests {
         let edges: Vec<(u64, u64, f64)> = vec![];
         let communities =
             louvain_communities_impl(&HashMap::new(), &UnGraph::new_undirected(), 1.0, 10);
+
         assert!(communities.is_empty());
+
     }
 
     #[test]
@@ -693,8 +742,11 @@ mod tests {
         let nodes = vec![(1u64, "test".to_string(), "ip".to_string())];
         let edges: Vec<(u64, u64, f64)> = vec![];
         let (node_indices, graph) = build_undirected_graph(&nodes, &edges);
+
         let communities = louvain_communities_impl(&node_indices, &graph, 1.0, 10);
+
         assert_eq!(communities.len(), 1);
+
     }
 
     #[test]
@@ -705,9 +757,12 @@ mod tests {
         ];
         let edges = vec![(1u64, 2u64, 1.0)];
         let (node_indices, graph) = build_undirected_graph(&nodes, &edges);
+
         let communities = louvain_communities_impl(&node_indices, &graph, 1.0, 10);
+
         // Two connected nodes should be in the same community
         assert_eq!(communities[&1], communities[&2]);
+
     }
 
     #[test]
@@ -715,13 +770,18 @@ mod tests {
         let nodes: Vec<(u64, String, String)> = vec![];
         let edges: Vec<(u64, u64, f64)> = vec![];
         let (node_indices, graph) = build_graph(&nodes, &edges);
+
         assert_eq!(node_indices.len(), 0);
+
     }
 
     #[test]
     fn test_constants() {
         assert_eq!(MAX_NODES, 100_000);
+
         assert_eq!(PAGERANK_DAMPING, 0.85);
+
         assert_eq!(LOUVAIN_RESOLUTION, 1.0);
+
     }
 }

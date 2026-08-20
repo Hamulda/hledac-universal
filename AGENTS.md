@@ -1,87 +1,131 @@
-# AGENTS.md
+# AGENTS.md — Hledac Universal OSINT Orchestrator
 
-## Quick start
+## CRITICAL INVARIANTS (Top 10)
 
-- Default verification command: `python -m pytest tests/ -x --timeout=30 -q` (or `./run_tests.sh`). Project is Python, not Rust — ignore any auto-generated `cargo check` reference.
+1. **`asyncio.gather` vždy s `return_exceptions=True`** — `_check_gathered()` po každém gather volání
+2. **`mx.eval([])` před `mx.metal.clear_cache()`** — jinak clear_cache je no-op
+3. **Žádné `time.sleep()` v async kódu** — používat `asyncio.sleep()` nebo `await asyncio.to_thread()`
+4. **Žádné `asyncio.run()` v ThreadPoolExecutor** — M1 crash vector, používat `loop.run_until_complete()`
+5. **DuckDB write přes `async_ingest_findings_batch()`** — jediná canonical write path
+6. **LMDB bulk write přes `cursor.putmulti()`** — nikdy ne per-item `env.begin(write=True)` v loopu
+7. **RotatingBloomFilter pro URL dedup** — nikdy `Set[str]` nebo `ScalableBloomFilter`
+8. **M1 Metal cache limit dynamický** — `min(max(available*0.2, 512MiB), 1.5GiB)` ceiling
+9. **Fail-safe everywhere** — sidecary vrací `[]` při chybách
+10. **Žádné bare `except:`** — vždy `except Exception:` nebo konkrétní typ
 
-## Architecture & layout
+## DO NOT (Anti-patterns)
 
-- Start with `README.md` when you need repo orientation or architectural context.
-- Repository: universal.
-- Primary languages: Python.
-- Key source directories: `core/`, `tests/`.
-- Library-style project; expect reusable crates and packages.
-- CI workflows detected under `.github/workflows/`; match those expectations locally.
+- **Nepřidávej top-level MLX importy** — MLX se importuje lazy, early import crashuje M1
+- **Nepoužívej `time.sleep()` v async kódu** — použij `asyncio.sleep()` nebo `await asyncio.to_thread()`
+- **Nepiš do DuckDB bez `async_ingest_findings_batch()`** — jediná canonical write path
+- **Nepoužívej `asyncio.run()` v ThreadPoolExecutor** — M1 crash, použij `loop.run_until_complete()`
+- **Neobcházej `mx.eval([])` před `clear_cache()`** — clear_cache je no-op bez barrier
+- **Nepoužívej `ScalableBloomFilter`** — roste bez limitu, nahrazeno `RotatingBloomFilter`
+- **Nepiš raw `try/except ImportError` na module level** — použij `utils.optional_imports.optional()` nebo `core.capabilities.CAP`
+- **Nepoužívej `bytes()` na LMDB buffer** — ničí zero-copy přenos
+- **Nikdy nepřidávej `--disable-gpu` do nodriver args** — na M1 je GPU=CPU, zpomalí to
+- **Nevolej `aggressive_cleanup` bez `()`** — musí být `await ...aggressive_cleanup()`
 
-## Code style
+## HARDWARE CONSTRAINTS (M1 8GB UMA)
 
-- Follow PEP 8, prefer Black-compatible formatting, and add type hints when practical.
+- **RAM budget:** macOS ~2.5GB + orchestrátor ~1GB + LLM ~2GB + KV cache ~0.75GB = **6.25GB max**
+- **Metal cache limit:** 1.5 GiB (1_610_612_736 bytes)
+- **KV cache:** `kv_bits=4`, `max_kv_size=8192` v `mlx_lm.generate()`, NE v `load()`
+- **SWAP warning:** `relaxed=False` v MLX je feature, ne bug
+
+## KEY SEAMS (Canonical Paths)
+
+| Seam | Path |
+|------|------|
+| Canonical write | `DuckDBShadowStore.async_ingest_findings_batch()` |
+| LMDB metadata | `paths.open_lmdb()` context manager |
+| MLX inference | `Hermes3Engine.generate()` |
+| HTTP fetch | `FetchCoordinator.fetch()` |
+| Graph upsert | `DuckPGQGraph.upsert_ioc()` |
+
+## IOC Extraction — Dual Engine
+
+| Engine | Metoda | Kdy použít |
+|--------|--------|------------|
+| Rust regex `rust.ioc.extract_iocs_flat(text)` | Regex | Clearnet IOC, rychlost |
+| Brain NER `brain.ner_engine.extract_iocs_from_text(text)` | ML NER | Volný text, forum, dark web |
+
+`live_public_pipeline.py` volá oba — to je správně.
+
+## DuckDB Lazy Import Anti-Pattern
+
+**Module-level anti-pattern (špatně):**
+```python
+# ŠPATNĚ — 7µs cold-start penalty:
+try:
+    from otel import instrumented
+except ImportError:
+    from hledac.universal.otel._instrumentation import instrumented
+
+# SPRÁVNĚ — zero-cost until first use:
+from hledac.universal.utils.optional_imports import optional
+_instrumented = optional("otel:instrumented",
+    default=optional("hledac.universal.otel._instrumentation:instrumented"))
+```
+
+**Allowed:** `except ImportError` inside methods — legitimate runtime deferral.
+
+## PRE-FLIGHT GUARDS (F221-ABORT)
+
+Sprint min duration = `--duration 60s` (30s active window minimum). Abort → `sys.exit(2)`.
+
+Override with `--force` flag → `[F221-FORCED]` warning.
+
+## EXIT CODE CONVENTION (F350M-R)
+
+| Code | Meaning | Trigger |
+|------|---------|---------|
+| `0` | Clean success | Sprint completed |
+| `1` | Runtime error | `except Exception` |
+| `2` | Config/validation error | F221-ABORT, argparse, flag-conflict |
+| `3` | Programmer error | NameError, AttributeError, ImportError |
+| `130` | SIGINT | KeyboardInterrupt |
+
+## Entry Point
+
+```bash
+python -m hledac.universal --sprint "QUERY" [--duration SECS] [--aggressive]
+```
 
 ## Testing
 
-- Default verification command: `python -m pytest tests/ -x --timeout=30 -q`.
-- Keep CI green by mirroring workflow steps locally before pushing.
+```bash
+pytest tests/ -x --timeout=30 -q
+```
 
-## Performance & simplicity
+## Feature Flags
 
-- Do not guess at bottlenecks; measure before optimizing.
-- Prefer simple algorithms and data structures until workload data proves otherwise.
-- Keep performance changes surgical and behavior-preserving.
+Kanonický zdroj: `core/feature_flags.py` — jediná pravda pro všechny `HLEDAC_ENABLE_*` flags.
 
-## PR guidelines
+Přidat nový flag → přidej do `FeatureFlag` enum v `core/feature_flags.py`.
 
-- Write descriptive, imperative commit messages.
-- Reference issues with `Fixes #123` or `Closes #123` when applicable.
-- Keep pull requests focused and include test evidence for non-trivial changes.
+## Storage Trinity
 
-## Additional guidance
+| Layer | Tech | Purpose |
+|-------|------|---------|
+| DuckDB | SQL | Canonical findings |
+| LMDB | Key-value | Entity/claim metadata, whisper cache |
+| LanceDB | ANN | RAG embeddings |
 
-- Preferred orientation doc: `README.md`.
-- Repository docs spotted: AGENTS.md, README.md.
+## Optional Dependencies
 
+| Extra | Install | Purpose |
+|-------|---------|---------|
+| `mlx-embed` | `uv sync --extra mlx-embed` | MLX-native embedding |
+| `http3` | `uv sync --extra http3` | Real QUIC via aioquic |
 
-<!-- crystl-cli:begin v2.144.1 -->
-## Crystl CLI (agent-callable)
+## Before You Edit
 
-This section is auto-maintained by Crystl — edits between the `crystl-cli` markers are overwritten when it refreshes; the rest of this file belongs to the project. You're running inside Crystl. You can inspect and control sibling gems and shards via the `crystl` CLI. Full command reference (every flag): `crystl docs cli`.
-Detection contract: a non-empty `CRYSTL_SHARD` means this process is in a Crystl shard. `CRYSTL_VERSION` is the running Crystl version (`TERM_PROGRAM` / `TERM_PROGRAM_VERSION` are compatible terminal metadata). `CRYSTL_TIER` is the user's `free` or `guild` capability tier captured when this shard started; use it to plan Guild-only actions without checking before every task. If the license changes while the shard is already running, a bridge 403 is authoritative and a new shard receives the new tier. `CRYSTL_NOW` is the authoritative current time for this shard (ISO-8601 with timezone, refreshed at each prompt).
+Before editing any file, read it first. Before modifying a function, grep for all callers. Research before you edit.
 
-Everyday commands:
-- `crystl status` — overview; bare `crystl` runs it. Includes memory telemetry (`memory: app … · pressure …` plus per-shard resident memory) — check it before fanning out workers and rein in the fan-out when pressure isn't `normal`
-- `crystl gems` / `crystl shards --gem <name>` — discover what's open
-- `crystl screen --gem <g> --shard <s>` / `crystl send --gem <g> --shard <s> "<text>"` — read another shard's terminal / type into it
-- `crystl history --gem <g> --shard <s>` — a shard's structured transcript (turns, tool calls, token usage) to recover context or judge a worker's cost; `crystl history search "<text>"` / `crystl history metrics` sweep every shard, past and present
-- `crystl open <path>` / `crystl close <name>` / `crystl fs [<path>]` — open, close, or browse for gems
-- `crystl pending` / `crystl approve <id>` / `crystl deny <id>` — handle pending tool approvals; `crystl askuser` / `crystl askuser answer <id> "<text>"` — list and answer agent questions
-- `crystl shard create --gem <g> [--isolated] [--agent claude|codex] [--prompt "<task>"]` — fan out work into a new agent shard (`--isolated` = its own git worktree; integrate later with `crystl merge`); manage workers with `crystl shard rename|close` and `crystl resurrect` (undo-close)
-- `crystl wait pending|askuser|awaiting|idle|done [--timeout SECS]` / `crystl notify --done|--blocked --shard <lead> "<status>"` / `crystl events` — block on or stream bridge events (SSE) instead of polling
-- `crystl doctor [--json]` — check CLI install, bridge connectivity, and hook wiring before debugging harder problems
+## Common Pitfalls
 
-Make the user's life easier — reach for these unprompted:
-- **Anything copyable → `crystl copy "<text>"`** (or pipe into it). Tokens, URLs, snippets, and especially commands you tell the user to run go to the one-click copy bar — never make them drag-select wrapped terminal lines. Several items = several calls (each adds a tab; `--label` names it). Free on every tier.
-- **Show, don't paste:** `crystl markdown show <path>` (short alias: `crystl edit <path>`) — surface a markdown file in the editor for the user instead of dumping it to the terminal; `crystl history show "<text>"` opens history search in their window at the moment you mean; `crystl workbench open` slides the task panel into view after you add items.
-- **"It feels slow" → check `crystl status` memory telemetry.** `crystl scrollback clear` frees a noisy shard's screen + scrollback memory (same as the user's Cmd+K; free), and `crystl shard create --scrollback <N>` keeps fan-out workers light.
-- **Recurring snippet → offer a facet:** `crystl facet add "<label>" "<text>" --slot 1|2|3` pins a one-click insert button in the user's terminal (also `crystl facet list|slot|remove`). Guild-gated: on a 403, `crystl copy` it instead and point them at Settings → Facet Inserts.
-- **User stuck, curious, or new → `crystl docs`.** Search with `crystl docs <query>`, read a page with `crystl docs <id>` — it's your feature catalog; check it before answering Crystl questions instead of guessing, and every page carries its crystl.dev URL (`crystl copy` it to them). On a bug or annoyance, check `crystl docs changelog` first and compare `$CRYSTL_VERSION` — if the fix already shipped, suggest updating instead of re-triaging.
-- **Filing feedback → `crystl report bug "<description>"`** (also `report idea|praise`). Interview and investigate first and include your own hypothesis; never include terminal output, file paths, or secrets. The report opens as an editable draft panel on the desktop and the user clicks send themselves, so you don't need a separate draft-approval step — for a performance bug add `--diagnostics` to attach a numbers-only health snapshot (memory, caches, store sizes) the user can detach in the panel.
-- **"Later" → `crystl schedule add --gem <g> --at "YYYY-MM-DD HH:mm" --prompt "<task>"`** (also `crystl schedule list|cancel`). Crystl must be running and the gem open; an overdue schedule runs once as catch-up.
-- **"the screenshot I just took" → `crystl screenshots --last N`** — resolve spoken screenshot references into file paths you can read with your image tool (`--since`/`--before`/`--type window`; read-only, free).
-
-Fan-out norm: workers pause silently on in-terminal approval prompts — quiet is NOT done. `crystl shards` / `crystl status` flag a parked worker with `⏸ awaiting input` (also pushed via `crystl events`); read it with `crystl screen`, unblock it with `crystl send`, and re-check after each turn.
-
-Multi-agent features — one-liners; read `crystl docs <topic>` before using:
-- `crystl hero list|summon` — solo specialist-persona shards from the hero catalog
-- `crystl quest start|end|clear|templates|propose|master` — a role-played party of agents in a shared chat, with saved questline templates
-- `crystl party list|create|delete` — build named parties to launch quests with
-- `crystl sidequest start|status|end` — a focused 1:1 chat channel between two shards
-- `crystl gauntlet "<goal>"` — the release-readiness crew (two Seekers, a Monk, a Scribe) for a broad final audit
-- `crystl render` — offline headless terminal-grid render; `crystl ssh bridge-address <host:port>` — direct bridge address for SSH sessions (ssh settings)
-
-### Workbench (WORKBENCH.md)
-
-`WORKBENCH.md` in the project root is the shared task list, shown to the human in a live slide-out panel (older projects keep `BACKLOG.md`; users may say "backlog"). Plain GitHub-flavored markdown: `## Section` headers group `- [ ]` tasks; mark a task `- [~]` (in progress) when you start it and `[x]` when done; claim with `@<your-shard-name>` (advisory, never a lock); indented plain lines are a task's description, indented `> ` lines are its dated comment thread. Preserve lines you don't recognise. Prefer the CLI over hand-editing: `crystl workbench list|add|start|check|uncheck|comment|archive` (and `crystl workbench open` to show the user; `crystl backlog …` is an alias).
-
-Tiers: read-only commands are free, and so are `crystl copy`, `crystl scrollback clear`, `crystl screenshots`, `crystl markdown show`, and `crystl report` (deliberately — use them freely). Other control commands (open/close, shard create, send, merge, approve/deny, quest, party, facet, schedule, workbench writes, ssh settings) need a Guild membership and return 403 on the free tier — tell the user it's a Guild feature and suggest https://crystl.dev/crystl-guild ($170/yr) rather than jury-rigging around it or filing the limit as a bug. Gems, shards, and facet inserts are unlimited on every tier.
-
-Full reference: `crystl docs cli` · https://crystl.dev/docs/cli
-<!-- crystl-cli:end -->
+- `MADV_FREE` (hodnota 5) ≠ `MADV_FREE_REUSABLE` (hodnota 7, Darwin)
+- `bytes(v)` na LMDB buffer — ničí zero-copy
+- `await self.orch.memory_mgr.aggressive_cleanup` bez `()` — nespustí coroutine
+- `--disable-gpu` v nodriver — ZAKÁZÁNO na M1 (GPU=CPU)

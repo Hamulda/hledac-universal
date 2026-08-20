@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 from _core._util import aclose
+from utils._patterns import cosine_similarity, batch_cosine_similarity  # noqa: E402
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -82,15 +83,15 @@ class _RustSimdDomain:
                     all_flat, all_flat, num_vectors, num_vectors, dim
                 )
             else:
-                return _python_batch_cosine_similarity(vectors, query)
+                return batch_cosine_similarity(vectors, query)
 
             # result is Q×N matrix; row 0 is self-similarity, rows 1..N are query vs candidates
             # We want query vs candidates (skip row 0 self-similarity)
             if len(result) > 1 and len(result[1]) == len(vectors):
                 return result[1]
-            return _python_batch_cosine_similarity(vectors, query)
+            return batch_cosine_similarity(vectors, query)
         except Exception:  # noqa: BLE001
-            return _python_batch_cosine_similarity(vectors, query)
+            return batch_cosine_similarity(vectors, query)
 
     def cosine_similarity(self, a: list[float], b: list[float]) -> float:
         """Compute cosine similarity between two vectors with circuit breaker."""
@@ -103,7 +104,7 @@ class _RustSimdDomain:
             )
             if result.success:
                 return float(result.value)  # type: ignore[return-value]
-            return _python_cosine_similarity(a, b)
+            return cosine_similarity(a, b)
         scores = self._rust_batch_scores([b], a)
         return scores[0] if scores else 0.0
 
@@ -117,7 +118,7 @@ class _RustSimdDomain:
             )
             if result.success:
                 return list(result.value)  # type: ignore[return-value]
-            return _python_batch_cosine_similarity(vectors, query)
+            return batch_cosine_similarity(vectors, query)
         return self._rust_batch_scores(vectors, query)
 
 
@@ -126,14 +127,14 @@ class _PythonSimdDomain:
 
     def cosine_similarity(self, a: list[float], b: list[float]) -> float:
         """Python fallback: compute cosine similarity."""
-        return _python_cosine_similarity(a, b)
+        return cosine_similarity(a, b)
 
     def batch_cosine_similarity(self, vectors: list[list[float]], query: list[float]) -> list[float]:
         """Python fallback: batch cosine similarity."""
-        return _python_batch_cosine_similarity(vectors, query)
+        return batch_cosine_similarity(vectors, query)
 
 
-def _python_cosine_similarity(a: list[float], b: list[float]) -> float:
+def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Python fallback: compute cosine similarity between two vectors."""
     if len(a) != len(b) or len(a) == 0:
         return 0.0
@@ -147,11 +148,11 @@ def _python_cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot_product / (norm_a * norm_b)
 
 
-def _python_batch_cosine_similarity(vectors: list[list[float]], query: list[float]) -> list[float]:
+def batch_cosine_similarity(vectors: list[list[float]], query: list[float]) -> list[float]:
     """Python fallback: compute cosine similarity for multiple vectors."""
     if not vectors or not query:
         return []
-    return [_python_cosine_similarity(v, query) for v in vectors]
+    return [cosine_similarity(v, query) for v in vectors]
 
 
 def get_simd_domain(ext: object | None) -> _RustSimdDomain | _PythonSimdDomain:

@@ -189,6 +189,8 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
     "crypto",
     # misc is used for _TlsDomain backward-compat and html property routing
     "misc",
+    # ISSUE-011: Tantivy fulltext search (mmap-backed BM25)
+    "fulltext",
     )
 
 _lazy_mod_cache: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
@@ -256,6 +258,7 @@ if TYPE_CHECKING:
     from .swarm_dag import SwarmDAG, PythonFallbackSwarmDAG, get_domain as _swarm_dag_get_domain
     from .link_predictor import _LinkPredictorDomain
     from .crypto import _RustCryptoDomain, _PythonCryptoDomain, get_domain as _crypto_get_domain
+    from .fulltext import _RustFulltextDomain, _PythonFulltextDomain, get_domain as _fulltext_get_domain
     from .compress import _RustCompressDomain, _PythonCompressDomain, get_domain as _compress_get_domain
 
 from _core.feature_flags import FeatureFlag, FeatureFlags
@@ -712,6 +715,16 @@ class AccelBackend:
         Falls back to compression.zstd (Python 3.14+) or zstandard package.
         """
         return self._get_domain("compress", _compress_get_domain)
+
+    # ISSUE-011: Tantivy fulltext search (mmap-backed BM25)
+    @property
+    def fulltext(self) -> "_RustFulltextDomain | _PythonFulltextDomain":
+        """ISSUE-011: Tantivy fulltext search domain.
+
+        Provides mmap-backed BM25 with Arrow IPC zero-copy results.
+        Falls back to pure Python rank_bm25 when Rust unavailable.
+        """
+        return self._get_domain("fulltext", _fulltext_get_domain)
 
     # -------------------------------------------------------------------------
     # Internal

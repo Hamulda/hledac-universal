@@ -1,9 +1,9 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-08-19T16:20:08.666395+00:00",
+  "generated_at": "2026-08-20T10:42:12.665476+00:00",
   "capability": "NEXTGEN-05",
   "description": "Build-time FFI type-safety manifest",
-  "__source_hash__": "6d95d644724a7ee73d505da546a0dfa1d57cb8a0c9d976978d1811d21faa801b",
+  "__source_hash__": "86a1db3238814e73b6c0e7fd5aa2b60f3584f83480d42f4e9068f8f00a623388",
   "classes": {
     "warc_parser.WarcCertificate": {
       "module": "warc_parser",
@@ -3708,6 +3708,22 @@
       "is_async": false,
       "doc_comment": null
     },
+    "crypto_accelerate.encrypt_aes_gcm_raw": {
+      "module": "crypto_accelerate",
+      "name": "encrypt_aes_gcm_raw",
+      "signature": "(key: list[int], plaintext: str)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "crypto_accelerate.decrypt_aes_gcm_raw": {
+      "module": "crypto_accelerate",
+      "name": "decrypt_aes_gcm_raw",
+      "signature": "(key: list[int], encrypted: list[int])",
+      "return_type": "str | None",
+      "is_async": false,
+      "doc_comment": null
+    },
     "metal_compute.init": {
       "module": "metal_compute",
       "name": "init",
@@ -4996,6 +5012,22 @@
       "is_async": false,
       "doc_comment": null
     },
+    "compress.compress_zstd": {
+      "module": "compress",
+      "name": "compress_zstd",
+      "signature": "(data: bytes, level: int)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.decompress_zstd": {
+      "module": "compress",
+      "name": "decompress_zstd",
+      "signature": "(compressed: bytes)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
     "ioc_dedup.ioc_dedup_from_bytes": {
       "module": "ioc_dedup",
       "name": "ioc_dedup_from_bytes",
@@ -5577,6 +5609,14 @@
       "name": "circuit_breaker_get_stats",
       "signature": "(domain: str)",
       "return_type": "tuple[int, int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "circuit_breaker.circuit_breaker_aimd_get_window": {
+      "module": "circuit_breaker",
+      "name": "circuit_breaker_aimd_get_window",
+      "signature": "()",
+      "return_type": "float",
       "is_async": false,
       "doc_comment": null
     },

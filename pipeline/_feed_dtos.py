@@ -463,6 +463,208 @@ compute_feed_branch_hint = _make_rust_wrapper("feed_branch_hint")
 compute_feed_economics_verdict = _make_rust_wrapper("feed_economics_verdict")
 compute_feed_branch_verdict = _make_rust_wrapper("feed_branch_verdict")
 
+# === G6: Batch Fallback Decision (Tier 2 Rust via signal_batch) ===
+
+# Lazy import for Rust batch fallback
+_batch_fallback_decide: Any = None
+_has_rust_batch: bool | None = None
+
+
+def _get_rust_batch_fallback():
+    """Lazy load Rust batch_fallback_decide from signal_batch_wiring."""
+    global _batch_fallback_decide, _has_rust_batch
+    if _has_rust_batch is None:
+        _has_rust_batch = False
+        try:
+            from rust_extensions.wiring.signal_batch_wiring import batch_fallback_decide as _fn
+            _batch_fallback_decide = _fn
+            _has_rust_batch = True
+        except Exception:
+            _batch_fallback_decide = None
+            _has_rust_batch = False
+    return _batch_fallback_decide
+
+
+def batch_classify_fallback_decisions(
+    decisions: list[dict[str, Any]],
+) -> list[FallbackDecision]:
+    """Batch classify fallback decisions using Rust rayon parallelization.
+
+    G6: Tier 2 fallback - uses Rust batch_fallback_decide from signal_batch_wiring
+    when available, falls back to per-item Python calls.
+
+    Args:
+        decisions: List of decision param dicts with keys:
+            - assembled_text_len (int)
+            - pre_fallback_hits_count (int)
+            - quality_band (str)
+            - metadata_boost (bool)
+            - language_mismatch (bool)
+            - article_fallback_used (bool)
+            - article_fallback_attempted (bool)
+            - post_fallback_findings_count (int)
+            - adapter_source_priority_bias (float)
+            - adapter_metadata_richness_band (str)
+
+    Returns:
+        List of FallbackDecision objects.
+    """
+    if not decisions:
+        return []
+
+    # Try Rust batch first
+    rust_fn = _get_rust_batch_fallback()
+    if rust_fn is not None:
+        try:
+            results = rust_fn(decisions)
+            return [
+                FallbackDecision(
+                    reason=reason,
+                    should_fetch=should_fetch,
+                    forced=forced,
+                    wasted=wasted,
+                    helpful=helpful,
+                    skip_because=skip_because,
+                )
+                for reason, should_fetch, forced, wasted, helpful, skip_because in results
+            ]
+        except Exception:
+            pass  # Fall through to Python
+
+    # Python fallback: per-item classification
+    return [
+        _classify_fallback_decision_from_dict(d) for d in decisions
+    ]
+
+
+def _classify_fallback_decision_from_dict(params: dict[str, Any]) -> FallbackDecision:
+    """Convert dict params to FallbackDecision using Python fallback.
+
+    Mirrors _python_fallback_decision_classify but accepts dict input.
+    """
+    assembled_text_len = params.get("assembled_text_len", 0)
+    pre_fallback_hits_count = params.get("pre_fallback_hits_count", 0)
+    quality_band = params.get("quality_band", "unknown")
+    metadata_boost = params.get("metadata_boost", False)
+    language_mismatch = params.get("language_mismatch", False)
+    article_fallback_used = params.get("article_fallback_used", False)
+    article_fallback_attempted = params.get("article_fallback_attempted", False)
+    post_fallback_findings_count = params.get("post_fallback_findings_count", 0)
+    adapter_source_priority_bias = params.get("adapter_source_priority_bias", 0.0)
+    adapter_metadata_richness_band = params.get("adapter_metadata_richness_band", "unknown")
+
+    # Case 1: pre-fallback hits exist
+    if pre_fallback_hits_count > 0:
+        return FallbackDecision(
+            reason="feed_native_had_signal",
+            should_fetch=False,
+            wasted=True,
+            helpful=False,
+            skip_because="feed-native already carried hits",
+        )
+
+    # Case 2: fallback not attempted
+    if not article_fallback_attempted:
+        if assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS and quality_band in ("high", "medium"):
+            return FallbackDecision(
+                reason="skipped_high_quality",
+                should_fetch=False,
+                forced=False,
+                wasted=False,
+                helpful=False,
+                skip_because=f"high quality ({quality_band}), assembled {assembled_text_len} chars",
+            )
+        if adapter_source_priority_bias >= 0.1 and assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS:
+            return FallbackDecision(
+                reason="skipped_adapter_bias",
+                should_fetch=False,
+                forced=False,
+                wasted=False,
+                helpful=False,
+                skip_because=f"adapter source_priority_bias={adapter_source_priority_bias:.2f}",
+            )
+        return FallbackDecision(
+            reason="no_fetch_warranted",
+            should_fetch=False,
+            forced=False,
+            wasted=False,
+            helpful=False,
+            skip_because=f"assembled={assembled_text_len}, quality={quality_band}",
+        )
+
+    # Case 3: forced by metadata mismatch
+    if metadata_boost and not language_mismatch and assembled_text_len < _MIN_ARTICLE_FALLBACK_CHARS:
+        if post_fallback_findings_count > 0:
+            return FallbackDecision(
+                reason="forced_metadata_mismatch",
+                should_fetch=True,
+                forced=True,
+                wasted=False,
+                helpful=True,
+            )
+        return FallbackDecision(
+            reason="forced_no_yield",
+            should_fetch=True,
+            forced=True,
+            wasted=True,
+            helpful=False,
+        )
+
+    # Case 4: aged structured entry
+    if assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS and quality_band == "low":
+        if post_fallback_findings_count > 0:
+            return FallbackDecision(
+                reason="aged_structured_yield",
+                should_fetch=True,
+                forced=True,
+                wasted=False,
+                helpful=True,
+            )
+        return FallbackDecision(
+            reason="aged_structured_no_yield",
+            should_fetch=True,
+            forced=True,
+            wasted=True,
+            helpful=False,
+        )
+
+    # Case 5: adapter-mandated
+    if adapter_metadata_richness_band == "high" and assembled_text_len < _MIN_ARTICLE_FALLBACK_CHARS:
+        if post_fallback_findings_count > 0:
+            return FallbackDecision(
+                reason="forced_adapter_metadata",
+                should_fetch=True,
+                forced=True,
+                wasted=False,
+                helpful=True,
+            )
+        return FallbackDecision(
+            reason="forced_adapter_no_yield",
+            should_fetch=True,
+            forced=True,
+            wasted=True,
+            helpful=False,
+        )
+
+    # Case 6: normal fallback
+    if post_fallback_findings_count > 0:
+        return FallbackDecision(
+            reason="normal_fallback_yield",
+            should_fetch=True,
+            forced=False,
+            wasted=False,
+            helpful=True,
+        )
+    return FallbackDecision(
+        reason="normal_fallback_no_yield",
+        should_fetch=True,
+        forced=False,
+        wasted=False,
+        helpful=False,
+    )
+
+
+
 
 # === Fallback Decision (moved from live_feed_pipeline.py) ===
 

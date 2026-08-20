@@ -18,7 +18,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 RUST_EXTENSIONS_DIR = PROJECT_ROOT / 'rust_extensions'
 LIB_RS_PATH = RUST_EXTENSIONS_DIR / 'src' / 'lib.rs'
 CARGO_TOML_PATH = RUST_EXTENSIONS_DIR / 'Cargo.toml'
-ZOMBIE_MODULES_SAFE = ['aho_corasick_simd', 'claims_extraction', 'compress', 'consistency_verifier', 'content_hasher', 'crypto_accelerate', 'deobfuscate', 'feed_decision', 'ffi_safe', 'h2_safari_preset', 'health', 'hot_edges_rs', 'html_parse', 'int_counter_layout', 'ioc_extract', 'ioc_extract_fast', 'ioc_extract_simd', 'ioc_stream_scan', 'mpsc_pool', 'query_terms', 'regex_lz4', 'sendfile', 'simdjson_extract', 'simd_similarity', 'simhash_ext', 'spsc_queue', 'telemetry_agg', 'tls_metadata', 'topology', 'tracing', 'unindexed_scanner', 'url_engine', 'warc_parser', 'zero_copy', 'collections_backup']
+ZOMBIE_MODULES_SAFE = ['aho_corasick_simd', 'claims_extraction', 'compress', 'consistency_verifier', 'content_hasher', 'crypto_accelerate', 'deobfuscate', 'feed_decision', 'ffi_safe', 'h2_safari_preset', 'health', 'hot_edges_rs', 'html_parse', 'int_counter_layout', 'ioc_extract', 'ioc_extract_fast', 'ioc_extract_simd', 'ioc_stream_scan', 'query_terms', 'regex_lz4', 'sendfile', 'simdjson_extract', 'simd_similarity', 'simhash_ext', 'spsc_queue', 'telemetry_agg', 'tls_metadata', 'topology', 'tracing', 'unindexed_scanner', 'url_engine', 'warc_parser', 'zero_copy', 'collections_backup']
 ZOMBIE_MODULES_WITH_DEPS = ['fulltext_index', 'git_forensics', 'graph_analytics', 'lmdb_dht', 'metal_hashcrack', 'metal_shared_buf', 'native_db', 'nw_connection', 'p2p_harvest', 'pdf', 'office', 'dns_tunnel', 'async_bridge', 'async_query', 'aimd_controller', 'federated_qtable']
 
 @dataclass(slots=True)

@@ -82,7 +82,7 @@ fn byte_entropy(data: &[u8]) -> f64 {
         return 0.0;
     }
 
-    let n = data);
+    let n = data.len();
     let mut hist = [0u32; 256];
     for &b in data.iter() {
         hist[b as usize] += 1;
@@ -126,8 +126,8 @@ impl CandidateRegion {
 /// Returns candidate regions where entropy > ENTROPY_THRESHOLD_HIGH.
 /// Uses 32-byte windows with 8-byte stride for M1 cache friendliness.
 fn probe_entropy_regions(text: &str) -> Vec<CandidateRegion> {
-    let bytes = text);
-    let len = bytes);
+    let bytes = text.as_bytes();
+    let len = bytes.len();
 
     if len < MIN_WINDOW_SIZE {
         return Vec::new();
@@ -324,7 +324,7 @@ fn printable_ratio(data: &[u8]) -> f64 {
     let printable = data
         .iter()
         .filter(|&&b| b.is_ascii_graphic() || b == b' ' || b == b'\n' || b == b'\r' || b == b'\t')
-        );
+            .count();
     printable as f64 / data.len() as f64
 }
 
@@ -333,7 +333,7 @@ fn printable_ratio(data: &[u8]) -> f64 {
 // ---------------------------------------------------------------------------
 
 fn try_base64(s: &str) -> Option<String> {
-    let s_clean = s);
+    let s_clean = s.trim();
     // Try standard base64 (no external crate — std-only implementation)
     decode_base64_std(s_clean)
         .or_else(|| decode_base64_url_safe(s_clean))
@@ -369,12 +369,12 @@ fn decode_base64_nopad(s: &str) -> Option<String> {
 /// Core base64 decode using a lookup table. Returns raw bytes → UTF-8.
 fn decode_base64_impl(s: &str, table: &[i8; 256]) -> Option<String> {
     // Strip whitespace
-    let s = s);
+    let s = s.trim();
     let s_trimmed: Vec<u8> = s
         .iter()
         .filter(|&&b| !b.is_ascii_whitespace())
         .copied()
-        );
+        .collect();
     let s = &s_trimmed;
 
     if s.is_empty() {
@@ -382,7 +382,7 @@ fn decode_base64_impl(s: &str, table: &[i8; 256]) -> Option<String> {
     }
 
     // Pad if needed
-    let mut chars: Vec<u8> = s);
+    let mut chars: Vec<u8> = s.as_bytes().to_vec();
     match s.len() % 4 {
         2 => {
             chars.push(b'=');
@@ -491,7 +491,7 @@ const fn base64_url_decode_table() -> [i8; 256] {
 }
 
 fn try_hex(s: &str) -> Option<String> {
-    let s_clean = s);
+    let s_clean = s.trim();
     // Must be even length and all hex digits
     if s_clean.len() % 2 != 0 || !s_clean.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
@@ -502,7 +502,7 @@ fn try_hex(s: &str) -> Option<String> {
 }
 
 fn try_base58(s: &str) -> Option<String> {
-    let s_clean = s);
+    let s_clean = s.trim();
     // Base58 alphabet check (Bitcoin alphabet: 123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz)
     const BASE58_ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
     if !s_clean.is_empty() && s_clean.bytes().all(|b| BASE58_ALPHABET.contains(&b)) {
@@ -527,17 +527,17 @@ fn try_base58(s: &str) -> Option<String> {
 
 /// URL percent-decode (no external crate — inline implementation).
 fn decode_url(s: &str) -> Option<String> {
-    let s_clean = s);
+    let s_clean = s.trim();
     // Must contain at least one % escape
     if !s_clean.contains('%') {
         return None;
     }
     let mut result = String::with_capacity(s_clean.len());
-    let mut chars = s_clean.chars());
+    let mut chars = s_clean.chars().collect::<Vec<_>>();
     let mut changed = false;
     while let Some(c) = chars.next() {
         if c == '%' {
-            let hex: String = chars.by_ref().take(2));
+            let hex: String = chars.by_ref().take(2).collect::<String>();
             if hex.len() == 2 {
                 if let Ok(byte) = u8::from_str_radix(&hex, 16) {
                     result.push(byte as char);
@@ -564,7 +564,7 @@ fn decode_url(s: &str) -> Option<String> {
 }
 
 fn try_rot13(s: &str) -> Option<String> {
-    let s_clean = s);
+    let s_clean = s.trim();
     // ROT13 only makes sense for text containing a-zA-Z
     if !s_clean.chars().any(|c| c.is_ascii_alphabetic()) {
         return None;
@@ -576,12 +576,12 @@ fn try_rot13(s: &str) -> Option<String> {
             'A'..='Z' => ((c as u8 - b'A' + 13) % 26 + b'A') as char,
             _ => c,
         })
-        );
+        .collect();
     Some(decoded)
 }
 
 fn try_xor1(encoded: &str) -> Option<String> {
-    let s_clean = encoded);
+    let s_clean = encoded.trim();
     // Single-byte XOR: try all 256 keys, score by printable ratio.
     // Serial implementation (called from within rayon parallel context).
     // Only worth it for strings ≥ 8 bytes (avoids false positives on short strings).
@@ -589,11 +589,11 @@ fn try_xor1(encoded: &str) -> Option<String> {
         return None;
     }
 
-    let bytes = s_clean);
+    let bytes = s_clean.as_bytes();
     let mut best: Option<(f64, Vec<u8>)> = None;
 
     for key in 0u8..=255u8 {
-        let decoded: Vec<u8> = bytes.iter().map(|&b| b ^ key));
+        let decoded: Vec<u8> = bytes.iter().map(|&b| b ^ key).collect();
         let ratio = printable_ratio(&decoded);
         if ratio > 0.90 {
             // High confidence: almost all bytes are printable after XOR
@@ -723,7 +723,7 @@ fn peel_region(region: &str, depth: u8, max_depth: u8) -> Option<DecodedCandidat
 
     // Recursive re-entry: if decoded output still has high entropy, peel again
     if best.layers == depth {
-        let decoded_bytes = best.decoded);
+        let decoded_bytes = best.decoded.clone();
         if decoded_bytes.len() >= MIN_WINDOW_SIZE {
             let decoded_entropy = byte_entropy(decoded_bytes);
             if decoded_entropy > ENTROPY_THRESHOLD_RECURSIVE {
@@ -757,7 +757,7 @@ fn deobfuscate_impl(text: &str, max_depth: u8) -> Vec<String> {
             let region_text = &text[region.start..region.end];
             peel_region(region_text, 1, max_depth).map(|c| c.decoded)
         })
-        );
+        .collect();
 
     candidates
 }
@@ -871,15 +871,15 @@ pub fn decode_ioc_candidates(text: &str, max_depth: Option<u8>) -> DeobfuscateRe
             let region_text = &text[region.start..region.end];
             peel_region(region_text, 1, depth).map(|c| (c.encoding, c.decoded, c.bytes_decoded))
         })
-        );
+        .collect::<Vec<_>>();
 
     if decoded.is_empty() {
         return DeobfuscateResult::new(Vec::new(), 0, Vec::new(), 0);
     }
 
-    let candidates: Vec<String> = decoded.iter().map(|(_, d, _)| d.clone()));
-    let encodings: Vec<String> = decoded.iter().map(|(e, _, _)| e.clone()));
-    let total_bytes: u64 = decoded.iter().map(|(_, _, b)| *b as u64));
+    let candidates: Vec<String> = decoded.iter().map(|(_, d, _)| d.clone()).collect();
+    let encodings: Vec<String> = decoded.iter().map(|(e, _, _)| e.clone()).collect();
+    let total_bytes: u64 = decoded.iter().map(|(_, _, b)| *b as u64).sum();
     let total_layers: u64 = decoded.len() as u64;
 
     LAYERS_STRIPPED_COUNTER.fetch_add(total_layers, Ordering::Relaxed);
@@ -924,7 +924,7 @@ pub fn batch_decode_ioc_candidates(
         texts
     };
 
-    let total_bytes: usize = texts.iter().map(|t| t.len()));
+    let total_bytes: usize = texts.iter().map(|t| t.len()).sum();
 
     // Adaptive: only use rayon if batch is large enough
     if texts.len() < 4 && total_bytes < 64 * 1024 {

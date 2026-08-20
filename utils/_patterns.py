@@ -2356,3 +2356,147 @@ def get_secure_enclave_helper_path() -> "Path | None":
 __all__ = __all__ + [
     "get_secure_enclave_helper_path",
 ]
+
+
+# ==============================================================================
+# Cosine Similarity (from ffi_circuit_breaker.py + rust_backend/simd.py)
+# ==============================================================================
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    """
+    Compute cosine similarity between two vectors.
+    
+    Pure Python fallback - no SIMD, no external dependencies.
+    Canonical implementation.
+    
+    Args:
+        a: First vector
+        b: Second vector
+    
+    Returns:
+        Cosine similarity score in range [-1, 1], or 0.0 on error
+    """
+    if len(a) != len(b) or len(a) == 0:
+        return 0.0
+    dot_product = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot_product / (norm_a * norm_b)
+
+
+def batch_cosine_similarity(vectors: list[list[float]], query: list[float]) -> list[float]:
+    """
+    Compute cosine similarity between query and multiple vectors.
+    
+    Pure Python fallback - no SIMD, no external dependencies.
+    Canonical implementation.
+    
+    Args:
+        vectors: List of vectors to compare against query
+        query: Query vector
+    
+    Returns:
+        List of cosine similarity scores
+    """
+    if not vectors or not query:
+        return []
+    return [cosine_similarity(v, query) for v in vectors]
+
+
+# Update __all__ to include cosine similarity functions
+__all__ = __all__ + [
+    "cosine_similarity",
+    "batch_cosine_similarity",
+]
+
+
+# ==============================================================================
+# Source Family Name Normalization (from acquisition_strategy_planner + lanes + plan_builder)
+# ==============================================================================
+
+_SOURCE_FAMILY_ALIASES: dict[str, str] = {
+    # Canonical lowercase forms
+    'ct': 'ct',
+    'ct_log': 'ct',
+    'ct-log': 'ct',
+    'public': 'public',
+    'feed': 'feed',
+    'wayback': 'wayback',
+    'passive_dns': 'passive_dns',
+    'passivedns': 'passive_dns',
+    'passive-dns': 'passive_dns',
+    'academic': 'academic',
+    'ipfs': 'ipfs',
+    'pivot': 'pivot',
+    'pivot_executor': 'pivot',
+    'blockchain': 'blockchain',
+    'stealth': 'stealth',
+    'doh': 'doh',
+    'open_source': 'open_source',
+    'shodan': 'shodan',
+    'censys': 'censys',
+    'greynoise': 'greynoise',
+    'tor': 'tor',
+    # Canonical uppercase forms (preserve case)
+    'CT': 'ct',
+    'PUBLIC': 'ct',
+    'FEED': 'feed',
+    'WAYBACK': 'wayback',
+    'PASSIVE_DNS': 'passive_dns',
+    'PASSIVEDNS': 'passive_dns',
+    'PASSIVE-DNS': 'passive_dns',
+    'ACADEMIC': 'academic',
+    'IPFS': 'ipfs',
+    'PIVOT': 'pivot',
+    'PIVOT_EXECUTOR': 'pivot',
+    'BLOCKCHAIN': 'blockchain',
+    'STEALTH': 'stealth',
+    'DOH': 'doh',
+    'OPEN_SOURCE': 'open_source',
+    'SHODAN': 'shodan',
+    'CENSYS': 'censys',
+    'GREYNOISE': 'greynoise',
+    'TOR': 'tor',
+}
+
+
+def normalize_source_family_name(value: str | None) -> str:
+    """
+    [F208L] Normalize a source family name to its canonical lowercase form.
+
+    Maps mixed-case variants to their canonical lowercase representation so that
+    "CT", "ct", "Ct" all resolve to "ct", preventing duplicate outcomes for the same
+    logical family in a single acquisition report.
+
+    Canonical families: feed, public, ct, wayback, passive_dns, academic, ipfs, pivot.
+
+    Args:
+        value: Raw source family identifier
+
+    Returns:
+        Normalized family name in lowercase
+
+    Canonical implementation - use this instead of local duplicates.
+    """
+    if value is None:
+        return 'unknown'
+    if not isinstance(value, str):
+        return 'unknown'
+    # Try lowercase lookup first
+    normalized = value.strip().lower()
+    if normalized in _SOURCE_FAMILY_ALIASES:
+        return _SOURCE_FAMILY_ALIASES[normalized]
+    # Try uppercase lookup
+    upper = value.strip().upper()
+    if upper in _SOURCE_FAMILY_ALIASES:
+        return _SOURCE_FAMILY_ALIASES[upper]
+    # Return as-is if no alias found
+    return normalized
+
+
+# Update __all__ to include source family normalization
+__all__ = __all__ + [
+    "normalize_source_family_name",
+]

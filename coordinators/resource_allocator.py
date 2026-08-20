@@ -314,7 +314,13 @@ class IntelligentResourceAllocator:
             snapshot = await self._capacity_sampler.sample()
 
             def _read_sysinfo_sync() -> tuple[Any, Any, int]:
-                cpu_count = psutil.cpu_count()
+                # MODERN-33: Use _core.topology instead of psutil.cpu_count()
+                try:
+                    from _core.topology import get_topology
+                    t = get_topology()
+                    cpu_count = t.p_cores + t.e_cores
+                except Exception:
+                    cpu_count = psutil.cpu_count() or 8
                 memory = psutil.virtual_memory()
                 disk = psutil.disk_usage('/')
                 psutil.net_io_counters()

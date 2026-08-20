@@ -74,6 +74,8 @@ from rust_extensions.wiring.circuit_breaker_wiring import (
     record_failure,
     get_domain_state,
     CircuitBreakerContext,
+    get_aimd_window,
+    reset_aimd,
 )
 
 # Adaptive Scheduler
@@ -294,6 +296,8 @@ __all__ = [
     "record_failure",
     "get_domain_state",
     "CircuitBreakerContext",
+    "get_aimd_window",
+    "reset_aimd",
     # Adaptive Scheduler
     "adaptive_scheduler_wired",
     "get_thread_budget",
